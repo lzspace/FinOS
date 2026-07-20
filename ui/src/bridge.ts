@@ -21,6 +21,9 @@ const supportedCommands = new Set([
   "RejectRefund", "DetectRecurringPatterns", "ConfirmRecurringPattern",
   "RejectRecurringPattern", "UpdateRecurringPattern", "PauseRecurringPattern",
   "EndRecurringPattern", "CreateForecast", "EvaluateForecast",
+  "CreateAccount", "UpdateAccount", "CloseAccount", "RecordBalanceSnapshot",
+  "CorrectBalanceSnapshot", "ReconcileAccountBalance", "CreateAssetSnapshot",
+  "CorrectAssetSnapshot", "CreateLiabilitySnapshot", "CorrectLiabilitySnapshot",
 ]);
 
 export class FinanceBridge {

@@ -1,6 +1,6 @@
 id: agent-os.finance
 name: Finance Extension
-version: 0.6.0
+version: 0.7.0
 contract_version: 1.0.0
 jurisdiction: DE
 audience:
@@ -21,6 +21,8 @@ contracts:
   common: schemas/common.schema.json
   commands: schemas/commands.schema.json
   events: schemas/events.schema.json
+  account_commands: schemas/account_commands.schema.json
+  account_events: schemas/account_events.schema.json
   query_responses:
     - schemas/capability_manifest.response.schema.json
     - schemas/runtime_security_status.response.schema.json
@@ -31,6 +33,16 @@ contracts:
     - schemas/recurring_pattern_list.response.schema.json
     - schemas/forecast.response.schema.json
     - schemas/forecast_evaluation.response.schema.json
+    - schemas/account_list.response.schema.json
+    - schemas/account_detail.response.schema.json
+    - schemas/account_balance_history.response.schema.json
+    - schemas/balance_reconciliation.response.schema.json
+    - schemas/liquidity_overview.response.schema.json
+    - schemas/net_worth_overview.response.schema.json
+    - schemas/net_worth_history.response.schema.json
+    - schemas/liability_overview.response.schema.json
+    - schemas/asset_allocation.response.schema.json
+    - schemas/projected_month_end_balance.response.schema.json
 policies:
   - POL-FIN-001_LOCAL_STORAGE_ONLY
   - POL-FIN-002_NO_EXTERNAL_PROCESSING

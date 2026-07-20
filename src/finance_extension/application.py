@@ -6,6 +6,28 @@ from decimal import Decimal
 from typing import Any, Callable
 
 from . import __version__
+from .accounts import (
+    account_balance_history,
+    account_overview,
+    account_reviews,
+    asset_allocation,
+    balance_reconciliations,
+    close_account,
+    correct_asset_snapshot,
+    correct_balance_snapshot,
+    correct_liability_snapshot,
+    create_account,
+    create_asset_snapshot,
+    create_liability_snapshot,
+    liability_overview,
+    liquidity_overview,
+    net_worth_history,
+    net_worth_overview,
+    projected_month_end_balance,
+    reconcile_account_balance,
+    record_balance_snapshot,
+    update_account,
+)
 from .classification import (
     active_classifications,
     classification_review,
@@ -74,6 +96,37 @@ COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "EndRecurringPattern": ("pattern_id",),
     "CreateForecast": ("month",),
     "EvaluateForecast": ("month",),
+    "CreateAccount": ("display_name", "account_type", "institution", "currency"),
+    "UpdateAccount": ("account_id",),
+    "CloseAccount": ("account_id", "closed_at"),
+    "RecordBalanceSnapshot": (
+        "account_id",
+        "balance_date",
+        "booked_balance",
+        "currency",
+        "source",
+        "confidence",
+    ),
+    "CorrectBalanceSnapshot": ("snapshot_id", "booked_balance", "reason"),
+    "ReconcileAccountBalance": ("account_id",),
+    "CreateAssetSnapshot": (
+        "item_id",
+        "display_name",
+        "item_type",
+        "valuation_date",
+        "amount",
+        "currency",
+    ),
+    "CorrectAssetSnapshot": ("snapshot_id", "amount", "reason"),
+    "CreateLiabilitySnapshot": (
+        "item_id",
+        "display_name",
+        "item_type",
+        "valuation_date",
+        "amount",
+        "currency",
+    ),
+    "CorrectLiabilitySnapshot": ("snapshot_id", "amount", "reason"),
 }
 
 
@@ -112,6 +165,17 @@ class FinanceApplicationService:
             "GetDashboard": self._dashboard,
             "ListTransactions": self._transactions,
             "GetTransactionDetails": self._transaction_details,
+            "ListAccounts": self._accounts,
+            "GetAccount": self._account,
+            "GetAccountBalanceHistory": self._account_balance_history,
+            "GetBalanceReconciliation": self._balance_reconciliation,
+            "GetLiquidityOverview": self._liquidity,
+            "GetNetWorthOverview": self._net_worth,
+            "GetNetWorthHistory": self._net_worth_history,
+            "GetLiabilityOverview": self._liabilities,
+            "GetAssetAllocation": self._asset_allocation,
+            "GetProjectedMonthEndBalance": self._projected_balance,
+            "ListAccountReviews": self._account_reviews,
             "GetCategoryBreakdown": self._category_breakdown,
             "ListClassificationReviews": self._classification_reviews,
             "ListReconciliationReviews": self._reconciliation_reviews,
@@ -140,7 +204,11 @@ class FinanceApplicationService:
                     "recurring_patterns": True,
                     "forecasting": True,
                     "forecast_evaluation": True,
-                    "wealth": False,
+                    "accounts": True,
+                    "balances": True,
+                    "liquidity": True,
+                    "net_worth": True,
+                    "wealth": True,
                     "tax": False,
                     "receipts": False,
                     "cloud_sync": False,
@@ -206,6 +274,9 @@ class FinanceApplicationService:
         month = _require_month(payload)
         cashflow = reconciled_monthly_cashflow(self._store, month)
         base = monthly_forecast(self._store, month).get("BASE")
+        liquidity = liquidity_overview(self._store)
+        worth = net_worth_overview(self._store)
+        projected = projected_month_end_balance(self._store, month)
         reviews = (
             len(classification_review(self._store))
             + sum(
@@ -222,6 +293,7 @@ class FinanceApplicationService:
                 for item in expected_transactions(self._store).values()
                 if item["status"] == "MISSED"
             )
+            + len(account_reviews(self._store))
         )
         income = cashflow["effective_income"]
         savings_rate = (
@@ -240,6 +312,11 @@ class FinanceApplicationService:
                 "remaining_expected_expenses": base["expected_fixed_expenses"] if base else "0",
                 "savings_rate": str(savings_rate) if savings_rate is not None else None,
                 "open_reviews": reviews,
+                "liquid_balance": liquidity["liquid_funds"],
+                "liquid_balance_as_of": liquidity["as_of"],
+                "projected_month_end_balance": projected["projected_month_end_balance"],
+                "net_worth": worth["net_worth"],
+                "net_worth_as_of": worth["as_of"],
             },
             status="EMPTY" if self._sequence() == 0 else "READY",
         )
@@ -297,7 +374,8 @@ class FinanceApplicationService:
             }
             for event in self._store.events()
             if event["aggregate_id"] == transaction_id
-            or transaction_id in {
+            or transaction_id
+            in {
                 str(event["payload"].get("transaction_id", "")),
                 str(event["payload"].get("outgoing_transaction_id", "")),
                 str(event["payload"].get("incoming_transaction_id", "")),
@@ -321,6 +399,92 @@ class FinanceApplicationService:
             "event_history": related_events,
         }
         return self._envelope(data)
+
+    def _accounts(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rows = account_overview(self._store, payload.get("as_of"))
+        state = (
+            "EMPTY"
+            if not rows
+            else "STALE"
+            if any(row["freshness"] == "STALE" for row in rows)
+            else "READY"
+        )
+        return self._envelope({"accounts": rows}, status=state)
+
+    def _account(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        row = next(
+            (
+                item
+                for item in account_overview(self._store, payload.get("as_of"))
+                if item["account_id"] == account_id
+            ),
+            None,
+        )
+        if row is None:
+            return self._envelope(None, status="EMPTY")
+        return self._envelope(
+            {
+                "account": row,
+                "balance_history": account_balance_history(self._store, account_id),
+                "reconciliation": balance_reconciliations(self._store).get(account_id),
+            },
+            status="STALE" if row["freshness"] == "STALE" else "READY",
+        )
+
+    def _account_balance_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        rows = account_balance_history(self._store, account_id)
+        return self._envelope(
+            {"account_id": account_id, "snapshots": rows},
+            status="EMPTY" if not rows else "READY",
+        )
+
+    def _balance_reconciliation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        row = balance_reconciliations(self._store).get(account_id)
+        return self._envelope(row, status="EMPTY" if row is None else "READY")
+
+    def _liquidity(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = liquidity_overview(
+            self._store, payload.get("valuation_currency", "EUR"), payload.get("as_of")
+        )
+        state = (
+            "PARTIAL"
+            if data["currency_conflicts"]
+            else "STALE"
+            if data["stale_account_ids"]
+            else "READY"
+        )
+        return self._envelope(data, status=state)
+
+    def _net_worth(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = net_worth_overview(
+            self._store, payload.get("valuation_currency", "EUR"), payload.get("as_of")
+        )
+        state = "PARTIAL" if data["currency_conflicts"] else "READY"
+        return self._envelope(data, status=state)
+
+    def _net_worth_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rows = net_worth_history(self._store, payload.get("valuation_currency", "EUR"))
+        return self._envelope({"history": rows}, status="EMPTY" if not rows else "READY")
+
+    def _liabilities(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = liability_overview(self._store, payload.get("valuation_currency", "EUR"))
+        return self._envelope(data, status="PARTIAL" if data["currency_conflicts"] else "READY")
+
+    def _asset_allocation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = asset_allocation(self._store, payload.get("valuation_currency", "EUR"))
+        return self._envelope(data, status="PARTIAL" if data["currency_conflicts"] else "READY")
+
+    def _projected_balance(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = projected_month_end_balance(self._store, _require_month(payload))
+        state = data["status"] if data["status"] in {"READY", "STALE"} else "EMPTY"
+        return self._envelope(data, status=state)
+
+    def _account_reviews(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rows = account_reviews(self._store, payload.get("as_of"))
+        return self._envelope({"reviews": rows}, status="EMPTY" if not rows else "READY")
 
     def _category_breakdown(self, payload: dict[str, Any]) -> dict[str, Any]:
         month = _require_month(payload)
@@ -482,6 +646,41 @@ class FinanceApplicationService:
             result = create_forecasts(self._store, payload["month"])
         elif command_name == "EvaluateForecast":
             result = evaluate_forecast(self._store, payload["month"])
+        elif command_name == "CreateAccount":
+            result = create_account(self._store, **payload)
+        elif command_name == "UpdateAccount":
+            account_id = payload["account_id"]
+            result = update_account(
+                self._store,
+                account_id,
+                **{key: value for key, value in payload.items() if key != "account_id"},
+            )
+        elif command_name == "CloseAccount":
+            result = close_account(self._store, payload["account_id"], payload["closed_at"])
+        elif command_name == "RecordBalanceSnapshot":
+            result = record_balance_snapshot(self._store, **payload)
+        elif command_name == "CorrectBalanceSnapshot":
+            result = correct_balance_snapshot(
+                self._store,
+                payload["snapshot_id"],
+                booked_balance=payload["booked_balance"],
+                available_balance=payload.get("available_balance"),
+                reason=payload["reason"],
+            )
+        elif command_name == "ReconcileAccountBalance":
+            result = reconcile_account_balance(self._store, payload["account_id"])
+        elif command_name == "CreateAssetSnapshot":
+            result = create_asset_snapshot(self._store, **payload)
+        elif command_name == "CorrectAssetSnapshot":
+            result = correct_asset_snapshot(
+                self._store, payload["snapshot_id"], payload["amount"], payload["reason"]
+            )
+        elif command_name == "CreateLiabilitySnapshot":
+            result = create_liability_snapshot(self._store, **payload)
+        elif command_name == "CorrectLiabilitySnapshot":
+            result = correct_liability_snapshot(
+                self._store, payload["snapshot_id"], payload["amount"], payload["reason"]
+            )
         else:
             raise ApplicationContractError("FINANCE_COMMAND_UNSUPPORTED")
         return {
@@ -497,3 +696,10 @@ def _require_month(payload: dict[str, Any]) -> str:
     if not isinstance(month, str) or len(month) != 7 or month[4] != "-":
         raise ApplicationContractError("FINANCE_MONTH_REQUIRED")
     return month
+
+
+def _require_identifier(payload: dict[str, Any], name: str) -> str:
+    value = payload.get(name)
+    if not isinstance(value, str) or not value:
+        raise ApplicationContractError(f"FINANCE_{name.upper()}_REQUIRED")
+    return value

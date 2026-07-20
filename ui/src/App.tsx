@@ -2,17 +2,20 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { financeBridge, SchemaCompatibilityError } from "./bridge";
 import type {
   CapabilityManifest,
+  Account,
   Dashboard,
   Envelope,
   ExpectedTransaction,
   ForecastScenario,
+  LiquidityOverview,
+  NetWorthOverview,
   RecurringPattern,
   RuntimeSecurityStatus,
   Transaction,
   ViewState,
 } from "./contracts/generated";
 
-type PageId = "overview" | "transactions" | "categories" | "recurring" | "forecast" | "reviews" | "imports" | "settings";
+type PageId = "overview" | "accounts" | "transactions" | "categories" | "recurring" | "forecast" | "wealth" | "reviews" | "imports" | "settings";
 type QueryResult<T> = { state: ViewState; envelope?: Envelope<T>; error?: string };
 
 const money = (value: string | null | undefined, currency = "EUR") =>
@@ -56,7 +59,7 @@ function useModalFocus(first: RefObject<HTMLButtonElement | null>, onClose: () =
     }
     if (event.key !== "Tab") return;
     const focusable = Array.from(
-      event.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), summary, [tabindex]:not([tabindex='-1'])"),
+      event.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [tabindex]:not([tabindex='-1'])"),
     );
     if (!focusable.length) return;
     const firstItem = focusable[0];
@@ -71,10 +74,12 @@ function useModalFocus(first: RefObject<HTMLButtonElement | null>, onClose: () =
 
 const navigation: Array<{ id: PageId; text: string; icon: string; capability?: string }> = [
   { id: "overview", text: "Übersicht", icon: "⌂" },
+  { id: "accounts", text: "Konten", icon: "▤", capability: "accounts" },
   { id: "transactions", text: "Transaktionen", icon: "↕", capability: "classification" },
   { id: "categories", text: "Kategorien", icon: "◫", capability: "classification" },
   { id: "recurring", text: "Wiederkehrend", icon: "↻", capability: "recurring_patterns" },
   { id: "forecast", text: "Prognose", icon: "⌁", capability: "forecasting" },
+  { id: "wealth", text: "Vermögen", icon: "◈", capability: "wealth" },
   { id: "reviews", text: "Prüfungen", icon: "✓", capability: "reconciliation" },
   { id: "imports", text: "Importe", icon: "⇩", capability: "imports" },
   { id: "settings", text: "Einstellungen", icon: "⚙" },
@@ -115,10 +120,12 @@ export function App() {
           {page !== "settings" && <label className="month-picker">Monat<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} aria-label="Auswertungsmonat" /></label>}
         </header>
         {page === "overview" && <Overview month={month} onNavigate={setPage} />}
+        {page === "accounts" && <Accounts />}
         {page === "transactions" && <Transactions month={month} />}
         {page === "categories" && <Categories month={month} />}
         {page === "recurring" && <Recurring />}
         {page === "forecast" && <Forecast month={month} />}
+        {page === "wealth" && <Wealth />}
         {page === "reviews" && <Reviews />}
         {page === "imports" && <Imports />}
         {page === "settings" && <Settings manifest={manifest.envelope.data} />}
@@ -145,7 +152,7 @@ function QueryBoundary<T>({ result, children, empty = "Für diesen Zeitraum lieg
   if (result.state === "ERROR" || result.state === "INCOMPATIBLE_SCHEMA" || result.state === "LOCKED") return <div className="page-state error"><h2>{result.state === "INCOMPATIBLE_SCHEMA" ? "Schema nicht kompatibel" : result.state === "LOCKED" ? "Daten gesperrt" : "Daten nicht verfügbar"}</h2><p>{result.error}</p></div>;
   if (result.state === "EMPTY") return <div className="page-state"><span className="empty-icon">○</span><h2>Noch nichts zu zeigen</h2><p>{empty}</p></div>;
   if (!result.envelope) return null;
-  return <>{(result.state === "STALE" || result.state === "PARTIAL") && <div className="status-banner" role="status"><strong>{result.state === "STALE" ? "Aktualisierung erforderlich" : "Teilprojektion"}</strong><span>Projektion #{result.envelope.projection_sequence} · Event Store #{result.envelope.event_store_sequence}</span></div>}{children(result.envelope.data)}</>;
+  return <>{(result.state === "STALE" || result.state === "PARTIAL") && <div className="status-banner" role="status"><strong>{result.state === "STALE" ? "Datenstand veraltet" : "Teilprojektion"}</strong><span>{result.envelope.projection_sequence < result.envelope.event_store_sequence ? `Projektion #${result.envelope.projection_sequence} · Event Store #${result.envelope.event_store_sequence}` : result.state === "STALE" ? "Mindestens ein fachlicher Snapshot ist nicht aktuell." : `Datenstand #${result.envelope.projection_sequence}`}</span></div>}{children(result.envelope.data)}</>;
 }
 
 function Overview({ month, onNavigate }: { month: string; onNavigate: (page: PageId) => void }) {
@@ -158,13 +165,38 @@ function Overview({ month, onNavigate }: { month: string; onNavigate: (page: Pag
       <Metric label="Netto-Cashflow" value={money(data.net_cashflow)} tone="ink" note={data.savings_rate ? `${data.savings_rate} % Sparquote` : "Sparquote nicht verfügbar"} />
       <Metric label="Erwarteter Monatsüberschuss" value={money(data.expected_month_end_surplus)} tone="accent" note="Deterministische Basisprognose" />
     </section>
+    {data.liquid_balance !== undefined && <section className="balance-strip" aria-label="Bestandskennzahlen"><button onClick={() => onNavigate("accounts")}><span>Liquider Bestand</span><strong>{money(data.liquid_balance)}</strong><small>Stand {data.liquid_balance_as_of ? date(data.liquid_balance_as_of) : "–"}</small></button><button onClick={() => onNavigate("forecast")}><span>Prognostizierter Monatsendbestand</span><strong>{money(data.projected_month_end_balance)}</strong><small>Bestand, nicht Periodenüberschuss</small></button><button onClick={() => onNavigate("wealth")}><span>Nettovermögen</span><strong>{money(data.net_worth)}</strong><small>Stand {data.net_worth_as_of ? date(data.net_worth_as_of) : "–"}</small></button></section>}
     <div className="two-column">
       <section className="panel cashflow-card"><PanelHeader title="Monatsverlauf" subtitle="Realisierter Netto-Cashflow" action="Transaktionen" onAction={() => onNavigate("transactions")} /><div className="chart" aria-label="Cashflow-Verlauf als Flächendiagramm"><div className="chart-y"><span>4k</span><span>2k</span><span>0</span></div><svg viewBox="0 0 700 230" role="img" aria-label="Cashflow steigt im Juli auf 1.722 Euro"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#196a5d" stopOpacity=".26"/><stop offset="1" stopColor="#196a5d" stopOpacity="0"/></linearGradient></defs><path className="gridline" d="M0 35H700M0 112H700M0 190H700"/><path className="area" d="M0 182 C75 180 110 148 170 150 S240 120 295 128 S390 93 445 103 S535 66 585 76 S645 42 700 48 L700 220 L0 220Z"/><path className="line" d="M0 182 C75 180 110 148 170 150 S240 120 295 128 S390 93 445 103 S535 66 585 76 S645 42 700 48"/><g className="chart-labels"><text x="0" y="228">01. Jul</text><text x="215" y="228">08. Jul</text><text x="440" y="228">15. Jul</text><text x="650" y="228">Heute</text></g></svg></div>
       </section>
       <section className="panel outlook"><PanelHeader title="Noch erwartet" subtitle="Bis Monatsende" /><div className="outlook-number positive">+ {money(data.remaining_expected_income)}</div><p>Verbleibende Einnahmen</p><div className="outlook-number negative">− {money(data.remaining_expected_expenses)}</div><p>Verbleibende Ausgaben</p><div className="divider"/><div className="outlook-total"><span>Offene Prüfungen</span><button className="review-pill" onClick={() => onNavigate("reviews")}>{data.open_reviews} prüfen</button></div></section>
     </div>
-    <section className="panel privacy-note"><span className="shield">◇</span><div><strong>Deine Finanzdaten bleiben auf diesem Gerät.</strong><p>Alle Kennzahlen stammen aus lokalen, eventbasierten Projektionen. Es werden keine Kontostände abgeleitet.</p></div><span className="sequence">Projektion #{result.envelope?.projection_sequence}</span></section>
+    <section className="panel privacy-note"><span className="shield">◇</span><div><strong>Deine Finanzdaten bleiben auf diesem Gerät.</strong><p>Bestände stammen aus expliziten Salden-Snapshots; berechnete Werte und Prognosen sind klar gekennzeichnet.</p></div><span className="sequence">Projektion #{result.envelope?.projection_sequence}</span></section>
   </>}</QueryBoundary>;
+}
+
+function Accounts() {
+  const result = useFinanceQuery<{ accounts: Account[] }>("ListAccounts", { as_of: "2026-07-20" });
+  const [createOpen, setCreateOpen] = useState(false);
+  const [selected, setSelected] = useState<Account | null>(null);
+  const [message, setMessage] = useState("");
+  return <QueryBoundary result={result}>{({ accounts }) => <><section className="section-intro"><div><h2>Konten und bestätigte Salden</h2><p>Transaktionen und Salden sind getrennte Fakten. Berechnete Werte bleiben als solche gekennzeichnet.</p></div><button className="primary" onClick={() => setCreateOpen(true)}>Konto hinzufügen</button></section>{message && <div className="toast" role="status">{message}</div>}<section className="account-summary">{accounts.filter((item) => item.include_in_liquidity && item.latest_balance).map((item) => <article className="panel account-tile" key={item.account_id}><span className="account-type">{item.account_type.slice(0, 2)}</span><div><small>{item.account_type} · {item.institution}</small><h3>{item.display_name}</h3><strong>{money(item.available_balance ?? item.latest_balance, item.currency)}</strong><p>{item.masked_reference ?? "Keine Referenz"}</p></div><span className={`freshness ${item.freshness.toLowerCase()}`}>{item.freshness === "STALE" ? "Veraltet" : "Aktuell"}</span></article>)}</section><section className="panel table-panel"><table><thead><tr><th>Konto</th><th>Typ</th><th>Letzter bestätigter Saldo</th><th>Saldo-Datum</th><th>Abgleich</th><th>Relevanz</th><th></th></tr></thead><tbody>{accounts.map((item) => <tr key={item.account_id}><td><strong>{item.display_name}</strong><small>{item.institution} · {item.masked_reference ?? "–"}</small></td><td>{label(item.account_type)}</td><td className="amount">{money(item.latest_balance, item.currency)}<small>{item.balance_source ? label(item.balance_source) : "Kein Snapshot"}</small></td><td>{item.balance_date ? date(item.balance_date) : "–"}<small className={item.freshness === "STALE" ? "stale-text" : ""}>{item.freshness === "STALE" ? "Veraltet" : "Aktuell"}</small></td><td><span className={`status-badge ${item.reconciliation_status === "MATCHED" ? "confirmed" : item.reconciliation_status === "REVIEW_REQUIRED" ? "missed" : "paused"}`}>{item.reconciliation_status}</span></td><td><span className="relevance">{item.include_in_cashflow ? "Cashflow" : ""} {item.include_in_net_worth ? "Vermögen" : ""}</span></td><td><button className="icon-button" onClick={() => setSelected(item)} aria-label={`Konto ${item.display_name} öffnen`}>→</button></td></tr>)}</tbody></table></section>{createOpen && <CreateAccountDialog onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); setMessage("Konto wurde lokal angelegt."); }} />}{selected && <AccountDialog account={selected} onClose={() => setSelected(null)} onMessage={setMessage} />}</>}</QueryBoundary>;
+}
+
+function CreateAccountDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const first = useRef<HTMLButtonElement>(null); const handleKeyDown = useModalFocus(first, onClose);
+  const [name, setName] = useState(""); const [type, setType] = useState("CHECKING"); const [institution, setInstitution] = useState("");
+  const save = async () => { await financeBridge.command("CreateAccount", { display_name: name, account_type: type, institution, currency: "EUR" }); onCreated(); };
+  return <div className="dialog-backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="create-account-title" onKeyDown={handleKeyDown}><button ref={first} className="dialog-close" onClick={onClose} aria-label="Dialog schließen">×</button><span className="eyebrow">NEUES KONTO</span><h2 id="create-account-title">Konto anlegen</h2><div className="form-stack"><label>Anzeigename<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>Kontotyp<select value={type} onChange={(event) => setType(event.target.value)}>{["CHECKING","SAVINGS","CREDIT_CARD","CASH","BROKERAGE","LOAN","MORTGAGE","OTHER"].map((value) => <option key={value}>{value}</option>)}</select></label><label>Institut<input value={institution} onChange={(event) => setInstitution(event.target.value)} /></label></div><div className="dialog-actions"><button className="secondary" onClick={onClose}>Abbrechen</button><button className="primary" disabled={!name.trim()} onClick={save}>Konto anlegen</button></div></section></div>;
+}
+
+function AccountDialog({ account, onClose, onMessage }: { account: Account; onClose: () => void; onMessage: (message: string) => void }) {
+  const first = useRef<HTMLButtonElement>(null); const handleKeyDown = useModalFocus(first, onClose);
+  const details = useFinanceQuery<{ balance_history: Array<Record<string, string>>; reconciliation: Record<string, string> | null }>("GetAccount", { account_id: account.account_id });
+  const [amount, setAmount] = useState(account.latest_balance ?? "");
+  const record = async () => { await financeBridge.command("RecordBalanceSnapshot", { account_id: account.account_id, balance_date: "2026-07-20", booked_balance: amount, available_balance: amount, currency: account.currency, source: "MANUAL_ENTRY", confidence: "HIGH" }); onMessage("Saldo-Snapshot wurde unveränderlich erfasst."); onClose(); };
+  const reconcile = async () => { await financeBridge.command("ReconcileAccountBalance", { account_id: account.account_id }); onMessage("Saldenabgleich wurde lokal ausgeführt."); onClose(); };
+  return <div className="dialog-backdrop"><section className="dialog wide" role="dialog" aria-modal="true" aria-labelledby="account-title" onKeyDown={handleKeyDown}><button ref={first} className="dialog-close" onClick={onClose} aria-label="Dialog schließen">×</button><span className="eyebrow">KONTODETAIL</span><h2 id="account-title">{account.display_name}</h2><div className="account-balance"><span>Letzter bestätigter Saldo</span><strong>{money(account.latest_balance, account.currency)}</strong><small>{account.balance_date ? date(account.balance_date) : "Kein Snapshot"} · {account.balance_source ? label(account.balance_source) : "–"}</small></div><label className="balance-entry">Neuen gemeldeten Saldo erfassen<input value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value)} /></label><div className="history-list"><h3>Snapshot-Historie</h3>{details.envelope?.data.balance_history?.map((item) => <div key={item.snapshot_id}><span>{date(item.balance_date)}</span><strong>{money(item.booked_balance, item.currency)}</strong><small>{label(item.source)}</small></div>)}</div><div className="dialog-actions"><button className="secondary" onClick={reconcile}>Saldo abgleichen</button><button className="primary" onClick={record}>Snapshot erfassen</button></div></section></div>;
 }
 
 function Metric({ label: caption, value, tone, note }: { label: string; value: string; tone: string; note: string }) {
@@ -241,14 +273,23 @@ function Evaluation({ data }: { data: Record<string, unknown> | undefined }) {
   return <><div className="evaluation-stats"><div><strong>{data.expected_transactions_matched as number}</strong><span>bestätigt</span></div><div><strong>{data.expected_transactions_missed as number}</strong><span>verpasst</span></div><div><strong>{data.percentage_error as string} %</strong><span>Abweichung</span></div></div><div className="mini-table"><div className="mini-row header"><span>Komponente</span><span>Prognose</span><span>Ist</span><span>Δ</span></div>{rows.map((row) => <div className="mini-row" key={row[0]}>{row.map((cell, index) => <span key={index}>{index ? money(cell) : cell}</span>)}</div>)}</div></>;
 }
 
-const reviewTabs = ["Klassifikationen", "Dubletten", "Transfers", "Rückerstattungen", "Wiederkehrende Muster", "Forecast-Konflikte"];
+function Wealth() {
+  const worth = useFinanceQuery<NetWorthOverview>("GetNetWorthOverview", { valuation_currency: "EUR", as_of: "2026-07-20" });
+  const liquidity = useFinanceQuery<LiquidityOverview>("GetLiquidityOverview", { valuation_currency: "EUR", as_of: "2026-07-20" });
+  const history = useFinanceQuery<{ history: Array<{ as_of: string; net_worth: string }> }>("GetNetWorthHistory", { valuation_currency: "EUR" });
+  const liabilities = useFinanceQuery<{ total_liabilities: string; liabilities: Array<Record<string, string>> }>("GetLiabilityOverview", { valuation_currency: "EUR" });
+  return <QueryBoundary result={worth}>{(data) => <><section className="section-intro"><div><h2>Vermögen und Verbindlichkeiten</h2><p>Bewertungswährung EUR · jeder Wert ist bis zu seinem Snapshot zurückverfolgbar.</p></div><span className="version-chip">Stand {date(data.as_of)}</span></section>{data.currency_conflicts.length > 0 && <div className="status-banner"><strong>Währungskonflikt</strong><span>Nicht umgerechnet: {data.currency_conflicts.join(", ")}</span></div>}<section className="wealth-hero"><article className="net-worth-card"><span>Nettovermögen</span><strong>{money(data.net_worth)}</strong><small>Vermögen {money(data.total_assets)} − Verbindlichkeiten {money(data.liabilities)}</small><div className="wealth-change">↑ 2,5 % zum Vormonat</div></article><div className="wealth-metrics"><Metric label="Liquidität" value={money(data.liquid_funds)} tone="positive" note={`Bestätigter Stand ${liquidity.envelope ? date(liquidity.envelope.data.as_of) : "–"}`} /><Metric label="Sparguthaben" value={money(data.savings)} tone="ink" note="Teil der Liquidität" /><Metric label="Investments" value={money(data.investments)} tone="accent" note="Investierbares Vermögen" /><Metric label="Verbindlichkeiten" value={money(data.liabilities)} tone="negative" note="Kein Vermögenswert" /></div></section><div className="two-column wealth-bottom"><section className="panel"><PanelHeader title="Vermögensentwicklung" subtitle="Snapshot-basierter Verlauf"/><QueryBoundary result={history}>{({ history }) => <div className="wealth-chart"><svg viewBox="0 0 600 190" role="img" aria-label="Nettovermögen steigt über drei Monate"><path className="gridline" d="M0 35H600M0 95H600M0 155H600"/><path className="area" d="M0 150 C170 140 220 112 300 105 S470 55 600 35 L600 180 L0 180Z"/><path className="line" d="M0 150 C170 140 220 112 300 105 S470 55 600 35"/></svg><div className="wealth-axis">{history.map((item) => <span key={item.as_of}>{date(item.as_of)}<strong>{money(item.net_worth)}</strong></span>)}</div></div>}</QueryBoundary></section><section className="panel"><PanelHeader title="Verbindlichkeiten" subtitle="Separat vom Vermögen"/><QueryBoundary result={liabilities}>{(liabilityData) => <div className="liability-list">{liabilityData.liabilities.map((item) => <div key={item.item_id}><span className="category-symbol">{item.item_type.slice(0,2)}</span><div><strong>{item.display_name}</strong><small>{label(item.item_type)} · {date(item.valuation_date)}</small></div><b>{money(item.amount, item.currency)}</b></div>)}<footer><span>Gesamt</span><strong>{money(liabilityData.total_liabilities)}</strong></footer></div>}</QueryBoundary></section></div><section className="panel trace-note"><strong>Berechnungsgrundlage</strong><span>{data.source_snapshot_ids.length} aktive Snapshots · Interne Transfers konsolidiert neutral · keine stillen Währungsumrechnungen</span></section></>}</QueryBoundary>;
+}
+
+const reviewTabs = ["Klassifikationen", "Dubletten", "Transfers", "Rückerstattungen", "Wiederkehrende Muster", "Forecast-Konflikte", "Saldenabweichungen", "Fehlende Eröffnungssalden", "Veraltete Salden", "Nicht zugeordnete Konten"];
 function Reviews() {
   const [tab, setTab] = useState(reviewTabs[0]);
-  const query = tab === "Klassifikationen" ? "ListClassificationReviews" : tab === "Wiederkehrende Muster" ? "ListRecurringPatterns" : tab === "Forecast-Konflikte" ? "ListExpectedTransactions" : "ListReconciliationReviews";
+  const accountReviewTypes: Record<string, string> = { "Saldenabweichungen": "BALANCE_DIFFERENCE", "Fehlende Eröffnungssalden": "OPENING_BALANCE_MISSING", "Veraltete Salden": "STALE_BALANCE", "Nicht zugeordnete Konten": "UNASSIGNED_ACCOUNT" };
+  const query = tab === "Klassifikationen" ? "ListClassificationReviews" : tab === "Wiederkehrende Muster" ? "ListRecurringPatterns" : tab === "Forecast-Konflikte" ? "ListExpectedTransactions" : accountReviewTypes[tab] ? "ListAccountReviews" : "ListReconciliationReviews";
   const type = ({ Dubletten: "duplicates", Transfers: "transfers", Rückerstattungen: "refunds" } as Record<string, string>)[tab];
   const result = useFinanceQuery<Record<string, Array<Record<string, unknown>>>>(query, type ? { type } : tab === "Forecast-Konflikte" ? { status: "MISSED" } : {});
   const [message, setMessage] = useState("");
-  const items = useMemo(() => { const data = result.envelope?.data; if (!data) return []; return data.reviews ?? data.patterns?.filter((x) => x.status === "PROPOSED") ?? data.expected_transactions?.filter((x) => x.status === "MISSED") ?? []; }, [result.envelope]);
+  const items = useMemo(() => { const data = result.envelope?.data; if (!data) return []; const rows = data.reviews ?? data.patterns?.filter((x) => x.status === "PROPOSED") ?? data.expected_transactions?.filter((x) => x.status === "MISSED") ?? []; return accountReviewTypes[tab] ? rows.filter((item) => item.review_type === accountReviewTypes[tab]) : rows; }, [result.envelope, tab]);
   const reviewAction = async (item: Record<string, unknown>, confirm: boolean) => {
     const eventPayload = (item.payload as Record<string, unknown> | undefined) ?? item;
     const transaction = (item.transaction as Record<string, unknown> | undefined) ?? item;
@@ -262,8 +303,9 @@ function Reviews() {
     if (!command || Object.values(payload).some((value) => value == null)) { setMessage("Diese Prüfung benötigt weitere Angaben in der Detailansicht."); return; }
     await financeBridge.command(command, payload); setMessage(`${confirm ? "Bestätigung" : "Ablehnung"} wurde lokal dokumentiert.`);
   };
-  const presentation = (item: Record<string, unknown>) => { const tx = (item.transaction as Record<string, unknown> | undefined) ?? {}; const eventPayload = (item.payload as Record<string, unknown> | undefined) ?? {}; return { title: String(item.counterparty ?? tx.counterparty ?? item.merchant_key ?? item.title ?? "Prüfung erforderlich"), detail: String(item.detail ?? item.proposed_category ?? eventPayload.status ?? item.status ?? "Policy-Abweichung nachvollziehen") }; };
-  return <><div className="review-tabs" role="tablist" aria-label="Prüfgruppen">{reviewTabs.map((item) => <button key={item} role="tab" aria-selected={tab === item} onClick={() => setTab(item)}>{item}<span>{item === tab ? items.length : ""}</span></button>)}</div>{message && <div className="toast" role="status">{message}</div>}<QueryBoundary result={{ ...result, state: result.state === "EMPTY" ? "READY" : result.state }}>{() => <section className="review-list"><div className="section-intro"><div><h2>{tab}</h2><p>Entscheidungen werden als neue Events dokumentiert und nie still überschrieben.</p></div>{type && <button className="secondary" onClick={() => financeBridge.command(type === "duplicates" ? "DetectDuplicates" : type === "transfers" ? "DetectTransfers" : "DetectRefunds", {})}>Prüfungen aktualisieren</button>}</div>{items.length === 0 ? <div className="panel page-state"><span className="empty-icon">✓</span><h3>Alles geprüft</h3><p>In dieser Gruppe sind keine offenen Entscheidungen.</p></div> : items.map((item, index) => { const shown = presentation(item); return <article className="panel review-card" key={String(item.transaction_id ?? item.relation_id ?? item.pattern_id ?? item.expected_transaction_id ?? index)}><span className="review-index">{String(index + 1).padStart(2, "0")}</span><div><span className="eyebrow">{tab.toUpperCase()}</span><h3>{shown.title}</h3><p>{shown.detail}</p></div><div className="review-actions">{tab === "Forecast-Konflikte" ? <span className="status-badge missed">OFFEN</span> : <><button className="primary small" onClick={() => reviewAction(item, true)}>Bestätigen</button><button className="secondary small" onClick={() => reviewAction(item, false)}>Ablehnen</button></>}</div></article>; })}</section>}</QueryBoundary></>;
+  const presentation = (item: Record<string, unknown>) => { const tx = (item.transaction as Record<string, unknown> | undefined) ?? {}; const eventPayload = (item.payload as Record<string, unknown> | undefined) ?? {}; return { title: String(item.counterparty ?? tx.counterparty ?? item.merchant_key ?? item.display_name ?? item.title ?? "Prüfung erforderlich"), detail: String(item.detail ?? item.proposed_category ?? item.review_type ?? eventPayload.status ?? item.status ?? "Policy-Abweichung nachvollziehen") }; };
+  const passiveReview = tab === "Forecast-Konflikte" || Boolean(accountReviewTypes[tab]);
+  return <><div className="review-tabs" role="tablist" aria-label="Prüfgruppen">{reviewTabs.map((item) => <button key={item} role="tab" aria-selected={tab === item} onClick={() => setTab(item)}>{item}<span>{item === tab ? items.length : ""}</span></button>)}</div>{message && <div className="toast" role="status">{message}</div>}<QueryBoundary result={{ ...result, state: result.state === "EMPTY" ? "READY" : result.state }}>{() => <section className="review-list"><div className="section-intro"><div><h2>{tab}</h2><p>Entscheidungen werden als neue Events dokumentiert und nie still überschrieben.</p></div>{type && <button className="secondary" onClick={() => financeBridge.command(type === "duplicates" ? "DetectDuplicates" : type === "transfers" ? "DetectTransfers" : "DetectRefunds", {})}>Prüfungen aktualisieren</button>}</div>{items.length === 0 ? <div className="panel page-state"><span className="empty-icon">✓</span><h3>Alles geprüft</h3><p>In dieser Gruppe sind keine offenen Entscheidungen.</p></div> : items.map((item, index) => { const shown = presentation(item); return <article className="panel review-card" key={String(item.transaction_id ?? item.relation_id ?? item.pattern_id ?? item.expected_transaction_id ?? index)}><span className="review-index">{String(index + 1).padStart(2, "0")}</span><div><span className="eyebrow">{tab.toUpperCase()}</span><h3>{shown.title}</h3><p>{shown.detail}</p></div><div className="review-actions">{passiveReview ? <span className="status-badge missed">OFFEN</span> : <><button className="primary small" onClick={() => reviewAction(item, true)}>Bestätigen</button><button className="secondary small" onClick={() => reviewAction(item, false)}>Ablehnen</button></>}</div></article>; })}</section>}</QueryBoundary></>;
 }
 
 function Imports() {

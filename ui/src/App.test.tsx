@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
 import { mockQuery } from "./mockData";
@@ -9,9 +9,18 @@ describe("Finance UI contract", () => {
 
     expect(await screen.findByRole("heading", { name: "Übersicht" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Wiederkehrend/ })).toBeInTheDocument();
-    expect(screen.queryByText("Vermögen")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Konten/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Vermögen/ })).toBeInTheDocument();
     expect(screen.queryByText("Steuer")).not.toBeInTheDocument();
     expect(screen.queryByText("Belege")).not.toBeInTheDocument();
+  });
+
+  it("renders account projections and stale balances explicitly", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
+    expect(await screen.findByRole("heading", { name: "Konten" })).toBeInTheDocument();
+    expect(await screen.findByText("Wertpapierdepot")).toBeInTheDocument();
+    expect(screen.getAllByText("Veraltet").length).toBeGreaterThan(0);
   });
 
   it("exposes all three runtime security states without treating unchecked as passed", () => {

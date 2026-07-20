@@ -4,6 +4,18 @@ import argparse
 import os
 from decimal import Decimal
 
+from .accounts import (
+    account_balance_history,
+    account_overview,
+    close_account,
+    correct_balance_snapshot,
+    create_account,
+    liquidity_overview,
+    net_worth_overview,
+    reconcile_account_balance,
+    record_balance_snapshot,
+    update_account,
+)
 from .cashflow import monthly_cashflow
 from .classification import (
     category_breakdown,
@@ -130,6 +142,58 @@ def _parser() -> argparse.ArgumentParser:
     for action in ("create", "show", "evaluate"):
         command = forecast_sub.add_parser(action)
         command.add_argument("--month", required=True)
+
+    account = sub.add_parser("account")
+    account_sub = account.add_subparsers(dest="account_action", required=True)
+    account_sub.add_parser("list")
+    account_create = account_sub.add_parser("create")
+    account_create.add_argument("--id")
+    account_create.add_argument("--name", required=True)
+    account_create.add_argument("--type", required=True)
+    account_create.add_argument("--institution", default="")
+    account_create.add_argument("--currency", default="EUR")
+    account_create.add_argument("--opened-at")
+    account_create.add_argument("--reference")
+    account_create.add_argument("--cashflow", action=argparse.BooleanOptionalAction, default=True)
+    account_create.add_argument("--liquidity", action=argparse.BooleanOptionalAction)
+    account_create.add_argument("--net-worth", action=argparse.BooleanOptionalAction, default=True)
+    account_update = account_sub.add_parser("update")
+    account_update.add_argument("--account", required=True)
+    account_update.add_argument("--name")
+    account_update.add_argument("--institution")
+    account_update.add_argument("--cashflow", action=argparse.BooleanOptionalAction)
+    account_update.add_argument("--liquidity", action=argparse.BooleanOptionalAction)
+    account_update.add_argument("--net-worth", action=argparse.BooleanOptionalAction)
+    account_close = account_sub.add_parser("close")
+    account_close.add_argument("--account", required=True)
+    account_close.add_argument("--date", required=True)
+
+    balance = sub.add_parser("balance")
+    balance_sub = balance.add_subparsers(dest="balance_action", required=True)
+    balance_record = balance_sub.add_parser("record")
+    balance_record.add_argument("--account", required=True)
+    balance_record.add_argument("--date", required=True)
+    balance_record.add_argument("--booked", required=True)
+    balance_record.add_argument("--available")
+    balance_record.add_argument("--currency", default="EUR")
+    balance_record.add_argument(
+        "--source",
+        choices=["IMPORT_SOURCE", "MANUAL_ENTRY", "CALCULATED", "RECONCILED"],
+        default="MANUAL_ENTRY",
+    )
+    balance_record.add_argument("--confidence", choices=["HIGH", "MEDIUM", "LOW"], default="HIGH")
+    balance_correct = balance_sub.add_parser("correct")
+    balance_correct.add_argument("--snapshot", required=True)
+    balance_correct.add_argument("--booked", required=True)
+    balance_correct.add_argument("--available")
+    balance_correct.add_argument("--reason", required=True)
+    balance_reconcile = balance_sub.add_parser("reconcile")
+    balance_reconcile.add_argument("--account", required=True)
+    balance_history = balance_sub.add_parser("history")
+    balance_history.add_argument("--account", required=True)
+
+    sub.add_parser("liquidity")
+    sub.add_parser("net-worth")
     return parser
 
 
@@ -167,27 +231,98 @@ def main() -> int:
         else KeychainKeyProvider()
     )
     with LocalFinanceStore(args.data_dir, provider) as store:
-        if args.action == "import":
+        if args.action == "account":
+            if args.account_action == "create":
+                account_id = create_account(
+                    store,
+                    account_id=args.id,
+                    display_name=args.name,
+                    account_type=args.type,
+                    institution=args.institution,
+                    currency=args.currency,
+                    include_in_cashflow=args.cashflow,
+                    include_in_liquidity=args.liquidity,
+                    include_in_net_worth=args.net_worth,
+                    opened_at=args.opened_at,
+                    account_reference=args.reference,
+                )
+                print(f"Konto erstellt: {account_id}")
+            elif args.account_action == "update":
+                changes = {
+                    key: value
+                    for key, value in {
+                        "display_name": args.name,
+                        "institution": args.institution,
+                        "include_in_cashflow": args.cashflow,
+                        "include_in_liquidity": args.liquidity,
+                        "include_in_net_worth": args.net_worth,
+                    }.items()
+                    if value is not None
+                }
+                update_account(store, args.account, **changes)
+                print("Konto aktualisiert.")
+            elif args.account_action == "close":
+                close_account(store, args.account, args.date)
+                print("Konto geschlossen.")
+            else:
+                for item in account_overview(store):
+                    print(
+                        f"{item['account_id']} | {item['display_name']} | "
+                        f"{item['account_type']} | {item['latest_balance'] or '–'} "
+                        f"{item['currency']} | {item['freshness']}"
+                    )
+        elif args.action == "balance":
+            if args.balance_action == "record":
+                snapshot_id = record_balance_snapshot(
+                    store,
+                    account_id=args.account,
+                    balance_date=args.date,
+                    booked_balance=args.booked,
+                    available_balance=args.available,
+                    currency=args.currency,
+                    source=args.source,
+                    confidence=args.confidence,
+                )
+                print(f"Saldo-Snapshot erfasst: {snapshot_id}")
+            elif args.balance_action == "correct":
+                replacement = correct_balance_snapshot(
+                    store,
+                    args.snapshot,
+                    booked_balance=args.booked,
+                    available_balance=args.available,
+                    reason=args.reason,
+                )
+                print(f"Saldo-Snapshot korrigiert: {replacement}")
+            elif args.balance_action == "reconcile":
+                reconcile_account_balance(store, args.account)
+                print("Saldenabgleich abgeschlossen.")
+            else:
+                for item in account_balance_history(store, args.account):
+                    print(
+                        f"{item['snapshot_id']} | {item['balance_date']} | "
+                        f"{item['booked_balance']} {item['currency']} | {item['source']}"
+                    )
+        elif args.action == "liquidity":
+            result = liquidity_overview(store)
+            print(
+                f"Liquidität: {Decimal(result['liquid_funds']):.2f} "
+                f"{result['valuation_currency']} | Stand {result['as_of']}"
+            )
+        elif args.action == "net-worth":
+            result = net_worth_overview(store)
+            print(
+                f"Nettovermögen: {Decimal(result['net_worth']):.2f} "
+                f"{result['valuation_currency']} | Vermögen "
+                f"{Decimal(result['total_assets']):.2f} | Verbindlichkeiten "
+                f"{Decimal(result['liabilities']):.2f}"
+            )
+        elif args.action == "import":
             batch = import_csv(store, args.file, args.account)
             normalize_batch(store, batch)
             print("Import abgeschlossen: lokal und verschlüsselt")
         elif args.action == "cashflow":
             if args.reconciled:
                 _print_reconciled_cashflow(reconciled_monthly_cashflow(store, args.month))
-            elif args.target == "recurring":
-                rows = [
-                    pattern
-                    for pattern in recurring_patterns(store).values()
-                    if pattern["status"] == "PROPOSED"
-                ]
-                if not rows:
-                    print("Keine offenen wiederkehrenden Muster.")
-                for pattern in rows:
-                    print(
-                        f"{pattern['pattern_id']} | {pattern['merchant_key']} | "
-                        f"{pattern['frequency']} | {pattern['expected_amount']} EUR | "
-                        f"{pattern['confidence']}"
-                    )
             else:
                 _print_cashflow(monthly_cashflow(store, args.month))
         elif args.action == "classify":
@@ -211,6 +346,20 @@ def main() -> int:
                         f"{transaction['transaction_id']} | {transaction['booking_date']} | "
                         f"{transaction['counterparty']} | {transaction['amount']} "
                         f"{transaction['currency']} | {category} | {status}"
+                    )
+            elif args.target == "recurring":
+                rows = [
+                    pattern
+                    for pattern in recurring_patterns(store).values()
+                    if pattern["status"] == "PROPOSED"
+                ]
+                if not rows:
+                    print("Keine offenen wiederkehrenden Muster.")
+                for pattern in rows:
+                    print(
+                        f"{pattern['pattern_id']} | {pattern['merchant_key']} | "
+                        f"{pattern['frequency']} | {pattern['expected_amount']} EUR | "
+                        f"{pattern['confidence']}"
                     )
             else:
                 relations = relation_review(store, args.target)

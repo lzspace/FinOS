@@ -12,7 +12,7 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
   const month = String(payload.month ?? "2026-07");
   const responses: Record<string, Envelope<unknown>> = {
     GetCapabilityManifest: envelope({
-      extension_version: "0.6.0",
+      extension_version: "0.7.0",
       schema_version: "1.0.0",
       capabilities: {
         imports: true,
@@ -21,7 +21,11 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
         recurring_patterns: true,
         forecasting: true,
         forecast_evaluation: true,
-        wealth: false,
+        accounts: true,
+        balances: true,
+        liquidity: true,
+        net_worth: true,
+        wealth: true,
         tax: false,
         receipts: false,
         cloud_sync: false,
@@ -29,7 +33,7 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
       },
     }),
     GetRuntimeSecurityStatus: envelope({
-      extension_version: "0.6.0",
+      extension_version: "0.7.0",
       schema_version: "1.0.0",
       last_event_sequence: 892,
       checks: {
@@ -53,7 +57,32 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
       remaining_expected_expenses: "603.40",
       savings_rate: "39.85",
       open_reviews: 7,
+      liquid_balance: "18420.00",
+      liquid_balance_as_of: "2026-07-20",
+      projected_month_end_balance: "18136.60",
+      net_worth: "86420.00",
+      net_worth_as_of: "2026-07-20",
     }),
+    ListAccounts: envelope({ accounts: [
+      { account_id: "acc_main", display_name: "Girokonto", account_type: "CHECKING", institution: "Lokale Bank", currency: "EUR", status: "ACTIVE", include_in_cashflow: true, include_in_liquidity: true, include_in_net_worth: true, opened_at: "2022-03-01", closed_at: null, masked_reference: "•••• 4821", latest_balance: "6420.00", available_balance: "6180.00", balance_date: "2026-07-20", balance_source: "IMPORT_SOURCE", reconciliation_status: "MATCHED", freshness: "CURRENT" },
+      { account_id: "acc_savings", display_name: "Rücklage", account_type: "SAVINGS", institution: "Lokale Bank", currency: "EUR", status: "ACTIVE", include_in_cashflow: false, include_in_liquidity: true, include_in_net_worth: true, opened_at: "2021-01-01", closed_at: null, masked_reference: "•••• 1288", latest_balance: "12000.00", available_balance: "12000.00", balance_date: "2026-07-18", balance_source: "MANUAL_ENTRY", reconciliation_status: "NOT_RECONCILED", freshness: "CURRENT" },
+      { account_id: "acc_depot", display_name: "Wertpapierdepot", account_type: "BROKERAGE", institution: "Direktbank", currency: "EUR", status: "ACTIVE", include_in_cashflow: false, include_in_liquidity: false, include_in_net_worth: true, opened_at: "2020-05-01", closed_at: null, masked_reference: "•••• 7704", latest_balance: "72500.00", available_balance: null, balance_date: "2026-07-01", balance_source: "MANUAL_ENTRY", reconciliation_status: "NOT_RECONCILED", freshness: "CURRENT" },
+      { account_id: "acc_card", display_name: "Kreditkarte", account_type: "CREDIT_CARD", institution: "Kartenbank", currency: "EUR", status: "ACTIVE", include_in_cashflow: true, include_in_liquidity: false, include_in_net_worth: true, opened_at: "2023-06-01", closed_at: null, masked_reference: "•••• 9012", latest_balance: "-2480.00", available_balance: null, balance_date: "2026-05-31", balance_source: "IMPORT_SOURCE", reconciliation_status: "REVIEW_REQUIRED", freshness: "STALE" },
+    ] }, "STALE"),
+    GetAccount: envelope({ account: { account_id: String(payload.account_id ?? "acc_main"), display_name: payload.account_id === "acc_card" ? "Kreditkarte" : "Girokonto", account_type: payload.account_id === "acc_card" ? "CREDIT_CARD" : "CHECKING", institution: payload.account_id === "acc_card" ? "Kartenbank" : "Lokale Bank", currency: "EUR", status: "ACTIVE", include_in_cashflow: true, include_in_liquidity: payload.account_id !== "acc_card", include_in_net_worth: true, opened_at: "2022-03-01", closed_at: null, masked_reference: payload.account_id === "acc_card" ? "•••• 9012" : "•••• 4821", latest_balance: payload.account_id === "acc_card" ? "-2480.00" : "6420.00", available_balance: payload.account_id === "acc_card" ? null : "6180.00", balance_date: payload.account_id === "acc_card" ? "2026-05-31" : "2026-07-20", balance_source: "IMPORT_SOURCE", reconciliation_status: payload.account_id === "acc_card" ? "REVIEW_REQUIRED" : "MATCHED", freshness: payload.account_id === "acc_card" ? "STALE" : "CURRENT" }, balance_history: payload.account_id === "acc_card" ? [{ snapshot_id: "bal_card", balance_date: "2026-05-31", booked_balance: "-2480.00", currency: "EUR", source: "IMPORT_SOURCE" }] : [{ snapshot_id: "bal_02", balance_date: "2026-07-20", booked_balance: "6420.00", currency: "EUR", source: "IMPORT_SOURCE" }, { snapshot_id: "bal_01", balance_date: "2026-07-01", booked_balance: "5200.00", currency: "EUR", source: "RECONCILED" }], reconciliation: payload.account_id === "acc_card" ? { status: "REVIEW_REQUIRED", calculated_balance: "-2437.20", reported_balance: "-2480.00", balance_difference: "-42.80" } : { status: "MATCHED", calculated_balance: "6420.00", reported_balance: "6420.00", balance_difference: "0.00" } }),
+    GetAccountBalanceHistory: envelope({ account_id: String(payload.account_id ?? "acc_main"), snapshots: [{ snapshot_id: "bal_02", balance_date: "2026-07-20", booked_balance: "6420.00", currency: "EUR", source: "IMPORT_SOURCE" }] }),
+    GetBalanceReconciliation: envelope({ account_id: String(payload.account_id ?? "acc_main"), status: "MATCHED", calculated_balance: "6420.00", reported_balance: "6420.00", balance_difference: "0.00" }),
+    GetLiquidityOverview: envelope({ valuation_currency: "EUR", as_of: "2026-07-20", liquid_funds: "18420.00", accounts: [], stale_account_ids: [], currency_conflicts: [] }),
+    GetNetWorthOverview: envelope({ valuation_currency: "EUR", as_of: "2026-07-20", liquid_funds: "18420.00", savings: "12000.00", investments: "72500.00", other_assets: "0.00", total_assets: "90920.00", liabilities: "4500.00", net_worth: "86420.00", investable_assets: "84500.00", currency_conflicts: [], source_snapshot_ids: ["bal_01", "bal_02", "bal_03", "bal_04"] }),
+    GetNetWorthHistory: envelope({ history: [{ as_of: "2026-05-31", net_worth: "82100.00" }, { as_of: "2026-06-30", net_worth: "84280.00" }, { as_of: "2026-07-20", net_worth: "86420.00" }] }),
+    GetLiabilityOverview: envelope({ valuation_currency: "EUR", total_liabilities: "4500.00", liabilities: [{ item_id: "acc_card", display_name: "Kreditkarte", item_type: "CREDIT_CARD", amount: "2480.00", currency: "EUR", valuation_date: "2026-05-31" }, { item_id: "lia_loan", display_name: "Privatkredit", item_type: "LOAN", amount: "2020.00", currency: "EUR", valuation_date: "2026-07-20" }], currency_conflicts: [] }),
+    GetAssetAllocation: envelope({ valuation_currency: "EUR", total_assets: "90920.00", allocation: { LIQUIDITY: "18420.00", INVESTMENTS: "72500.00", OTHER_ASSETS: "0.00" }, currency_conflicts: [] }),
+    GetProjectedMonthEndBalance: envelope({ month, status: "READY", latest_confirmed_liquid_balance: "18420.00", realized_cashflow_since_snapshots: "0.00", remaining_expected_income: "320.00", remaining_expected_expenses: "603.40", projected_month_end_balance: "18136.60", snapshot_dates: ["2026-07-18", "2026-07-20"], source_event_sequence: 892 }),
+    ListAccountReviews: envelope({ reviews: [
+      { review_type: "BALANCE_DIFFERENCE", account_id: "acc_card", display_name: "Kreditkarte", reconciliation: { balance_difference: "-42.80", currency: "EUR" } },
+      { review_type: "STALE_BALANCE", account_id: "acc_card", display_name: "Kreditkarte", balance_date: "2026-05-31" },
+      { review_type: "OPENING_BALANCE_MISSING", account_id: "acc_cash", display_name: "Bargeld" },
+    ] }),
     ListTransactions: envelope({
       transactions: [
         { transaction_id: "txn_104", booking_date: "2026-07-18", amount: "-83.42", currency: "EUR", counterparty: "Markthalle Süd", description: "Lebensmittel", category_code: "FOOD_GROCERIES", duplicate_status: "NONE", transfer_status: "NONE", refund_status: "NONE", cashflow_relevant: true },

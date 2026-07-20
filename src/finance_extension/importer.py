@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+from .accounts import account_accepts_transaction
 from .storage_policy import validate_runtime_path
 from .store import LocalFinanceStore
 
@@ -77,6 +78,8 @@ def import_csv(store: LocalFinanceStore, source: str | Path, account_id: str) ->
                 raise ValueError
         except (InvalidOperation, ValueError) as exc:
             raise ImportErrorSafe("FINANCE_IMPORT_ROW_INVALID") from exc
+        if not account_accepts_transaction(store, account_id, row["booking_date"]):
+            raise ImportErrorSafe("FINANCE_IMPORT_ACCOUNT_CLOSED")
     batch_id, command_id = "imp_" + hashlib.sha256(raw).hexdigest(), _id("cmd")
     command = {
         "command_id": command_id,

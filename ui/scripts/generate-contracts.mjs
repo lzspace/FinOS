@@ -15,6 +15,16 @@ const required = [
   "recurring_pattern_list.response.schema.json",
   "forecast.response.schema.json",
   "forecast_evaluation.response.schema.json",
+  "account_list.response.schema.json",
+  "account_detail.response.schema.json",
+  "account_balance_history.response.schema.json",
+  "balance_reconciliation.response.schema.json",
+  "liquidity_overview.response.schema.json",
+  "net_worth_overview.response.schema.json",
+  "net_worth_history.response.schema.json",
+  "liability_overview.response.schema.json",
+  "asset_allocation.response.schema.json",
+  "projected_month_end_balance.response.schema.json",
 ];
 
 for (const name of required) {

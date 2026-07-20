@@ -8,6 +8,11 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from jsonschema import Draft202012Validator, FormatChecker
 
+from finance_extension.accounts import (
+    create_account,
+    record_balance_snapshot,
+    reconcile_account_balance,
+)
 from finance_extension.application import ApplicationContractError, FinanceApplicationService
 from finance_extension.crypto import StaticKeyProvider
 from finance_extension.importer import import_csv, normalize_batch
@@ -46,7 +51,9 @@ class ApplicationServiceTests(unittest.TestCase):
         response = self.application.query("GetCapabilityManifest")
         capabilities = response["data"]["capabilities"]
         self.assertTrue(capabilities["forecasting"])
-        for hidden in ("wealth", "tax", "receipts", "cloud_sync", "external_models"):
+        self.assertTrue(capabilities["wealth"])
+        self.assertTrue(capabilities["accounts"])
+        for hidden in ("tax", "receipts", "cloud_sync", "external_models"):
             self.assertFalse(capabilities[hidden])
         self._validate(response, "capability_manifest.response.schema.json")
 
@@ -84,6 +91,57 @@ class ApplicationServiceTests(unittest.TestCase):
         response = self.application.command("ClassifyTransactions", {"month": "2026-07"})
         self.assertEqual(response["status"], "COMPLETED")
         self.assertGreater(response["event_store_sequence"], 0)
+
+    def test_account_and_net_worth_queries_use_versioned_projection_contracts(self) -> None:
+        create_account(
+            self.store,
+            account_id="acc_main",
+            display_name="Girokonto",
+            account_type="CHECKING",
+            institution="Lokale Bank",
+            currency="EUR",
+            opened_at="2026-01-01",
+        )
+        record_balance_snapshot(
+            self.store,
+            account_id="acc_main",
+            balance_date="2026-07-20",
+            booked_balance="1200.00",
+            available_balance="1150.00",
+            currency="EUR",
+            source="MANUAL_ENTRY",
+            confidence="HIGH",
+        )
+        reconcile_account_balance(self.store, "acc_main")
+        accounts = self.application.query("ListAccounts", {"as_of": "2026-07-20"})
+        account = self.application.query(
+            "GetAccount", {"account_id": "acc_main", "as_of": "2026-07-20"}
+        )
+        history = self.application.query(
+            "GetAccountBalanceHistory", {"account_id": "acc_main"}
+        )
+        reconciliation = self.application.query(
+            "GetBalanceReconciliation", {"account_id": "acc_main"}
+        )
+        liquidity = self.application.query("GetLiquidityOverview", {"as_of": "2026-07-20"})
+        worth = self.application.query("GetNetWorthOverview", {"as_of": "2026-07-20"})
+        worth_history = self.application.query("GetNetWorthHistory")
+        liabilities = self.application.query("GetLiabilityOverview")
+        allocation = self.application.query("GetAssetAllocation")
+        projected = self.application.query("GetProjectedMonthEndBalance", {"month": "2026-07"})
+        self.assertNotIn("account_reference", accounts["data"]["accounts"][0])
+        self.assertEqual(liquidity["data"]["liquid_funds"], "1150.00")
+        self.assertEqual(worth["data"]["net_worth"], "1200.00")
+        self._validate(accounts, "account_list.response.schema.json")
+        self._validate(account, "account_detail.response.schema.json")
+        self._validate(history, "account_balance_history.response.schema.json")
+        self._validate(reconciliation, "balance_reconciliation.response.schema.json")
+        self._validate(liquidity, "liquidity_overview.response.schema.json")
+        self._validate(worth, "net_worth_overview.response.schema.json")
+        self._validate(worth_history, "net_worth_history.response.schema.json")
+        self._validate(liabilities, "liability_overview.response.schema.json")
+        self._validate(allocation, "asset_allocation.response.schema.json")
+        self._validate(projected, "projected_month_end_balance.response.schema.json")
 
 
 if __name__ == "__main__":

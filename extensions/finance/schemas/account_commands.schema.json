@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/account_commands.schema.json",
+  "title": "Finance Extension 0.7.0 account commands",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command_id", "command_type", "idempotency_key", "payload"],
+  "properties": {
+    "command_id": { "type": "string", "pattern": "^cmd_[a-f0-9]{32}$" },
+    "command_type": { "enum": ["CreateAccount", "UpdateAccount", "CloseAccount", "RecordBalanceSnapshot", "CorrectBalanceSnapshot", "ReconcileAccountBalance", "CreateAssetSnapshot", "CorrectAssetSnapshot", "CreateLiabilitySnapshot", "CorrectLiabilitySnapshot"] },
+    "idempotency_key": { "type": "string", "minLength": 8 },
+    "payload": { "type": "object" }
+  }
+}

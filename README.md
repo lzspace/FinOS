@@ -17,7 +17,7 @@ python -m finance_extension.repository_guard --all
 ruff check src tests
 ```
 
-## Vertical Slices 0.2.0 through 0.6.0
+## Vertical Slices 0.2.0 through 0.7.0
 
 The first executable slice supports only `GenericFinanceCsvV1`:
 
@@ -112,3 +112,19 @@ The production desktop host injects `window.__FINANCE_IPC__` with `query`,
 `command` and controlled local file-selection methods. The standalone browser
 preview deliberately contains synthetic projections only. No public HTTP API,
 external fonts, analytics, remote assets or external models are used.
+
+Version 0.7.0 introduces explicit accounts and balance facts. Reported,
+manual, calculated and reconciled balances remain distinguishable; corrections
+append replacement events instead of mutating snapshots. Liquidity, assets,
+liabilities, net worth and projected month-end balances are deterministic
+projections with visible dates, freshness and currency conflicts.
+
+```bash
+finance --data-dir /absolute/local/finance-data account create \
+  --id acc_main --name Girokonto --type CHECKING --institution "Lokale Bank"
+finance --data-dir /absolute/local/finance-data balance record \
+  --account acc_main --date 2026-07-20 --booked 1250.00 --available 1200.00
+finance --data-dir /absolute/local/finance-data balance reconcile --account acc_main
+finance --data-dir /absolute/local/finance-data liquidity
+finance --data-dir /absolute/local/finance-data net-worth
+```

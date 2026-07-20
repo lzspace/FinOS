@@ -1,4 +1,4 @@
-# Finance Extension contracts and Vertical Slice v0.6.0
+# Finance Extension contracts and Vertical Slice v0.7.0
 
 This directory turns the agreed finance domain model into executable interface
 contracts. It deliberately contains no production finance data and has no
@@ -28,6 +28,12 @@ Application API. Query responses use versioned Draft 2020-12 schemas and
 generated TypeScript contracts. The host boundary is deliberately narrow:
 React uses Desktop IPC, IPC invokes named commands or projection queries, and
 no UI component can append events or reach protected storage directly.
+
+Version 0.7.0 adds event-sourced accounts, immutable balance snapshots,
+explicit balance reconciliation, asset and liability valuations, consolidated
+liquidity and net-worth projections, and a balance-based month-end forecast.
+Reported and calculated balances are never conflated. Foreign currencies stay
+visible as conflicts until an explicit valuation rate is available.
 
 ## Binding security invariants
 
@@ -61,9 +67,14 @@ never binary floating point.
 - `schemas/forecast_commands.schema.json` and
   `schemas/forecast_events.schema.json`: executable 0.5.0 recurring and
   forecast contracts.
-- `schemas/*.response.schema.json`: executable 0.6.0 query-response contracts
+- `schemas/*.response.schema.json`: executable query-response contracts since 0.6.0
   for capabilities, runtime security, dashboard, transactions, reviews,
   recurring patterns and forecasts.
+- `schemas/account_commands.schema.json` and
+  `schemas/account_events.schema.json`: executable 0.7.0 contracts for account,
+  balance, asset and liability changes.
+- the 0.7.0 account, liquidity, net-worth and projected-balance response
+  schemas extend the local Application API without adding a public HTTP API.
 - `examples/`: synthetic envelopes for integration tests and documentation.
 
 ## Local UI boundary

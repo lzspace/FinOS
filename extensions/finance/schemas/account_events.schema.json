@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/account_events.schema.json",
+  "title": "Finance Extension 0.7.0 account and valuation events",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "occurred_at", "correlation_id", "causation_id", "payload"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+    "event_type": { "enum": ["AccountCreated", "AccountUpdated", "AccountClosed", "BalanceSnapshotRecorded", "BalanceSnapshotCorrected", "AccountBalanceReconciled", "AssetSnapshotRecorded", "AssetSnapshotCorrected", "LiabilitySnapshotRecorded", "LiabilitySnapshotCorrected"] },
+    "aggregate_type": { "enum": ["Account", "AccountBalanceSnapshot", "AccountBalanceReconciliation", "AssetSnapshot", "LiabilitySnapshot"] },
+    "aggregate_id": { "type": "string", "minLength": 4 },
+    "aggregate_version": { "type": "integer", "minimum": 1 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "correlation_id": { "type": "string", "pattern": "^cmd_[a-f0-9]{32}$" },
+    "causation_id": { "type": "string", "pattern": "^cmd_[a-f0-9]{32}$" },
+    "payload": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "account_id": { "type": "string" },
+        "snapshot_id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "account_type": { "enum": ["CHECKING", "SAVINGS", "CREDIT_CARD", "CASH", "BROKERAGE", "LOAN", "MORTGAGE", "OTHER"] },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "booked_balance": { "type": "string" },
+        "available_balance": { "type": ["string", "null"] },
+        "balance_date": { "type": "string", "format": "date" },
+        "valuation_date": { "type": "string", "format": "date" },
+        "amount": { "type": "string" },
+        "source": { "enum": ["IMPORT_SOURCE", "MANUAL_ENTRY", "CALCULATED", "RECONCILED"] },
+        "confidence": { "enum": ["HIGH", "MEDIUM", "LOW"] },
+        "supersedes_snapshot_id": { "type": ["string", "null"] },
+        "status": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

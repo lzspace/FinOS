@@ -43,6 +43,16 @@ SCHEMA_BY_EVENT = {
     "ForecastCreated": "forecast_events.schema.json",
     "ForecastEvaluated": "forecast_events.schema.json",
     "ForecastSuperseded": "forecast_events.schema.json",
+    "AccountCreated": "account_events.schema.json",
+    "AccountUpdated": "account_events.schema.json",
+    "AccountClosed": "account_events.schema.json",
+    "BalanceSnapshotRecorded": "account_events.schema.json",
+    "BalanceSnapshotCorrected": "account_events.schema.json",
+    "AccountBalanceReconciled": "account_events.schema.json",
+    "AssetSnapshotRecorded": "account_events.schema.json",
+    "AssetSnapshotCorrected": "account_events.schema.json",
+    "LiabilitySnapshotRecorded": "account_events.schema.json",
+    "LiabilitySnapshotCorrected": "account_events.schema.json",
 }
 
 
