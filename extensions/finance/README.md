@@ -1,4 +1,4 @@
-# Finance Extension contracts and Vertical Slice v0.3.0
+# Finance Extension contracts and Vertical Slice v0.6.0
 
 This directory turns the agreed finance domain model into executable interface
 contracts. It deliberately contains no production finance data and has no
@@ -13,6 +13,21 @@ Version 0.3.0 adds deterministic classification rules, explicit user review,
 immutable classification decisions and category breakdowns reconstructed from
 events. Stable technical category codes are defined in
 `src/finance_extension/categories.py`; display names may be localized later.
+
+Version 0.4.0 adds append-only duplicate, transfer and refund relations plus
+reconciled monthly cashflow and category projections. Gross and effective
+values remain separately reconstructable from the event stream.
+
+Version 0.5.0 adds deterministic recurring-pattern detection, versioned user
+decisions, expected-transaction matching, three forecast scenarios and
+event-sourced forecast evaluation. Paused, ended and irregular patterns are
+not forecast-relevant. Forecast history remains immutable.
+
+Version 0.6.0 adds a capability-driven React desktop UI and an explicit local
+Application API. Query responses use versioned Draft 2020-12 schemas and
+generated TypeScript contracts. The host boundary is deliberately narrow:
+React uses Desktop IPC, IPC invokes named commands or projection queries, and
+no UI component can append events or reach protected storage directly.
 
 ## Binding security invariants
 
@@ -40,7 +55,25 @@ never binary floating point.
   payload families.
 - `schemas/classification_events.schema.json`: executable 0.3.0 classification
   event contracts.
+- `schemas/reconciliation_commands.schema.json` and
+  `schemas/reconciliation_events.schema.json`: executable 0.4.0 relationship
+  contracts.
+- `schemas/forecast_commands.schema.json` and
+  `schemas/forecast_events.schema.json`: executable 0.5.0 recurring and
+  forecast contracts.
+- `schemas/*.response.schema.json`: executable 0.6.0 query-response contracts
+  for capabilities, runtime security, dashboard, transactions, reviews,
+  recurring patterns and forecasts.
 - `examples/`: synthetic envelopes for integration tests and documentation.
+
+## Local UI boundary
+
+The source is in `ui/`. `npm run generate:contracts` verifies the nine
+versioned response schemas before generating the TypeScript contract module.
+`npm run build` creates a relative-path production bundle, and
+`npm run check:offline` rejects external resource candidates. Production uses
+a desktop-host injection named `window.__FINANCE_IPC__`; the in-browser preview
+adapter only returns synthetic data.
 
 Schemas use JSON Schema Draft 2020-12. Schema version and policy version are
 separate: an interface can remain at schema `1.0.0` while a classification or

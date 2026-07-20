@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/reconciliation_commands.schema.json",
+  "title": "Finance Extension 0.4.0 reconciliation commands",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command_id", "command_type", "idempotency_key", "payload"],
+  "properties": {
+    "command_id": { "type": "string", "pattern": "^cmd_[a-f0-9]{32}$" },
+    "command_type": { "enum": ["DetectDuplicates", "ConfirmDuplicate", "RejectDuplicate", "DetectTransfers", "ConfirmTransfer", "RejectTransfer", "BreakTransferMatch", "DetectRefunds", "ConfirmRefund", "RejectRefund"] },
+    "idempotency_key": { "type": "string", "minLength": 8 },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "month": { "type": "string", "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])$" },
+        "relation_id": { "type": "string" },
+        "outgoing_transaction_id": { "type": "string" },
+        "incoming_transaction_id": { "type": "string" },
+        "refund_transaction_id": { "type": "string" },
+        "original_transaction_id": { "type": "string" },
+        "amount": { "$ref": "common.schema.json#/$defs/DecimalAmount" }
+      }
+    }
+  }
+}

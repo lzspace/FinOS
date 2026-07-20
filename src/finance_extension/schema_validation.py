@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
+from referencing import Registry, Resource
 
 
 SOURCE_SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "extensions/finance/schemas"
@@ -18,6 +20,29 @@ SCHEMA_BY_EVENT = {
     "TransactionClassificationRejected": "classification_events.schema.json",
     "ClassificationRuleCreated": "classification_events.schema.json",
     "ClassificationRuleApplied": "classification_events.schema.json",
+    "DuplicateTransactionDetected": "reconciliation_events.schema.json",
+    "DuplicateTransactionConfirmed": "reconciliation_events.schema.json",
+    "DuplicateTransactionRejected": "reconciliation_events.schema.json",
+    "TransferMatchProposed": "reconciliation_events.schema.json",
+    "TransferMatchConfirmed": "reconciliation_events.schema.json",
+    "TransferMatchRejected": "reconciliation_events.schema.json",
+    "TransferMatchBroken": "reconciliation_events.schema.json",
+    "RefundRelationProposed": "reconciliation_events.schema.json",
+    "RefundRelationConfirmed": "reconciliation_events.schema.json",
+    "RefundRelationRejected": "reconciliation_events.schema.json",
+    "RecurringPatternProposed": "forecast_events.schema.json",
+    "RecurringPatternConfirmed": "forecast_events.schema.json",
+    "RecurringPatternRejected": "forecast_events.schema.json",
+    "RecurringPatternUpdated": "forecast_events.schema.json",
+    "RecurringPatternPaused": "forecast_events.schema.json",
+    "RecurringPatternEnded": "forecast_events.schema.json",
+    "ExpectedTransactionCreated": "forecast_events.schema.json",
+    "ExpectedTransactionMatched": "forecast_events.schema.json",
+    "ExpectedTransactionMissed": "forecast_events.schema.json",
+    "ExpectedTransactionCancelled": "forecast_events.schema.json",
+    "ForecastCreated": "forecast_events.schema.json",
+    "ForecastEvaluated": "forecast_events.schema.json",
+    "ForecastSuperseded": "forecast_events.schema.json",
 }
 
 
@@ -25,13 +50,29 @@ class EventValidationError(ValueError):
     pass
 
 
+@lru_cache(maxsize=1)
+def _schemas() -> tuple[dict[str, dict[str, Any]], Registry]:
+    documents = {
+        path.name: json.loads(path.read_text(encoding="utf-8"))
+        for path in SCHEMA_ROOT.glob("*.schema.json")
+    }
+    registry = Registry().with_resources(
+        (document["$id"], Resource.from_contents(document)) for document in documents.values()
+    )
+    return documents, registry
+
+
 def validate_event(event: dict[str, Any]) -> None:
-    schema_path = SCHEMA_ROOT / SCHEMA_BY_EVENT.get(
+    schema_name = SCHEMA_BY_EVENT.get(
         event.get("event_type", ""), "vertical_slice_events.schema.json"
     )
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    documents, registry = _schemas()
+    schema = documents[schema_name]
     errors = sorted(
-        Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(event), key=str
+        Draft202012Validator(schema, registry=registry, format_checker=FormatChecker()).iter_errors(
+            event
+        ),
+        key=str,
     )
     if errors:
         # Never include an event/payload in this error: it may contain finance data.

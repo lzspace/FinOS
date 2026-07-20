@@ -19,7 +19,17 @@ BLOCKED_SUFFIXES = {
     ".key", ".pem", ".p12", ".pfx",
 }
 BLOCKED_PATH_PARTS = {".finance-data", "finance-runtime", "runtime-data"}
-IGNORED_PATH_PARTS = {".git", "__pycache__", ".venv", ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"}
+IGNORED_PATH_PARTS = {
+    ".git",
+    "__pycache__",
+    ".venv",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+    "build",
+    "dist",
+}
 CONTENT_PATTERNS = {
     "private key": re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     "likely IBAN": re.compile(rb"\b[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]){11,30}\b"),

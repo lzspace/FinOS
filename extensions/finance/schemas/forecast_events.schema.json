@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/forecast_events.schema.json",
+  "title": "Finance Extension 0.5.0 recurring and forecast events",
+  "oneOf": [
+    { "$ref": "#/$defs/RecurringPatternProposed" },
+    { "$ref": "#/$defs/RecurringPatternConfirmed" },
+    { "$ref": "#/$defs/RecurringPatternRejected" },
+    { "$ref": "#/$defs/RecurringPatternUpdated" },
+    { "$ref": "#/$defs/RecurringPatternPaused" },
+    { "$ref": "#/$defs/RecurringPatternEnded" },
+    { "$ref": "#/$defs/ExpectedTransactionCreated" },
+    { "$ref": "#/$defs/ExpectedTransactionMatched" },
+    { "$ref": "#/$defs/ExpectedTransactionMissed" },
+    { "$ref": "#/$defs/ExpectedTransactionCancelled" },
+    { "$ref": "#/$defs/ForecastCreated" },
+    { "$ref": "#/$defs/ForecastEvaluated" },
+    { "$ref": "#/$defs/ForecastSuperseded" }
+  ],
+  "$defs": {
+    "Base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "event_id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "occurred_at", "correlation_id", "causation_id", "payload"],
+      "properties": {
+        "schema_version": { "const": "1.0.0" },
+        "event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "event_type": { "type": "string" },
+        "aggregate_type": { "enum": ["RecurringPattern", "ExpectedTransaction", "Forecast"] },
+        "aggregate_id": { "type": "string", "minLength": 8 },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "correlation_id": { "type": "string" },
+        "causation_id": { "type": "string" },
+        "payload": { "type": "object" }
+      }
+    },
+    "RecurringPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern_id", "account_id", "merchant_key", "direction", "category_code", "frequency", "expected_amount", "amount_tolerance", "expected_day_from", "expected_day_to", "first_observed_date", "last_observed_date", "next_expected_date", "confidence", "status", "source_transaction_ids", "source_fingerprint", "detection_policy_version", "version"],
+      "properties": {
+        "pattern_id": { "type": "string", "pattern": "^pattern_[a-f0-9]{32}$" },
+        "account_id": { "type": "string" },
+        "merchant_key": { "type": "string", "minLength": 1 },
+        "direction": { "enum": ["INCOME", "EXPENSE"] },
+        "category_code": { "type": "string" },
+        "frequency": { "enum": ["WEEKLY", "BIWEEKLY", "MONTHLY", "BIMONTHLY", "QUARTERLY", "SEMI_ANNUALLY", "ANNUALLY", "IRREGULAR"] },
+        "expected_amount": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "amount_tolerance": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "expected_day_from": { "type": "integer", "minimum": 1, "maximum": 31 },
+        "expected_day_to": { "type": "integer", "minimum": 1, "maximum": 31 },
+        "first_observed_date": { "$ref": "common.schema.json#/$defs/Date" },
+        "last_observed_date": { "$ref": "common.schema.json#/$defs/Date" },
+        "next_expected_date": { "$ref": "common.schema.json#/$defs/Date" },
+        "confidence": { "enum": ["LOW", "MEDIUM", "HIGH"] },
+        "status": { "enum": ["PROPOSED", "ACTIVE", "REJECTED", "PAUSED", "ENDED"] },
+        "source_transaction_ids": { "type": "array", "minItems": 3, "uniqueItems": true, "items": { "type": "string" } },
+        "source_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "detection_policy_version": { "const": "recurring@1.0.0" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ExpectedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_transaction_id", "recurring_pattern_id", "account_id", "merchant_key", "expected_date", "expected_amount", "amount_lower_bound", "amount_upper_bound", "direction", "category_code", "status", "matched_transaction_id"],
+      "properties": {
+        "expected_transaction_id": { "type": "string", "pattern": "^expected_[a-f0-9]{32}$" },
+        "recurring_pattern_id": { "type": "string" },
+        "account_id": { "type": "string" },
+        "merchant_key": { "type": "string" },
+        "expected_date": { "$ref": "common.schema.json#/$defs/Date" },
+        "expected_amount": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "amount_lower_bound": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "amount_upper_bound": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "direction": { "enum": ["INCOME", "EXPENSE"] },
+        "category_code": { "type": "string" },
+        "status": { "enum": ["EXPECTED", "MATCHED", "MISSED", "CANCELLED", "SUPERSEDED"] },
+        "matched_transaction_id": { "type": ["string", "null"] }
+      }
+    },
+    "ForecastPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["forecast_id", "forecast_type", "base_date", "period_start", "period_end", "scenario", "realized_income", "realized_expenses", "expected_income", "expected_fixed_expenses", "predicted_variable_expenses", "predicted_surplus", "lower_bound", "upper_bound", "confidence", "assumptions", "source_event_sequence", "forecast_policy_version", "status"],
+      "properties": {
+        "forecast_id": { "type": "string", "pattern": "^forecast_[a-f0-9]{32}$" },
+        "forecast_type": { "const": "MONTH_END_CASHFLOW" },
+        "base_date": { "$ref": "common.schema.json#/$defs/Date" },
+        "period_start": { "$ref": "common.schema.json#/$defs/Date" },
+        "period_end": { "$ref": "common.schema.json#/$defs/Date" },
+        "scenario": { "enum": ["CONSERVATIVE", "BASE", "OPTIMISTIC"] },
+        "realized_income": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "realized_expenses": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "expected_income": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "expected_fixed_expenses": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "predicted_variable_expenses": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "predicted_surplus": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "lower_bound": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "upper_bound": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "confidence": { "enum": ["LOW", "MEDIUM", "HIGH"] },
+        "assumptions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "source_event_sequence": { "type": "integer", "minimum": 0 },
+        "forecast_policy_version": { "const": "forecast@1.0.0" },
+        "status": { "enum": ["ACTIVE", "SUPERSEDED", "EVALUATED"] },
+        "actual_income": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "actual_expenses": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "actual_surplus": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "absolute_error": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "percentage_error": { "type": ["string", "null"] },
+        "expected_transactions_matched": { "type": "integer", "minimum": 0 },
+        "expected_transactions_missed": { "type": "integer", "minimum": 0 },
+        "component_accuracy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["recurring_income_matched", "recurring_expenses_matched", "predicted_variable_expenses", "actual_variable_expenses", "surplus_absolute_error"],
+          "properties": {
+            "recurring_income_matched": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+            "recurring_expenses_matched": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+            "predicted_variable_expenses": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+            "actual_variable_expenses": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+            "surplus_absolute_error": { "$ref": "common.schema.json#/$defs/DecimalAmount" }
+          }
+        },
+        "evaluated_at": { "$ref": "common.schema.json#/$defs/DateTime" }
+      }
+    },
+    "RecurringPatternProposed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "RecurringPatternProposed" }, "aggregate_type": { "const": "RecurringPattern" }, "payload": { "$ref": "#/$defs/RecurringPayload" } } }] },
+    "RecurringPatternConfirmed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "RecurringPatternConfirmed" }, "aggregate_type": { "const": "RecurringPattern" }, "payload": { "$ref": "#/$defs/RecurringPayload" } } }] },
+    "RecurringPatternRejected": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "RecurringPatternRejected" }, "aggregate_type": { "const": "RecurringPattern" }, "payload": { "$ref": "#/$defs/RecurringPayload" } } }] },
+    "RecurringPatternUpdated": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "RecurringPatternUpdated" }, "aggregate_type": { "const": "RecurringPattern" }, "payload": { "$ref": "#/$defs/RecurringPayload" } } }] },
+    "RecurringPatternPaused": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "RecurringPatternPaused" }, "aggregate_type": { "const": "RecurringPattern" }, "payload": { "$ref": "#/$defs/RecurringPayload" } } }] },
+    "RecurringPatternEnded": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "RecurringPatternEnded" }, "aggregate_type": { "const": "RecurringPattern" }, "payload": { "$ref": "#/$defs/RecurringPayload" } } }] },
+    "ExpectedTransactionCreated": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ExpectedTransactionCreated" }, "aggregate_type": { "const": "ExpectedTransaction" }, "payload": { "$ref": "#/$defs/ExpectedPayload" } } }] },
+    "ExpectedTransactionMatched": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ExpectedTransactionMatched" }, "aggregate_type": { "const": "ExpectedTransaction" }, "payload": { "$ref": "#/$defs/ExpectedPayload" } } }] },
+    "ExpectedTransactionMissed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ExpectedTransactionMissed" }, "aggregate_type": { "const": "ExpectedTransaction" }, "payload": { "$ref": "#/$defs/ExpectedPayload" } } }] },
+    "ExpectedTransactionCancelled": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ExpectedTransactionCancelled" }, "aggregate_type": { "const": "ExpectedTransaction" }, "payload": { "$ref": "#/$defs/ExpectedPayload" } } }] },
+    "ForecastCreated": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ForecastCreated" }, "aggregate_type": { "const": "Forecast" }, "payload": { "$ref": "#/$defs/ForecastPayload" } } }] },
+    "ForecastEvaluated": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ForecastEvaluated" }, "aggregate_type": { "const": "Forecast" }, "payload": { "$ref": "#/$defs/ForecastPayload" } } }] },
+    "ForecastSuperseded": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ForecastSuperseded" }, "aggregate_type": { "const": "Forecast" }, "payload": { "$ref": "#/$defs/ForecastPayload" } } }] }
+  }
+}

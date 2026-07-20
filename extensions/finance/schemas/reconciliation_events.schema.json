@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/reconciliation_events.schema.json",
+  "title": "Finance Extension 0.4.0 reconciliation events",
+  "oneOf": [
+    { "$ref": "#/$defs/DuplicateTransactionDetected" },
+    { "$ref": "#/$defs/DuplicateTransactionConfirmed" },
+    { "$ref": "#/$defs/DuplicateTransactionRejected" },
+    { "$ref": "#/$defs/TransferMatchProposed" },
+    { "$ref": "#/$defs/TransferMatchConfirmed" },
+    { "$ref": "#/$defs/TransferMatchRejected" },
+    { "$ref": "#/$defs/TransferMatchBroken" },
+    { "$ref": "#/$defs/RefundRelationProposed" },
+    { "$ref": "#/$defs/RefundRelationConfirmed" },
+    { "$ref": "#/$defs/RefundRelationRejected" }
+  ],
+  "$defs": {
+    "Base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "event_id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "occurred_at", "correlation_id", "causation_id", "payload"],
+      "properties": {
+        "schema_version": { "const": "1.0.0" },
+        "event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "event_type": { "type": "string" },
+        "aggregate_type": { "enum": ["DuplicateRelation", "TransferRelation", "RefundRelation"] },
+        "aggregate_id": { "type": "string", "pattern": "^(?:dup|trf|rfd)_[a-f0-9]{32}$" },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "correlation_id": { "type": "string" },
+        "causation_id": { "type": "string" },
+        "payload": { "type": "object" }
+      }
+    },
+    "DuplicatePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relation_id", "primary_transaction_id", "duplicate_transaction_id", "match_type", "policy_version", "status"],
+      "properties": {
+        "relation_id": { "type": "string" },
+        "primary_transaction_id": { "type": "string" },
+        "duplicate_transaction_id": { "type": "string" },
+        "match_type": { "enum": ["EXACT_DUPLICATE", "LIKELY_DUPLICATE"] },
+        "policy_version": { "const": "reconciliation@1.0.0" },
+        "status": { "enum": ["DETECTED", "CONFIRMED", "REJECTED"] },
+        "decided_by": { "enum": ["USER", "SYSTEM"] }
+      }
+    },
+    "TransferPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relation_id", "outgoing_transaction_id", "incoming_transaction_id", "amount", "currency", "confidence", "policy_version", "status"],
+      "properties": {
+        "relation_id": { "type": "string" },
+        "outgoing_transaction_id": { "type": "string" },
+        "incoming_transaction_id": { "type": "string" },
+        "amount": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "currency": { "$ref": "common.schema.json#/$defs/Currency" },
+        "confidence": { "type": "string", "pattern": "^(?:0(?:\\.[0-9]+)?|1(?:\\.0+)?)$" },
+        "policy_version": { "const": "reconciliation@1.0.0" },
+        "status": { "enum": ["PROPOSED", "CONFIRMED", "REJECTED", "BROKEN"] },
+        "decided_by": { "const": "USER" }
+      }
+    },
+    "RefundPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relation_id", "refund_transaction_id", "original_transaction_id", "proposed_amount", "currency", "policy_version", "status"],
+      "properties": {
+        "relation_id": { "type": "string" },
+        "refund_transaction_id": { "type": "string" },
+        "original_transaction_id": { "type": "string" },
+        "proposed_amount": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "confirmed_amount": { "$ref": "common.schema.json#/$defs/DecimalAmount" },
+        "currency": { "$ref": "common.schema.json#/$defs/Currency" },
+        "policy_version": { "const": "reconciliation@1.0.0" },
+        "status": { "enum": ["PROPOSED", "CONFIRMED", "REJECTED"] },
+        "decided_by": { "const": "USER" }
+      }
+    },
+    "DuplicateTransactionDetected": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "DuplicateTransactionDetected" }, "aggregate_type": { "const": "DuplicateRelation" }, "payload": { "$ref": "#/$defs/DuplicatePayload" } } }] },
+    "DuplicateTransactionConfirmed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "DuplicateTransactionConfirmed" }, "aggregate_type": { "const": "DuplicateRelation" }, "payload": { "$ref": "#/$defs/DuplicatePayload" } } }] },
+    "DuplicateTransactionRejected": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "DuplicateTransactionRejected" }, "aggregate_type": { "const": "DuplicateRelation" }, "payload": { "$ref": "#/$defs/DuplicatePayload" } } }] },
+    "TransferMatchProposed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "TransferMatchProposed" }, "aggregate_type": { "const": "TransferRelation" }, "payload": { "$ref": "#/$defs/TransferPayload" } } }] },
+    "TransferMatchConfirmed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "TransferMatchConfirmed" }, "aggregate_type": { "const": "TransferRelation" }, "payload": { "$ref": "#/$defs/TransferPayload" } } }] },
+    "TransferMatchRejected": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "TransferMatchRejected" }, "aggregate_type": { "const": "TransferRelation" }, "payload": { "$ref": "#/$defs/TransferPayload" } } }] },
+    "TransferMatchBroken": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "TransferMatchBroken" }, "aggregate_type": { "const": "TransferRelation" }, "payload": { "$ref": "#/$defs/TransferPayload" } } }] },
+    "RefundRelationProposed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "RefundRelationProposed" }, "aggregate_type": { "const": "RefundRelation" }, "payload": { "$ref": "#/$defs/RefundPayload" } } }] },
+    "RefundRelationConfirmed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "RefundRelationConfirmed" }, "aggregate_type": { "const": "RefundRelation" }, "payload": { "$ref": "#/$defs/RefundPayload" } } }] },
+    "RefundRelationRejected": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "RefundRelationRejected" }, "aggregate_type": { "const": "RefundRelation" }, "payload": { "$ref": "#/$defs/RefundPayload" } } }] }
+  }
+}
