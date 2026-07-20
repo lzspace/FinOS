@@ -12,7 +12,7 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
   const month = String(payload.month ?? "2026-07");
   const responses: Record<string, Envelope<unknown>> = {
     GetCapabilityManifest: envelope({
-      extension_version: "0.8.0",
+      extension_version: "0.9.0",
       schema_version: "1.0.0",
       capabilities: {
         imports: true,
@@ -36,8 +36,15 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
         external_models: false,
       },
     }),
+    GetStartupStatus: envelope({
+      status: "READY",
+      error_code: null,
+      checks: { workspace_lock: "LOCKED", key: "AVAILABLE", store_integrity: "VALID", migration: "CURRENT", free_space: "SUFFICIENT", bundle_integrity: "VALID" },
+      read_only_diagnostics_available: true,
+      recovery_document: "RECOVERY.md",
+    }),
     GetRuntimeSecurityStatus: envelope({
-      extension_version: "0.8.0",
+      extension_version: "0.9.0",
       schema_version: "1.0.0",
       last_event_sequence: 892,
       checks: {
@@ -162,7 +169,7 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
     ] }),
     GetStoreIntegrity: envelope({ status: "VALID", checked_at: "2026-07-20T21:42:03Z", store_schema_version: 2, event_count: 892, last_event_sequence: 892, import_file_count: 6, storage_encryption: "FERNET_AUTHENTICATED" }),
     GetKeyStatus: envelope({ database_key: { strategy: "KeychainKeyProvider", status: "AVAILABLE", fingerprint: "7f4a8bc2e19dd431" }, archive_key: { strategy: "KeychainKeyProvider", status: "AVAILABLE", fingerprint: "b9a0c14e383fed80", independent_from_store: true } }),
-    GetMigrationStatus: envelope({ current_store_schema_version: 2, supported_store_schema_version: 2, status: "CURRENT", history: [{ migration_id: "store_v1_to_v2", from_version: 1, to_version: 2, applied_at: "2026-07-20T21:40:00Z", application_version: "0.8.0" }], downgrade_protection: "ENABLED" }),
+    GetMigrationStatus: envelope({ current_store_schema_version: 3, supported_store_schema_version: 3, status: "CURRENT", history: [{ migration_id: "store_v2_to_v3", from_version: 2, to_version: 3, applied_at: "2026-07-20T21:40:00Z", application_version: "0.9.0" }], downgrade_protection: "ENABLED" }),
   };
   return responses[name] ?? envelope(null, "EMPTY");
 }

@@ -15,6 +15,8 @@ import type {
   RecurringPattern,
   RuntimeSecurityStatus,
   StoreIntegrity,
+  StartupState,
+  StartupStatus,
   Transaction,
   ViewState,
 } from "./contracts/generated";
@@ -90,12 +92,17 @@ const navigation: Array<{ id: PageId; text: string; icon: string; capability?: s
 ];
 
 export function App() {
+  const startup = useFinanceQuery<StartupStatus>("GetStartupStatus");
   const manifest = useFinanceQuery<CapabilityManifest>("GetCapabilityManifest");
   const [page, setPage] = useState<PageId>("overview");
   const [month, setMonth] = useState("2026-07");
   const enabled = manifest.envelope?.data.capabilities ?? {};
   const visibleNavigation = navigation.filter((item) => !item.capability || enabled[item.capability]);
 
+  if (startup.state === "LOADING") return <FullState state="LOADING" />;
+  if (!startup.envelope || startup.envelope.data.status !== "READY") {
+    return <CriticalState status={startup.envelope?.data.status ?? "INCOMPATIBLE_VERSION"} errorCode={startup.envelope?.data.error_code ?? startup.error} />;
+  }
   if (manifest.state !== "READY" || !manifest.envelope) {
     return <FullState state={manifest.state} message={manifest.error} />;
   }
@@ -136,6 +143,23 @@ export function App() {
       </main>
     </div>
   );
+}
+
+export function CriticalState({ status, errorCode }: { status: StartupState; errorCode?: string | null }) {
+  const content: Record<StartupState, [string, string, string]> = {
+    READY: ["Finance ist bereit", "Alle lokalen Sicherheitsprüfungen waren erfolgreich.", "Fortfahren"],
+    WORKSPACE_LOCKED: ["Arbeitsbereich bereits geöffnet", "Ein anderer Prozess besitzt die Schreibsperre. Schließe ihn oder prüfe den Lock im Diagnosemodus.", "Lock prüfen"],
+    KEYCHAIN_UNAVAILABLE: ["Schlüssel nicht verfügbar", "Der lokale Schlüsselspeicher konnte nicht entsperrt werden. Es findet kein Datenzugriff statt.", "Schlüsselstatus prüfen"],
+    STORE_CORRUPTED: ["Speicherintegrität verletzt", "Der lokale Store wird nicht geöffnet. Stelle ein vollständig geprüftes Backup wieder her.", "Recovery-Anleitung öffnen"],
+    MIGRATION_REQUIRED: ["Migration erforderlich", "Dieser Datenstand muss vor der weiteren Nutzung kontrolliert migriert werden.", "Migration prüfen"],
+    MIGRATION_FAILED: ["Migration fehlgeschlagen", "Der vorherige Datenstand blieb erhalten. Prüfe Diagnose und Recovery-Anleitung.", "Diagnose anzeigen"],
+    BACKUP_REQUIRED: ["Sicherung erforderlich", "Vor diesem Schritt ist ein verifiziertes lokales Backup notwendig.", "Backup erstellen"],
+    INCOMPATIBLE_VERSION: ["Version nicht kompatibel", "UI, Extension oder Datenstand verwenden nicht kompatible Versionen.", "Versionsdetails"],
+    BUNDLE_TAMPERED: ["Anwendungspaket verändert", "Die Integrität von UI oder Schemas stimmt nicht mit dem Release überein. Die Finanzansicht bleibt blockiert.", "Neuinstallation prüfen"],
+    INSUFFICIENT_SPACE: ["Nicht genügend Speicherplatz", "Für eine atomare Speicherung oder Wiederherstellung steht nicht genug lokaler Speicher zur Verfügung.", "Speicher prüfen"],
+  };
+  const selected = content[status];
+  return <main className="full-state critical-state" role="alert"><span className="brand-mark">!</span><span className="eyebrow">SICHERER START BLOCKIERT</span><h1>{selected[0]}</h1><p>{selected[1]}</p>{errorCode && <code>{errorCode}</code>}<button className="primary">{selected[2]}</button><small>Nur lokale, schreibgeschützte Diagnose ist verfügbar.</small></main>;
 }
 
 function FullState({ state, message }: { state: ViewState; message?: string }) {

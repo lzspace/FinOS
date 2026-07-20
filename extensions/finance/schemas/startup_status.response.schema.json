@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/startup_status.response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "state", "projection_sequence", "event_store_sequence", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "state": { "enum": ["READY", "ERROR"] },
+    "projection_sequence": { "type": "integer", "minimum": 0 },
+    "event_store_sequence": { "type": "integer", "minimum": 0 },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "error_code", "checks", "read_only_diagnostics_available", "recovery_document"],
+      "properties": {
+        "status": {
+          "enum": [
+            "READY", "WORKSPACE_LOCKED", "KEYCHAIN_UNAVAILABLE", "STORE_CORRUPTED",
+            "MIGRATION_REQUIRED", "MIGRATION_FAILED", "BACKUP_REQUIRED",
+            "INCOMPATIBLE_VERSION", "BUNDLE_TAMPERED", "INSUFFICIENT_SPACE"
+          ]
+        },
+        "error_code": { "type": ["string", "null"], "pattern": "^FINANCE_[A-Z0-9_]+$" },
+        "checks": { "type": "object", "additionalProperties": { "type": "string" } },
+        "read_only_diagnostics_available": { "const": true },
+        "recovery_document": { "const": "RECOVERY.md" }
+      }
+    }
+  }
+}

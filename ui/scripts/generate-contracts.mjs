@@ -8,6 +8,7 @@ const output = resolve(here, "../src/contracts/generated.ts");
 const required = [
   "capability_manifest.response.schema.json",
   "runtime_security_status.response.schema.json",
+  "startup_status.response.schema.json",
   "dashboard.response.schema.json",
   "transaction_list.response.schema.json",
   "transaction_detail.response.schema.json",

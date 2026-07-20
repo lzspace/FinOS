@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { App } from "./App";
+import { App, CriticalState } from "./App";
 import { mockQuery } from "./mockData";
 
 afterEach(cleanup);
@@ -57,5 +57,12 @@ describe("Finance UI contract", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Schlüssel rotieren" }));
     expect(screen.getByRole("button", { name: "Rotation bestätigen" })).toBeInTheDocument();
+  });
+
+  it("blocks financial views when bundle integrity failed", () => {
+    render(<CriticalState status="BUNDLE_TAMPERED" errorCode="FINANCE_BUNDLE_TAMPERED" />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Anwendungspaket verändert");
+    expect(screen.getByText("FINANCE_BUNDLE_TAMPERED")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
   });
 });

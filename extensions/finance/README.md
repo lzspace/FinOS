@@ -1,4 +1,4 @@
-# Finance Extension contracts and Vertical Slice v0.8.0
+# Finance Extension contracts and Vertical Slice v0.9.0
 
 This directory turns the agreed finance domain model into executable interface
 contracts. It deliberately contains no production finance data and has no
@@ -40,6 +40,11 @@ complete pre-restore verification, atomic rollback-safe restoration, independent
 archive-key handling, encryption-key rotation, store integrity checks and
 versioned migration history. Newer stores and archives are rejected by older
 software; partial restoration and cloud destinations are forbidden.
+
+Version 0.9.0 adds single-writer coordination, explicit stale-lock recovery,
+archive resource limits, atomic migration rollback, startup integrity checks,
+contract compatibility classification, encrypted minimal diagnostics and a
+reproducible signed release pipeline with two SBOM formats.
 
 ## Binding security invariants
 
@@ -87,7 +92,7 @@ never binary floating point.
 
 ## Local UI boundary
 
-The source is in `ui/`. `npm run generate:contracts` verifies 23
+The source is in `ui/`. `npm run generate:contracts` verifies the selected
 versioned response schemas before generating the TypeScript contract module.
 `npm run build` creates a relative-path production bundle, and
 `npm run check:offline` rejects external resource candidates. Production uses

@@ -43,6 +43,21 @@ def _git_ancestor(path: Path) -> bool:
     return any((candidate / ".git").exists() for candidate in (current, *current.parents))
 
 
+def _contains_symlink(path: Path) -> bool:
+    current = Path(path.anchor)
+    for index, part in enumerate(path.parts[1:]):
+        current /= part
+        if current.is_symlink():
+            # macOS exposes system temporary roots such as /var through one
+            # root-level compatibility link. Canonicalize that fixed OS alias;
+            # links controlled deeper in a user-selected path remain forbidden.
+            if index == 0:
+                current = current.resolve(strict=True)
+                continue
+            return True
+    return False
+
+
 def validate_runtime_path(
     path: str | Path,
     *,
@@ -62,6 +77,12 @@ def validate_runtime_path(
             "FINANCE_NETWORK_STORAGE_BLOCKED",
             candidate,
             "UNC and network-share paths are forbidden",
+        )
+    if _contains_symlink(candidate):
+        raise StoragePolicyViolation(
+            "FINANCE_SYMLINK_PATH_BLOCKED",
+            candidate,
+            "runtime storage paths must not traverse symbolic links",
         )
     resolved = candidate.resolve(strict=False)
     if any(marker in str(resolved).casefold() for marker in _CLOUD_MARKERS):

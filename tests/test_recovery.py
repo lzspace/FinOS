@@ -154,7 +154,9 @@ class RecoveryTests(unittest.TestCase):
         self.assertNotEqual(self.store_key.get_key(), old_key)
         self.assertEqual(validate_store_integrity(self.store)["status"], "VALID")
         with self.assertRaisesRegex(StoreInvariantError, "FINANCE_STORE_DECRYPTION_FAILED"):
-            LocalFinanceStore(self.data, StaticKeyProvider(old_key)).open()
+            LocalFinanceStore(
+                self.data, StaticKeyProvider(old_key), acquire_workspace_lock=False
+            ).open()
         encrypted_import = next((self.data / "imports").iterdir()).read_bytes()
         self.assertIn(b"rotation.csv", cipher_for(self.store_key).decrypt(encrypted_import))
         self.assertEqual(len(list_backups(self.store, self.backup_key, self.backups)), 1)
@@ -164,7 +166,7 @@ class RecoveryTests(unittest.TestCase):
         backup = create_backup(self.store, self.backup_key, self.backups)
         rows = list_backups(self.store, self.backup_key, self.backups)
         self.assertEqual(rows[0]["verification_status"], "VALID")
-        self.assertEqual(migration_status(self.store)["current_store_schema_version"], 2)
+        self.assertEqual(migration_status(self.store)["current_store_schema_version"], 3)
         self.assertEqual(repair_local_store(self.store)["status"], "REPAIRED")
         self.assertTrue(
             delete_backup(
@@ -214,10 +216,10 @@ class RecoveryTests(unittest.TestCase):
 
         migrated = LocalFinanceStore(legacy_data, provider).open()
         try:
-            self.assertEqual(migrated.schema_version(), 2)
+            self.assertEqual(migrated.schema_version(), 3)
             self.assertEqual(
                 [row["migration_id"] for row in migrated.migration_history()],
-                ["store_v1_to_v2"],
+                ["store_v1_to_v2", "store_v2_to_v3"],
             )
         finally:
             migrated.close()

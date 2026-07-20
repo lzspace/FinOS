@@ -15,6 +15,7 @@ from .schema_validation import validate_event
 
 # Kept separate so callers can use the pre-existing policy module without an import-time side effect.
 from .storage_policy import validate_runtime_path
+from .workspace_lock import WorkspaceLock
 
 
 class StoreInvariantError(ValueError):
@@ -29,7 +30,7 @@ class LocalFinanceStore:
     """
 
     DB_FILE = "finance.sqlite.fernet"
-    CURRENT_SCHEMA_VERSION = 2
+    CURRENT_SCHEMA_VERSION = 3
 
     def __init__(
         self,
@@ -38,12 +39,15 @@ class LocalFinanceStore:
         *,
         repository_roots: tuple[str | Path, ...] = (),
         known_network_roots: tuple[str | Path, ...] = (),
+        acquire_workspace_lock: bool = True,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.key_provider = key_provider
         self.repository_roots = repository_roots
         self.known_network_roots = known_network_roots
+        self.acquire_workspace_lock = acquire_workspace_lock
         self._connection: sqlite3.Connection | None = None
+        self._workspace_lock = WorkspaceLock(self.data_dir) if acquire_workspace_lock else None
 
     def _guard(self) -> Path:
         return validate_runtime_path(
@@ -56,6 +60,8 @@ class LocalFinanceStore:
         root = self._guard()
         root.mkdir(parents=True, exist_ok=True)
         self._guard()
+        if self._workspace_lock:
+            self._workspace_lock.acquire()
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
         encrypted = root / self.DB_FILE
@@ -64,6 +70,8 @@ class LocalFinanceStore:
                 conn.deserialize(cipher_for(self.key_provider).decrypt(encrypted.read_bytes()))
             except Exception as exc:
                 conn.close()
+                if self._workspace_lock:
+                    self._workspace_lock.release()
                 raise StoreInvariantError("FINANCE_STORE_DECRYPTION_FAILED") from exc
         self._connection = conn
         try:
@@ -71,15 +79,23 @@ class LocalFinanceStore:
         except Exception:
             conn.close()
             self._connection = None
+            if self._workspace_lock:
+                self._workspace_lock.release()
             raise
         return self
 
     def close(self) -> None:
         if not self._connection:
+            if self._workspace_lock:
+                self._workspace_lock.release()
             return
-        self.persist_snapshot()
-        self._connection.close()
-        self._connection = None
+        try:
+            self.persist_snapshot()
+        finally:
+            self._connection.close()
+            self._connection = None
+            if self._workspace_lock:
+                self._workspace_lock.release()
 
     def persist_snapshot(self) -> Path:
         """Atomically persist the current in-memory database without closing it."""
@@ -141,6 +157,8 @@ class LocalFinanceStore:
         CREATE TABLE IF NOT EXISTS migration_log (
           migration_id TEXT PRIMARY KEY, from_version INTEGER NOT NULL, to_version INTEGER NOT NULL,
           applied_at TEXT NOT NULL, application_version TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS release_metadata (
+          metadata_key TEXT PRIMARY KEY, metadata_value TEXT NOT NULL);
         """)
         stored = self.connection.execute(
             "SELECT metadata_value FROM store_metadata WHERE metadata_key='schema_version'"
@@ -159,22 +177,25 @@ class LocalFinanceStore:
             raise StoreInvariantError("FINANCE_STORE_DOWNGRADE_BLOCKED")
         while current < self.CURRENT_SCHEMA_VERSION:
             target = current + 1
-            self.connection.execute(
-                "INSERT INTO migration_log VALUES (?, ?, ?, ?, ?)",
-                (
-                    f"store_v{current}_to_v{target}",
-                    current,
-                    target,
-                    datetime.now(UTC).isoformat(),
-                    "0.8.0",
-                ),
-            )
-            self.connection.execute(
-                "UPDATE store_metadata SET metadata_value=? WHERE metadata_key='schema_version'",
-                (str(target),),
-            )
+            self._apply_migration(current, target)
             current = target
         self.connection.commit()
+
+    def _apply_migration(self, current: int, target: int) -> None:
+        self.connection.execute(
+            "INSERT INTO migration_log VALUES (?, ?, ?, ?, ?)",
+            (
+                f"store_v{current}_to_v{target}",
+                current,
+                target,
+                datetime.now(UTC).isoformat(),
+                "0.9.0",
+            ),
+        )
+        self.connection.execute(
+            "UPDATE store_metadata SET metadata_value=? WHERE metadata_key='schema_version'",
+            (str(target),),
+        )
 
     def schema_version(self) -> int:
         row = self.connection.execute(

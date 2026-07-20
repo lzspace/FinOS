@@ -1,0 +1,53 @@
+{
+  "application_version": "0.9.0",
+  "format_version": 1,
+  "schemas": {
+    "files": {
+      "account_balance_history.response.schema.json": "9f8c9369070b417768d22f68d86e2e56305dab08b2583e5c89f9fc7d5440c830",
+      "account_commands.schema.json": "ffcfc6ccc0c001f5d706a273ac3358f60ffaeeae542b0bce2bc339450c53f1cf",
+      "account_detail.response.schema.json": "d7f83b897f8b43519371a551a44447c9ed42f4434c0acec2dbe3a5120d216cf2",
+      "account_events.schema.json": "42e0a0e1c116bbdb0ecd67cbdb2ea2e806eea5825d167fe7b55706f9c82977c9",
+      "account_list.response.schema.json": "a4ecd282aa23c10c2a56470c27425c5026f61793f85f4aef3c234b3451e6eafc",
+      "asset_allocation.response.schema.json": "b7acec629b1bed16846615127426f44fd212a71aae6f281fac3d9eb4b6d4aeb0",
+      "backup_list.response.schema.json": "9a76bc894878fbbda68faeb3422a6fd193553f5c3e2ce1a24a324a1dc51a402f",
+      "balance_reconciliation.response.schema.json": "1380d203a71d7067ad434786a897a6faaceac46cb9a25e97ed37d944fcc44d2f",
+      "capability_manifest.response.schema.json": "bd6de7477db57ec08be29281e72e1e5fd6722dfedf61ba1cf92643a18ba43768",
+      "classification_events.schema.json": "3ca4647b4595d569390d3b314c6e620c645d0614ad6e33fe6913df8fb384148c",
+      "commands.schema.json": "d8caa23f2e76b0dc738288759016f746017d9ce36c6d04afaedd0f34decd756c",
+      "common.schema.json": "987877d4dc10688f660b2521733bf2c2855bf8bb86f386cbdbd7d6cc04b24a88",
+      "dashboard.response.schema.json": "f4a46e6b5fbdbb8550f70c515558d459171f8778683cc5685ec2e39a605af0c3",
+      "events.schema.json": "fcbd2306e800671792f58decc1c8b23571ec0c87764e76790c8b85027c58bc36",
+      "forecast.response.schema.json": "8810709ce46481818a1267dc4ee725895e46e6d9794e475d9eedf2c2a5c7f2d0",
+      "forecast_commands.schema.json": "86b746bed837604f600a4338e2f7d3b68e909bbb5e88aa5b493515141bd8f53a",
+      "forecast_evaluation.response.schema.json": "732f9ebb00327a99d5926a94b4f4f1a32fb7942b31de13d6c5657e8301a61582",
+      "forecast_events.schema.json": "2898ccfd7b06ac0f11b006a5f5e384fecdc7b41c3ddf30e5bf5bdcaeaf7d5c3b",
+      "key_status.response.schema.json": "d8c1680069c06e97d9a04c7a1487a106f8d7df978abd92f1e518ce2148e6945a",
+      "liability_overview.response.schema.json": "24a93ef8631607546465faf470af7ad2176ba58680be2f901b5de1c75cc42598",
+      "liquidity_overview.response.schema.json": "ab5c253718580ca7b696d9754bc8b6f9020df0892afff8e7ea1a49b9a97ffd43",
+      "migration_status.response.schema.json": "825dc59d7b47d9d69a9af72e567402e5fe021d388242631da5d0e427e472539e",
+      "net_worth_history.response.schema.json": "6c3d5465c54936e6c700170848e2d3ef7f32f522124f584ddeca1cb46905f0e1",
+      "net_worth_overview.response.schema.json": "21bad8d75d8db8a102c75085f14553120bcb371597b2cc57b1efb1f0e6bc7791",
+      "projected_month_end_balance.response.schema.json": "80a2499f36aa1c5d56da8b1439bc7ae3cb2faa3045f6c85c3107321b3f55d980",
+      "reconciliation_commands.schema.json": "a37927bd4ba4d80b5e15dee40ce1cd7534a5676e7a5725e4b6738d001acb02a2",
+      "reconciliation_events.schema.json": "d656401dd5822bae9c79923691ab831f4a16e88d20843bf966d98d27183153fa",
+      "recovery_commands.schema.json": "e3e8b0099e2172f7f7d93d286f1f828611cbe3e27b45e51f19d48747a963c67b",
+      "recurring_pattern_list.response.schema.json": "f6be4c8553652d8817a8957f30a02e1c457a07c6ba742a76698662c696b8532e",
+      "review_queue.response.schema.json": "25efe91c87a1efdc7ab3348d80996c8e7d7263212e285109548d6bb915afdc32",
+      "runtime_security_status.response.schema.json": "05abb18bb40d9a37a4e9f5762c3ba998d367cbcfe9e50d74b313ff153d2d26e8",
+      "startup_status.response.schema.json": "5954e424b644c2a58d1432205679fc2d0509f409efee89921fb1d97cdc495e9f",
+      "store_integrity.response.schema.json": "d7ac68ae36d882e81ff5ecedb1e382b5ab5089b8606185ff60107ecfe3d13166",
+      "transaction_detail.response.schema.json": "9dc7c50261542be07c1f12182d6487f770977954db7ee659a962540ec5e4efb9",
+      "transaction_list.response.schema.json": "3ee3bcdb59099f90606c6bc703b2a9f38e872447b7b6d652902c3067386565fe",
+      "vertical_slice_events.schema.json": "29ed456213f9dafad8a3d0ad6954ddf36105d6705b37f1c786f838b5f3b753ec"
+    },
+    "sha256": "f540496658fe0358696f447d6e16114ede2597851f18b3efdd760146042bc9cf"
+  },
+  "ui_bundle": {
+    "files": {
+      "assets/index-BuJPnwAu.css": "c865470f60e5b673687179936f71d5dcb1357eb76fd21b7fbb028909a82578e9",
+      "assets/index-CS_rmMOk.js": "acad3d36b6417330ece97548f2bc017f18a9649294505a83d0fa1db724fc36d8",
+      "index.html": "37deb4c90517c31c5013a25665aa54e19d1d89fa7ea11faa2c189701d86ec952"
+    },
+    "sha256": "b5c034c4deeac8862bae64f094fd2d5baf4f442f16a8cdfd3c10d5401e4ef0e1"
+  }
+}

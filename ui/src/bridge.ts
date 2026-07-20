@@ -27,6 +27,7 @@ const supportedCommands = new Set([
   "CreateBackup", "VerifyBackup", "RestoreBackup", "DeleteBackup",
   "ExportFinanceData", "ImportFinanceArchive", "RotateEncryptionKey",
   "RepairLocalStore", "ValidateStoreIntegrity",
+  "ExportDiagnostics",
 ]);
 
 export class FinanceBridge {

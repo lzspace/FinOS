@@ -30,6 +30,11 @@ ARCHIVE_FORMAT_VERSION = 1
 ARCHIVE_SCHEMA_VERSION = "1.0.0"
 BACKUP_SUFFIX = ".finance-backup"
 EXPORT_SUFFIX = ".finance-archive"
+MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 10_000
+MAX_ARCHIVE_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_ARCHIVE_MEMBER_BYTES = 1024 * 1024 * 1024
+MAX_ARCHIVE_COMPRESSION_RATIO = 200
 _ARCHIVE_ID = re.compile(r"^(?:bkp|exp)_[a-f0-9]{32}$")
 
 
@@ -219,15 +224,29 @@ def export_finance_data(
 
 
 def _safe_archive_members(archive: zipfile.ZipFile) -> list[str]:
-    names = archive.namelist()
+    infos = archive.infolist()
+    names = [item.filename for item in infos]
     if len(names) != len(set(names)) or "manifest.json" not in names or "store.sqlite" not in names:
         raise RecoveryInvariantError("FINANCE_ARCHIVE_STRUCTURE_INVALID")
-    for name in names:
+    if len(infos) > MAX_ARCHIVE_MEMBERS:
+        raise RecoveryInvariantError("FINANCE_ARCHIVE_BOMB_DETECTED")
+    if sum(item.file_size for item in infos) > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+        raise RecoveryInvariantError("FINANCE_ARCHIVE_BOMB_DETECTED")
+    for item in infos:
+        name = item.filename
         pure = PurePosixPath(name)
-        if pure.is_absolute() or ".." in pure.parts:
+        if item.is_dir() or pure.is_absolute() or ".." in pure.parts:
             raise RecoveryInvariantError("FINANCE_ARCHIVE_PATH_INVALID")
         if name not in {"manifest.json", "store.sqlite"} and not name.startswith("imports/"):
             raise RecoveryInvariantError("FINANCE_ARCHIVE_MEMBER_UNEXPECTED")
+        if item.file_size > MAX_ARCHIVE_MEMBER_BYTES:
+            raise RecoveryInvariantError("FINANCE_ARCHIVE_BOMB_DETECTED")
+        ratio = item.file_size / max(item.compress_size, 1)
+        if ratio > MAX_ARCHIVE_COMPRESSION_RATIO:
+            raise RecoveryInvariantError("FINANCE_ARCHIVE_BOMB_DETECTED")
+        # A Unix symlink stored in a zip must never be followed or accepted.
+        if (item.external_attr >> 16) & 0o170000 == 0o120000:
+            raise RecoveryInvariantError("FINANCE_ARCHIVE_PATH_INVALID")
     return names
 
 
@@ -322,11 +341,16 @@ def verify_archive(
     repository_roots: tuple[str | Path, ...] = (),
     known_network_roots: tuple[str | Path, ...] = (),
 ) -> VerifiedArchive:
+    unresolved = Path(archive_path).expanduser()
+    if not unresolved.exists():
+        raise RecoveryInvariantError("FINANCE_ARCHIVE_NOT_FOUND")
     path = validate_runtime_path(
-        Path(archive_path).expanduser().resolve(strict=True),
+        unresolved,
         repository_roots=repository_roots,
         known_network_roots=known_network_roots,
     )
+    if path.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise RecoveryInvariantError("FINANCE_ARCHIVE_BOMB_DETECTED")
     content = path.read_bytes()
     if not content.startswith(ARCHIVE_MAGIC):
         raise RecoveryInvariantError("FINANCE_ARCHIVE_FORMAT_INVALID")
@@ -336,6 +360,8 @@ def verify_archive(
         )
     except (InvalidToken, ValueError) as exc:
         raise RecoveryInvariantError("FINANCE_ARCHIVE_AUTHENTICATION_FAILED") from exc
+    if len(payload) > MAX_ARCHIVE_BYTES:
+        raise RecoveryInvariantError("FINANCE_ARCHIVE_BOMB_DETECTED")
     try:
         with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
             names = _safe_archive_members(archive)

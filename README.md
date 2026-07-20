@@ -17,7 +17,24 @@ python -m finance_extension.repository_guard --all
 ruff check src tests
 ```
 
-## Vertical Slices 0.2.0 through 0.8.0
+## Installation and local keys
+
+Python 3.11 or newer and Node.js are required. The release wheel is installed
+without network access from a verified local artifact:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install --no-index /absolute/release/agent_os_finance-0.9.0-py3-none-any.whl
+```
+
+Production keys live in the OS credential store. The database identity is
+`agent-os.finance/database`; the independent archive identity is
+`agent-os.finance.backup/archive`. `FINANCE_TEST_KEY` and
+`FINANCE_BACKUP_TEST_KEY` are accepted only by explicit synthetic test paths
+and are not production key recovery mechanisms. Losing both the store key and
+a usable archive key makes encrypted data unrecoverable.
+
+## Vertical Slices 0.2.0 through 0.9.0
 
 The first executable slice supports only `GenericFinanceCsvV1`:
 
@@ -148,3 +165,48 @@ finance --data-dir /absolute/local/finance-data store migrations
 finance --data-dir /absolute/local/finance-data key status
 finance --data-dir /absolute/local/finance-data key rotate
 ```
+
+Version 0.9.0 hardens startup and delivery. A sibling workspace lock permits
+one writer, stale locks require explicit recovery, archive bombs and symlink
+paths are blocked, migrations retain the encrypted pre-migration snapshot, and
+startup fails closed when store, schema or UI bundle integrity differs from the
+embedded release manifest. Diagnostics remain encrypted and contain only
+allowlisted operational metadata.
+
+Release construction performs two isolated wheel builds with a fixed source
+epoch and rejects differing SHA-256 hashes. It emits CycloneDX and SPDX SBOMs,
+a release manifest, a contract catalog and Ed25519 signatures. A release
+signing key must be supplied explicitly; the build never invents a production
+trust root.
+
+```bash
+finance-release --output /absolute/release \
+  --signing-key /secure/offline/release-ed25519.pem \
+  --python-tests 75 --frontend-tests 5 --schemas 36
+```
+
+The product and build require no network access. For startup failures, do not
+delete lock or data files manually: use the read-only status, then follow
+[`RECOVERY.md`](RECOVERY.md). Security assumptions are documented in
+[`SECURITY.md`](SECURITY.md) and [`THREAT_MODEL.md`](THREAT_MODEL.md).
+
+## Betrieb, Diagnose und Grenzen
+
+Der erste Import erfolgt mit `finance ... import`; unmittelbar danach sollte
+ein unabhängiges lokales Backup erstellt und testweise verifiziert werden.
+Schlüsselrotation erzeugt vorher zwingend ein Recovery-Backup. Migrationen und
+vollständige Restores folgen den verlinkten Runbooks. Stabile Fehlercodes und
+explizit exportierte, finanzdatenfreie Diagnostik sind die einzigen vorgesehenen
+Supportdaten.
+
+Zur vollständigen Datenlöschung alle Finance-Prozesse beenden, den exakten
+lokalen Daten-, Backup- und Exportpfad prüfen, anschließend diese Verzeichnisse
+über die Betriebssystemfunktion sicher entfernen und die beiden Finance-Einträge
+im Keychain löschen. Dieser irreversible Schritt ist bewusst kein pauschaler
+CLI-Befehl.
+
+Bekannte Grenzen: kein Cloud-Sync, keine Bank-API, keine Steuer- oder
+Belegfunktion, kein OCR, keine externe KI, keine Mehrbenutzernutzung und keine
+Wiederherstellung ohne mindestens einen passenden Schlüssel. Details zum
+lokalen Datenpfad, Sicherheitsmodell und Incident-Verhalten stehen in
+[`SECURITY.md`](SECURITY.md).

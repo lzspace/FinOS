@@ -85,6 +85,12 @@ class ApplicationServiceTests(unittest.TestCase):
         self.assertEqual(response["data"]["last_event_sequence"], len(self.store.events()))
         self._validate(response, "runtime_security_status.response.schema.json")
 
+    def test_startup_integrity_is_ready_and_versioned(self) -> None:
+        response = self.application.query("GetStartupStatus")
+        self.assertEqual(response["data"]["status"], "READY")
+        self.assertEqual(response["data"]["checks"]["bundle_integrity"], "VALID")
+        self._validate(response, "startup_status.response.schema.json")
+
     def test_unsupported_contracts_and_missing_identifiers_fail_closed(self) -> None:
         with self.assertRaisesRegex(ApplicationContractError, "FINANCE_QUERY_UNSUPPORTED"):
             self.application.query("ReadEventStore")

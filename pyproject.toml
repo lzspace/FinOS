@@ -1,25 +1,26 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "agent-os-finance"
-version = "0.8.0"
+version = "0.9.0"
 description = "Local-only, encrypted personal-finance vertical slice"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Internal use only"}
 dependencies = [
-  "cryptography>=42.0",
-  "jsonschema[format-nongpl]>=4.22",
-  "keyring>=24.3",
+  "cryptography==49.0.0",
+  "jsonschema[format-nongpl]==4.26.0",
+  "keyring==25.7.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5"]
+dev = ["build==1.5.0", "pytest==9.1.1", "ruff==0.15.22"]
 
 [project.scripts]
 finance = "finance_extension.cli:main"
+finance-release = "finance_extension.release_build:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/finance_extension"]

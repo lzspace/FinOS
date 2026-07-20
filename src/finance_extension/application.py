@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import json
 from pathlib import Path
+import shutil
+from time import monotonic
 from typing import Any, Callable
 
 from . import __version__
@@ -38,6 +41,7 @@ from .classification import (
     reject_classification,
 )
 from .crypto import KeyProvider, KeychainKeyProvider
+from .diagnostics import LocalDiagnosticRecorder
 from .forecasting import (
     confirm_recurring_pattern,
     create_forecasts,
@@ -84,8 +88,11 @@ from .recovery import (
     validate_store_integrity,
     verify_archive,
 )
+from .release_security import ReleaseIntegrityError, verify_integrity_manifest
+from .schema_validation import SCHEMA_ROOT
 from .store import LocalFinanceStore, StoreInvariantError
 from .storage_policy import validate_runtime_path
+from .workspace_lock import inspect_workspace_lock
 
 
 class ApplicationContractError(ValueError):
@@ -147,6 +154,7 @@ COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "RestoreBackup": ("archive_path",),
     "DeleteBackup": ("archive_id",),
     "ImportFinanceArchive": ("archive_path",),
+    "ExportDiagnostics": ("destination_path", "confirmed"),
 }
 
 
@@ -165,6 +173,7 @@ class FinanceApplicationService:
         archive_key_provider: KeyProvider | None = None,
         backup_directory: str | Path | None = None,
         export_directory: str | Path | None = None,
+        diagnostic_recorder: LocalDiagnosticRecorder | None = None,
     ) -> None:
         self._store = store
         self._network_egress_disabled = network_egress_disabled
@@ -173,6 +182,7 @@ class FinanceApplicationService:
         )
         self._backup_directory = backup_directory
         self._export_directory = export_directory
+        self._diagnostic_recorder = diagnostic_recorder
 
     def _sequence(self) -> int:
         events = self._store.events()
@@ -192,6 +202,7 @@ class FinanceApplicationService:
         payload = payload or {}
         queries: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "GetCapabilityManifest": self._capabilities,
+            "GetStartupStatus": self._startup_status,
             "GetRuntimeSecurityStatus": self._security_status,
             "GetDashboard": self._dashboard,
             "ListTransactions": self._transactions,
@@ -226,6 +237,56 @@ class FinanceApplicationService:
         if query_name not in queries:
             raise ApplicationContractError("FINANCE_QUERY_UNSUPPORTED")
         return queries[query_name](payload)
+
+    def _startup_status(self, _: dict[str, Any]) -> dict[str, Any]:
+        state = "READY"
+        error_code: str | None = None
+        checks: dict[str, str] = {}
+        lock = inspect_workspace_lock(self._store.data_dir)
+        checks["workspace_lock"] = lock["status"]
+        if lock["status"] not in {"LOCKED"}:
+            state, error_code = "WORKSPACE_LOCKED", "FINANCE_WORKSPACE_LOCK_OWNERSHIP_LOST"
+        try:
+            self._store.key_provider.get_key()
+            checks["key"] = "AVAILABLE"
+        except Exception:
+            state, error_code = "KEYCHAIN_UNAVAILABLE", "FINANCE_KEY_UNAVAILABLE"
+            checks["key"] = "UNAVAILABLE"
+        integrity = validate_store_integrity(self._store)
+        checks["store_integrity"] = integrity["status"]
+        if integrity["status"] != "VALID":
+            state, error_code = "STORE_CORRUPTED", "FINANCE_STORE_INTEGRITY_FAILED"
+        schema_version = self._store.schema_version()
+        checks["migration"] = "CURRENT" if schema_version == 3 else "MIGRATION_REQUIRED"
+        if schema_version < LocalFinanceStore.CURRENT_SCHEMA_VERSION:
+            state, error_code = "MIGRATION_REQUIRED", "FINANCE_MIGRATION_REQUIRED"
+        free = shutil.disk_usage(self._store.data_dir).free
+        checks["free_space"] = "SUFFICIENT" if free >= 100 * 1024 * 1024 else "INSUFFICIENT"
+        if free < 100 * 1024 * 1024:
+            state, error_code = "INSUFFICIENT_SPACE", "FINANCE_INSUFFICIENT_SPACE"
+        source_ui = Path(__file__).resolve().parents[2] / "ui" / "dist"
+        installed_ui = Path(__file__).resolve().parent / "ui"
+        ui_root = source_ui if source_ui.exists() else installed_ui
+        integrity_path = Path(__file__).with_name("release_integrity.json")
+        try:
+            embedded = json.loads(integrity_path.read_text(encoding="utf-8"))
+            if embedded.get("application_version") != __version__:
+                state, error_code = "INCOMPATIBLE_VERSION", "FINANCE_RELEASE_VERSION_MISMATCH"
+            verify_integrity_manifest(embedded, SCHEMA_ROOT, ui_root)
+            checks["bundle_integrity"] = "VALID"
+        except (OSError, json.JSONDecodeError, ReleaseIntegrityError):
+            state, error_code = "BUNDLE_TAMPERED", "FINANCE_BUNDLE_TAMPERED"
+            checks["bundle_integrity"] = "INVALID"
+        return self._envelope(
+            {
+                "status": state,
+                "error_code": error_code,
+                "checks": checks,
+                "read_only_diagnostics_available": True,
+                "recovery_document": "RECOVERY.md",
+            },
+            status="READY" if state == "READY" else "ERROR",
+        )
 
     def _capabilities(self, _: dict[str, Any]) -> dict[str, Any]:
         return self._envelope(
@@ -639,7 +700,7 @@ class FinanceApplicationService:
     def _migration_status(self, _: dict[str, Any]) -> dict[str, Any]:
         return self._envelope(migration_status(self._store))
 
-    def command(self, command_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _execute_command(self, command_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         required = COMMAND_REQUIRED_FIELDS.get(command_name, ())
         if any(field not in payload for field in required):
             raise ApplicationContractError("FINANCE_COMMAND_PAYLOAD_INVALID")
@@ -785,6 +846,12 @@ class FinanceApplicationService:
             result = repair_local_store(self._store)
         elif command_name == "ValidateStoreIntegrity":
             result = validate_store_integrity(self._store)
+        elif command_name == "ExportDiagnostics":
+            if self._diagnostic_recorder is None:
+                raise ApplicationContractError("FINANCE_DIAGNOSTICS_DISABLED")
+            result = self._diagnostic_recorder.export(
+                payload["destination_path"], confirmed=payload["confirmed"] is True
+            )
         else:
             raise ApplicationContractError("FINANCE_COMMAND_UNSUPPORTED")
         return {
@@ -793,6 +860,44 @@ class FinanceApplicationService:
             "result": result,
             "event_store_sequence": self._sequence(),
         }
+
+    def command(self, command_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        started = monotonic()
+        safe_name = command_name if command_name in COMMAND_REQUIRED_FIELDS or command_name in {
+            "ClassifyTransactions",
+            "Reconcile",
+            "DetectDuplicates",
+            "DetectTransfers",
+            "DetectRefunds",
+            "CreateBackup",
+            "ExportFinanceData",
+            "RotateEncryptionKey",
+            "RepairLocalStore",
+            "ValidateStoreIntegrity",
+        } else "UnsupportedCommand"
+        try:
+            result = self._execute_command(command_name, payload)
+        except Exception as exc:
+            if self._diagnostic_recorder:
+                raw_code = str(exc).split(":", 1)[0]
+                code = raw_code if raw_code.startswith("FINANCE_") else "FINANCE_COMMAND_FAILED"
+                self._diagnostic_recorder.record(
+                    operation_kind="COMMAND",
+                    operation_name=safe_name,
+                    duration_ms=round((monotonic() - started) * 1000),
+                    error_code=code,
+                    component_status="FAILED",
+                )
+            raise
+        if self._diagnostic_recorder:
+            self._diagnostic_recorder.record(
+                operation_kind="COMMAND",
+                operation_name=safe_name,
+                duration_ms=round((monotonic() - started) * 1000),
+                event_count=result["event_store_sequence"],
+                component_status="PASSED",
+            )
+        return result
 
 
 def _require_month(payload: dict[str, Any]) -> str:
