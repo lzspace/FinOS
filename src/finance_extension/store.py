@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+from . import __version__
 from .crypto import KeyProvider, cipher_for
 from .schema_validation import validate_event
 
@@ -189,7 +190,7 @@ class LocalFinanceStore:
                 current,
                 target,
                 datetime.now(UTC).isoformat(),
-                "0.9.0",
+                __version__,
             ),
         )
         self.connection.execute(

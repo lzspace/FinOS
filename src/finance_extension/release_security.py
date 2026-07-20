@@ -79,11 +79,19 @@ def public_key_pem(key: Ed25519PrivateKey | Ed25519PublicKey) -> bytes:
     )
 
 
-def sign_file(path: str | Path, key: Ed25519PrivateKey) -> Path:
+def sign_file(
+    path: str | Path,
+    key: Ed25519PrivateKey,
+    signature_path: str | Path | None = None,
+) -> Path:
     source = Path(path)
-    signature_path = source.with_name(f"{source.name}.sig")
-    signature_path.write_bytes(key.sign(source.read_bytes()))
-    return signature_path
+    destination = (
+        Path(signature_path)
+        if signature_path is not None
+        else source.with_name(f"{source.name}.sig")
+    )
+    destination.write_bytes(key.sign(source.read_bytes()))
+    return destination
 
 
 def verify_file_signature(

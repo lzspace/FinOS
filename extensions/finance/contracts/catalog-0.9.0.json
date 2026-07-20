@@ -1,0 +1,6577 @@
+{
+  "catalog_format": 1,
+  "schemas": {
+    "account_balance_history.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/account_balance_history.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "account_id": {
+              "type": "string"
+            },
+            "snapshots": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "account_id",
+            "snapshots"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "account_commands.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/account_commands.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "pattern": "^cmd_[a-f0-9]{32}$",
+          "type": "string"
+        },
+        "command_type": {
+          "enum": [
+            "CreateAccount",
+            "UpdateAccount",
+            "CloseAccount",
+            "RecordBalanceSnapshot",
+            "CorrectBalanceSnapshot",
+            "ReconcileAccountBalance",
+            "CreateAssetSnapshot",
+            "CorrectAssetSnapshot",
+            "CreateLiabilitySnapshot",
+            "CorrectLiabilitySnapshot"
+          ]
+        },
+        "idempotency_key": {
+          "minLength": 8,
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "command_id",
+        "command_type",
+        "idempotency_key",
+        "payload"
+      ],
+      "title": "Finance Extension 0.7.0 account commands",
+      "type": "object"
+    },
+    "account_detail.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/account_detail.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "account_events.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/account_events.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "aggregate_id": {
+          "minLength": 4,
+          "type": "string"
+        },
+        "aggregate_type": {
+          "enum": [
+            "Account",
+            "AccountBalanceSnapshot",
+            "AccountBalanceReconciliation",
+            "AssetSnapshot",
+            "LiabilitySnapshot"
+          ]
+        },
+        "aggregate_version": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "causation_id": {
+          "pattern": "^cmd_[a-f0-9]{32}$",
+          "type": "string"
+        },
+        "correlation_id": {
+          "pattern": "^cmd_[a-f0-9]{32}$",
+          "type": "string"
+        },
+        "event_id": {
+          "pattern": "^evt_[a-f0-9]{32}$",
+          "type": "string"
+        },
+        "event_type": {
+          "enum": [
+            "AccountCreated",
+            "AccountUpdated",
+            "AccountClosed",
+            "BalanceSnapshotRecorded",
+            "BalanceSnapshotCorrected",
+            "AccountBalanceReconciled",
+            "AssetSnapshotRecorded",
+            "AssetSnapshotCorrected",
+            "LiabilitySnapshotRecorded",
+            "LiabilitySnapshotCorrected"
+          ]
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "properties": {
+            "account_id": {
+              "type": "string"
+            },
+            "account_type": {
+              "enum": [
+                "CHECKING",
+                "SAVINGS",
+                "CREDIT_CARD",
+                "CASH",
+                "BROKERAGE",
+                "LOAN",
+                "MORTGAGE",
+                "OTHER"
+              ]
+            },
+            "amount": {
+              "type": "string"
+            },
+            "available_balance": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "balance_date": {
+              "format": "date",
+              "type": "string"
+            },
+            "booked_balance": {
+              "type": "string"
+            },
+            "confidence": {
+              "enum": [
+                "HIGH",
+                "MEDIUM",
+                "LOW"
+              ]
+            },
+            "currency": {
+              "pattern": "^[A-Z]{3}$",
+              "type": "string"
+            },
+            "display_name": {
+              "type": "string"
+            },
+            "snapshot_id": {
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "IMPORT_SOURCE",
+                "MANUAL_ENTRY",
+                "CALCULATED",
+                "RECONCILED"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "supersedes_snapshot_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "valuation_date": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "schema_version",
+        "event_id",
+        "event_type",
+        "aggregate_type",
+        "aggregate_id",
+        "aggregate_version",
+        "occurred_at",
+        "correlation_id",
+        "causation_id",
+        "payload"
+      ],
+      "title": "Finance Extension 0.7.0 account and valuation events",
+      "type": "object"
+    },
+    "account_list.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/account_list.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "accounts": {
+              "items": {
+                "required": [
+                  "account_id",
+                  "display_name",
+                  "account_type",
+                  "currency",
+                  "status",
+                  "freshness"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "accounts"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "asset_allocation.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/asset_allocation.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "required": [
+            "valuation_currency",
+            "total_assets",
+            "allocation",
+            "currency_conflicts"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "backup_list.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/backup_list.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "backups": {
+              "items": {
+                "properties": {
+                  "archive_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "created_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "error_code": {
+                    "type": "string"
+                  },
+                  "event_store_sequence": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "verification_status": {
+                    "enum": [
+                      "VALID",
+                      "INVALID"
+                    ]
+                  }
+                },
+                "required": [
+                  "path",
+                  "size",
+                  "verification_status"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "backups"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "balance_reconciliation.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/balance_reconciliation.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "capability_manifest.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/capability_manifest.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object"
+            },
+            "extension_version": {
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "1.0.0"
+            }
+          },
+          "required": [
+            "extension_version",
+            "schema_version",
+            "capabilities"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "enum": [
+            "LOADING",
+            "READY",
+            "EMPTY",
+            "PARTIAL",
+            "STALE",
+            "ERROR",
+            "INCOMPATIBLE_SCHEMA",
+            "LOCKED"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "classification_events.schema.json": {
+      "$defs": {
+        "Base": {
+          "additionalProperties": false,
+          "properties": {
+            "aggregate_id": {
+              "minLength": 6,
+              "type": "string"
+            },
+            "aggregate_type": {
+              "enum": [
+                "Transaction",
+                "ClassificationRule"
+              ]
+            },
+            "aggregate_version": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "causation_id": {
+              "type": "string"
+            },
+            "correlation_id": {
+              "type": "string"
+            },
+            "event_id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "event_type": {
+              "type": "string"
+            },
+            "occurred_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "payload": {
+              "type": "object"
+            },
+            "schema_version": {
+              "const": "1.0.0"
+            }
+          },
+          "required": [
+            "schema_version",
+            "event_id",
+            "event_type",
+            "aggregate_type",
+            "aggregate_id",
+            "aggregate_version",
+            "occurred_at",
+            "correlation_id",
+            "causation_id",
+            "payload"
+          ],
+          "type": "object"
+        },
+        "CategoryCode": {
+          "enum": [
+            "INCOME_SALARY",
+            "INCOME_OTHER",
+            "HOUSING_RENT",
+            "HOUSING_UTILITIES",
+            "FOOD_GROCERIES",
+            "FOOD_RESTAURANTS",
+            "MOBILITY_PUBLIC_TRANSPORT",
+            "MOBILITY_FUEL",
+            "HEALTH",
+            "INSURANCE",
+            "LEISURE",
+            "SUBSCRIPTIONS",
+            "EDUCATION",
+            "FEES",
+            "TAXES",
+            "OTHER_EXPENSE",
+            "UNCLASSIFIED"
+          ]
+        },
+        "ClassificationRuleApplied": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "Transaction"
+                },
+                "event_type": {
+                  "const": "ClassificationRuleApplied"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RuleAppliedPayload"
+                }
+              }
+            }
+          ]
+        },
+        "ClassificationRuleCreated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "ClassificationRule"
+                },
+                "event_type": {
+                  "const": "ClassificationRuleCreated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RulePayload"
+                }
+              }
+            }
+          ]
+        },
+        "DecisionPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "category_code": {
+              "$ref": "#/$defs/CategoryCode"
+            },
+            "confirmed_by": {
+              "const": "USER"
+            },
+            "normalized_event_id": {
+              "type": "string"
+            },
+            "policy_version": {
+              "const": "rules@1.0.0"
+            },
+            "status": {
+              "const": "CONFIRMED"
+            },
+            "transaction_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "transaction_id",
+            "normalized_event_id",
+            "category_code",
+            "status",
+            "confirmed_by",
+            "policy_version"
+          ],
+          "type": "object"
+        },
+        "ProposalPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "category_code": {
+              "$ref": "#/$defs/CategoryCode"
+            },
+            "confidence": {
+              "pattern": "^(?:0(?:\\.0)?|1(?:\\.0)?)$",
+              "type": "string"
+            },
+            "matching_rule_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "normalized_event_id": {
+              "type": "string"
+            },
+            "policy_version": {
+              "const": "rules@1.0.0"
+            },
+            "ruleset_hash": {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "PROPOSED",
+                "CONFLICT",
+                "UNCLASSIFIED"
+              ]
+            },
+            "transaction_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "transaction_id",
+            "normalized_event_id",
+            "category_code",
+            "confidence",
+            "status",
+            "policy_version",
+            "ruleset_hash",
+            "matching_rule_ids"
+          ],
+          "type": "object"
+        },
+        "RejectionPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "category_code": {
+              "$ref": "#/$defs/CategoryCode"
+            },
+            "proposed_event_id": {
+              "type": "string"
+            },
+            "rejected_by": {
+              "const": "USER"
+            },
+            "status": {
+              "const": "REJECTED"
+            },
+            "transaction_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "transaction_id",
+            "proposed_event_id",
+            "category_code",
+            "status",
+            "rejected_by"
+          ],
+          "type": "object"
+        },
+        "RuleAppliedPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "category_code": {
+              "$ref": "#/$defs/CategoryCode"
+            },
+            "rule_id": {
+              "type": "string"
+            },
+            "rule_version": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "transaction_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "transaction_id",
+            "rule_id",
+            "rule_version",
+            "category_code"
+          ],
+          "type": "object"
+        },
+        "RulePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "category_code": {
+              "$ref": "#/$defs/CategoryCode"
+            },
+            "field": {
+              "enum": [
+                "counterparty",
+                "normalized_description"
+              ]
+            },
+            "operator": {
+              "enum": [
+                "CONTAINS",
+                "EQUALS",
+                "STARTS_WITH"
+              ]
+            },
+            "priority": {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rule_id": {
+              "type": "string"
+            },
+            "rule_version": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "value": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "rule_id",
+            "rule_version",
+            "field",
+            "operator",
+            "value",
+            "category_code",
+            "priority"
+          ],
+          "type": "object"
+        },
+        "TransactionClassificationConfirmed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "Transaction"
+                },
+                "event_type": {
+                  "const": "TransactionClassificationConfirmed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DecisionPayload"
+                }
+              }
+            }
+          ]
+        },
+        "TransactionClassificationProposed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "Transaction"
+                },
+                "event_type": {
+                  "const": "TransactionClassificationProposed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ProposalPayload"
+                }
+              }
+            }
+          ]
+        },
+        "TransactionClassificationRejected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "Transaction"
+                },
+                "event_type": {
+                  "const": "TransactionClassificationRejected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RejectionPayload"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "$id": "https://agent-os.local/finance/schemas/classification_events.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TransactionClassificationProposed"
+        },
+        {
+          "$ref": "#/$defs/TransactionClassificationConfirmed"
+        },
+        {
+          "$ref": "#/$defs/TransactionClassificationRejected"
+        },
+        {
+          "$ref": "#/$defs/ClassificationRuleCreated"
+        },
+        {
+          "$ref": "#/$defs/ClassificationRuleApplied"
+        }
+      ],
+      "title": "Finance Extension 0.3.0 classification events"
+    },
+    "commands.schema.json": {
+      "$defs": {
+        "AttachEvidence": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "AttachEvidence"
+                },
+                "payload": {
+                  "$ref": "#/$defs/AttachEvidencePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "AttachEvidencePayload": {
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "required": [
+                "transaction_id"
+              ]
+            },
+            {
+              "required": [
+                "tax_candidate_id"
+              ]
+            }
+          ],
+          "properties": {
+            "document_path": {
+              "$ref": "common.schema.json#/$defs/LocalAbsolutePath"
+            },
+            "relation_type": {
+              "enum": [
+                "SUPPORTS",
+                "RECEIPT_FOR",
+                "CERTIFICATE_FOR",
+                "INVOICE_FOR"
+              ]
+            },
+            "tax_candidate_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "document_path",
+            "relation_type"
+          ],
+          "type": "object"
+        },
+        "CalculateCashflow": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "CalculateCashflow"
+                },
+                "payload": {
+                  "$ref": "#/$defs/CalculateCashflowPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "CalculateCashflowPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "calculation_policy_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            },
+            "financial_period_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "force_new_version": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "financial_period_id",
+            "calculation_policy_version",
+            "force_new_version"
+          ],
+          "type": "object"
+        },
+        "ClassifyTransactions": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "ClassifyTransactions"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ClassifyTransactionsPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ClassifyTransactionsPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "allow_local_llm": {
+              "default": false,
+              "type": "boolean"
+            },
+            "classification_policy_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            },
+            "minimum_auto_accept_confidence": {
+              "$ref": "common.schema.json#/$defs/Confidence"
+            },
+            "transaction_ids": {
+              "items": {
+                "$ref": "common.schema.json#/$defs/EntityId"
+              },
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "transaction_ids",
+            "classification_policy_version",
+            "minimum_auto_accept_confidence"
+          ],
+          "type": "object"
+        },
+        "CloseFinancialPeriod": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "CloseFinancialPeriod"
+                },
+                "payload": {
+                  "$ref": "#/$defs/CloseFinancialPeriodPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "CloseFinancialPeriodPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "approval_id": {
+              "$ref": "#/$defs/LocalApprovalId"
+            },
+            "cashflow_analysis_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "financial_period_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "unresolved_item_policy": {
+              "enum": [
+                "REQUIRE_NONE",
+                "ALLOW_WITH_WARNING",
+                "ALLOW_BELOW_THRESHOLD"
+              ]
+            }
+          },
+          "required": [
+            "financial_period_id",
+            "cashflow_analysis_id",
+            "unresolved_item_policy",
+            "approval_id"
+          ],
+          "type": "object"
+        },
+        "CommandBase": {
+          "properties": {
+            "causation_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "command_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "command_type": {
+              "$ref": "#/$defs/CommandType"
+            },
+            "correlation_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "idempotency_key": {
+              "maxLength": 256,
+              "minLength": 8,
+              "type": "string"
+            },
+            "initiated_at": {
+              "$ref": "common.schema.json#/$defs/DateTime"
+            },
+            "initiated_by": {
+              "$ref": "common.schema.json#/$defs/Actor"
+            },
+            "owner_id": {
+              "$ref": "common.schema.json#/$defs/OwnerId"
+            },
+            "schema_version": {
+              "const": "1.0.0"
+            },
+            "security_context": {
+              "$ref": "common.schema.json#/$defs/SecurityContext"
+            }
+          },
+          "required": [
+            "schema_version",
+            "command_id",
+            "command_type",
+            "owner_id",
+            "initiated_by",
+            "initiated_at",
+            "correlation_id",
+            "idempotency_key",
+            "security_context",
+            "payload"
+          ],
+          "type": "object"
+        },
+        "CommandType": {
+          "enum": [
+            "RegisterDataSource",
+            "ImportTransactions",
+            "NormalizeImportBatch",
+            "ReconcileImportBatch",
+            "ClassifyTransactions",
+            "ConfirmClassification",
+            "RejectClassification",
+            "CreateClassificationRule",
+            "DetectTransfers",
+            "ConfirmTransfer",
+            "LinkTransactionRelation",
+            "DetectRecurringPatterns",
+            "ConfirmRecurringPattern",
+            "CalculateCashflow",
+            "GenerateForecast",
+            "EvaluateForecast",
+            "DetectTaxCandidates",
+            "ConfirmTaxCandidate",
+            "AttachEvidence",
+            "GenerateTaxPreparationPackage",
+            "CloseFinancialPeriod",
+            "ReopenFinancialPeriod",
+            "DeleteImportBatch",
+            "PurgeFinanceWorkspace"
+          ]
+        },
+        "ConfirmClassification": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "ConfirmClassification"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ConfirmClassificationPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ConfirmClassificationPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "approval_id": {
+              "$ref": "#/$defs/LocalApprovalId"
+            },
+            "category_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "comment": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "confirmation_scope": {
+              "enum": [
+                "THIS_TRANSACTION_ONLY",
+                "ALL_MATCHING_MERCHANT_TRANSACTIONS",
+                "FUTURE_MATCHING_TRANSACTIONS",
+                "ALL_HISTORICAL_AND_FUTURE_MATCHES"
+              ]
+            },
+            "subcategory_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "transaction_id",
+            "category_id",
+            "confirmation_scope"
+          ],
+          "type": "object"
+        },
+        "ConfirmRecurringPattern": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "ConfirmRecurringPattern"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ConfirmRecurringPatternPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ConfirmRecurringPatternPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "decision": {
+              "enum": [
+                "CONFIRM",
+                "REJECT",
+                "PAUSE",
+                "MARK_ENDED"
+              ]
+            },
+            "expected_amount_override": {
+              "$ref": "common.schema.json#/$defs/Money"
+            },
+            "frequency_override": {
+              "enum": [
+                "WEEKLY",
+                "MONTHLY",
+                "QUARTERLY",
+                "SEMI_ANNUALLY",
+                "ANNUALLY",
+                "IRREGULAR"
+              ]
+            },
+            "pattern_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "pattern_id",
+            "decision"
+          ],
+          "type": "object"
+        },
+        "ConfirmTaxCandidate": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "ConfirmTaxCandidate"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ConfirmTaxCandidatePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ConfirmTaxCandidatePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "business_share": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "comment": {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            "confirmed_amount": {
+              "$ref": "common.schema.json#/$defs/Money"
+            },
+            "decision": {
+              "enum": [
+                "CONFIRM",
+                "REJECT",
+                "MARK_FOR_ADVISOR_REVIEW"
+              ]
+            },
+            "tax_candidate_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "tax_candidate_id",
+            "decision"
+          ],
+          "type": "object"
+        },
+        "ConfirmTransfer": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "ConfirmTransfer"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ConfirmTransferPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ConfirmTransferPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "decision": {
+              "enum": [
+                "CONFIRM",
+                "REJECT",
+                "BREAK_EXISTING_MATCH"
+              ]
+            },
+            "incoming_transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "outgoing_transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "outgoing_transaction_id",
+            "incoming_transaction_id",
+            "decision"
+          ],
+          "type": "object"
+        },
+        "CreateClassificationRule": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "CreateClassificationRule"
+                },
+                "payload": {
+                  "$ref": "#/$defs/CreateClassificationRulePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "CreateClassificationRulePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "actions": {
+              "$ref": "common.schema.json#/$defs/RuleAction"
+            },
+            "apply_retroactively": {
+              "type": "boolean"
+            },
+            "approval_id": {
+              "$ref": "#/$defs/LocalApprovalId"
+            },
+            "conditions": {
+              "items": {
+                "$ref": "common.schema.json#/$defs/RuleCondition"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "name": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "priority": {
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scope": {
+              "enum": [
+                "SINGLE_TRANSACTION",
+                "MERCHANT",
+                "ACCOUNT",
+                "USER",
+                "WORKSPACE"
+              ]
+            },
+            "valid_from": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "valid_until": {
+              "$ref": "common.schema.json#/$defs/Date"
+            }
+          },
+          "required": [
+            "name",
+            "priority",
+            "scope",
+            "conditions",
+            "actions",
+            "valid_from",
+            "apply_retroactively"
+          ],
+          "type": "object"
+        },
+        "DeleteImportBatch": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "DeleteImportBatch"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DeleteImportBatchPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "DeleteImportBatchPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "approval_id": {
+              "$ref": "#/$defs/LocalApprovalId"
+            },
+            "deletion_mode": {
+              "enum": [
+                "DELETE_DERIVED_ONLY",
+                "DELETE_SOURCE_AND_DERIVED"
+              ]
+            },
+            "import_batch_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "reason": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "import_batch_id",
+            "deletion_mode",
+            "reason",
+            "approval_id"
+          ],
+          "type": "object"
+        },
+        "DetectRecurringPatterns": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "DetectRecurringPatterns"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DetectRecurringPatternsPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "DetectRecurringPatternsPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "account_ids": {
+              "items": {
+                "$ref": "common.schema.json#/$defs/EntityId"
+              },
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "history_end": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "history_start": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "minimum_occurrences": {
+              "maximum": 120,
+              "minimum": 2,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "account_ids",
+            "history_start",
+            "history_end",
+            "minimum_occurrences"
+          ],
+          "type": "object"
+        },
+        "DetectTaxCandidates": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "DetectTaxCandidates"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DetectTaxCandidatesPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "DetectTaxCandidatesPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "jurisdiction": {
+              "const": "DE"
+            },
+            "tax_rule_package_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            },
+            "tax_year": {
+              "maximum": 2200,
+              "minimum": 2000,
+              "type": "integer"
+            },
+            "transaction_ids": {
+              "items": {
+                "$ref": "common.schema.json#/$defs/EntityId"
+              },
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "tax_year",
+            "jurisdiction",
+            "transaction_ids",
+            "tax_rule_package_version"
+          ],
+          "type": "object"
+        },
+        "DetectTransfers": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "DetectTransfers"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DetectTransfersPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "DetectTransfersPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "account_ids": {
+              "items": {
+                "$ref": "common.schema.json#/$defs/EntityId"
+              },
+              "minItems": 2,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "matching_policy_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            },
+            "period_end": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "period_start": {
+              "$ref": "common.schema.json#/$defs/Date"
+            }
+          },
+          "required": [
+            "period_start",
+            "period_end",
+            "account_ids",
+            "matching_policy_version"
+          ],
+          "type": "object"
+        },
+        "EvaluateForecast": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "EvaluateForecast"
+                },
+                "payload": {
+                  "$ref": "#/$defs/EvaluateForecastPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "EvaluateForecastPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "actual_period_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "forecast_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "forecast_id",
+            "actual_period_id"
+          ],
+          "type": "object"
+        },
+        "GenerateForecast": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "GenerateForecast"
+                },
+                "payload": {
+                  "$ref": "#/$defs/GenerateForecastPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "GenerateForecastPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "base_date": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "forecast_policy_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            },
+            "forecast_type": {
+              "enum": [
+                "MONTH_END_BALANCE",
+                "MONTHLY_SURPLUS",
+                "CASHFLOW",
+                "NET_WORTH",
+                "LIQUIDITY_RUNWAY"
+              ]
+            },
+            "horizon_end": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "scenario_set": {
+              "items": {
+                "enum": [
+                  "CONSERVATIVE",
+                  "BASE",
+                  "OPTIMISTIC"
+                ]
+              },
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "forecast_type",
+            "base_date",
+            "horizon_end",
+            "scenario_set",
+            "forecast_policy_version"
+          ],
+          "type": "object"
+        },
+        "GenerateTaxPreparationPackage": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "GenerateTaxPreparationPackage"
+                },
+                "payload": {
+                  "$ref": "#/$defs/GenerateTaxPreparationPackagePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "GenerateTaxPreparationPackagePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "approval_id": {
+              "$ref": "#/$defs/LocalApprovalId"
+            },
+            "included_candidate_ids": {
+              "items": {
+                "$ref": "common.schema.json#/$defs/EntityId"
+              },
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "output_directory": {
+              "$ref": "common.schema.json#/$defs/LocalAbsolutePath"
+            },
+            "output_format": {
+              "enum": [
+                "LOCAL_PDF_REPORT",
+                "LOCAL_CSV",
+                "LOCAL_JSON",
+                "ADVISOR_PACKAGE"
+              ]
+            },
+            "tax_year": {
+              "maximum": 2200,
+              "minimum": 2000,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "tax_year",
+            "included_candidate_ids",
+            "output_format",
+            "output_directory",
+            "approval_id"
+          ],
+          "type": "object"
+        },
+        "ImportTransactions": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "ImportTransactions"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ImportTransactionsPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ImportTransactionsPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "account_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "approval_id": {
+              "$ref": "#/$defs/LocalApprovalId"
+            },
+            "data_source_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "expected_file_hash": {
+              "$ref": "common.schema.json#/$defs/Sha256"
+            },
+            "import_mode": {
+              "enum": [
+                "VALIDATE_ONLY",
+                "IMPORT_NEW",
+                "FORCE_REIMPORT"
+              ]
+            },
+            "source_file_path": {
+              "$ref": "common.schema.json#/$defs/LocalAbsolutePath"
+            }
+          },
+          "required": [
+            "source_file_path",
+            "data_source_id",
+            "account_id",
+            "import_mode"
+          ],
+          "type": "object"
+        },
+        "LinkTransactionRelation": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "LinkTransactionRelation"
+                },
+                "payload": {
+                  "$ref": "#/$defs/LinkTransactionRelationPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "LinkTransactionRelationPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "related_amount": {
+              "$ref": "common.schema.json#/$defs/Money"
+            },
+            "relation_type": {
+              "enum": [
+                "REFUND_OF",
+                "REVERSAL_OF",
+                "FEE_FOR",
+                "INSTALLMENT_OF",
+                "SPLIT_FROM",
+                "MERGED_INTO"
+              ]
+            },
+            "source_transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "target_transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "source_transaction_id",
+            "target_transaction_id",
+            "relation_type",
+            "related_amount"
+          ],
+          "type": "object"
+        },
+        "LocalApprovalId": {
+          "pattern": "^approval_local_[A-Za-z0-9_-]{6,128}$",
+          "type": "string"
+        },
+        "NormalizeImportBatch": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "NormalizeImportBatch"
+                },
+                "payload": {
+                  "$ref": "#/$defs/NormalizeImportBatchPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "NormalizeImportBatchPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "import_batch_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "normalization_policy_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            }
+          },
+          "required": [
+            "import_batch_id",
+            "normalization_policy_version"
+          ],
+          "type": "object"
+        },
+        "PurgeFinanceWorkspace": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "PurgeFinanceWorkspace"
+                },
+                "payload": {
+                  "$ref": "#/$defs/PurgeFinanceWorkspacePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "PurgeFinanceWorkspacePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "approval_id": {
+              "$ref": "#/$defs/LocalApprovalId"
+            },
+            "confirmation_token": {
+              "maxLength": 256,
+              "minLength": 16,
+              "type": "string"
+            },
+            "installation_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "installation_id",
+            "approval_id",
+            "confirmation_token"
+          ],
+          "type": "object"
+        },
+        "ReconcileImportBatch": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "ReconcileImportBatch"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ReconcileImportBatchPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ReconcileImportBatchPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "import_batch_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "reconciliation_policy_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            }
+          },
+          "required": [
+            "import_batch_id",
+            "reconciliation_policy_version"
+          ],
+          "type": "object"
+        },
+        "RegisterDataSource": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "RegisterDataSource"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RegisterDataSourcePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "RegisterDataSourcePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "default_account_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "display_name": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "format": {
+              "maxLength": 40,
+              "minLength": 1,
+              "type": "string"
+            },
+            "local_directory": {
+              "$ref": "common.schema.json#/$defs/LocalAbsolutePath"
+            },
+            "provider": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "source_type": {
+              "enum": [
+                "BANK_EXPORT",
+                "CREDIT_CARD_EXPORT",
+                "BROKER_EXPORT",
+                "MANUAL_ENTRY",
+                "TAX_IMPORT",
+                "DOCUMENT_IMPORT"
+              ]
+            }
+          },
+          "required": [
+            "display_name",
+            "source_type",
+            "provider",
+            "format",
+            "local_directory"
+          ],
+          "type": "object"
+        },
+        "RejectClassification": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "RejectClassification"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RejectClassificationPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "RejectClassificationPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "classification_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "reason": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "request_new_proposal": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "classification_id",
+            "reason",
+            "request_new_proposal"
+          ],
+          "type": "object"
+        },
+        "ReopenFinancialPeriod": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CommandBase"
+            },
+            {
+              "properties": {
+                "command_type": {
+                  "const": "ReopenFinancialPeriod"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ReopenFinancialPeriodPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ReopenFinancialPeriodPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "approval_id": {
+              "$ref": "#/$defs/LocalApprovalId"
+            },
+            "financial_period_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "reason": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "financial_period_id",
+            "reason",
+            "approval_id"
+          ],
+          "type": "object"
+        }
+      },
+      "$id": "https://agent-os.local/finance/schemas/commands.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RegisterDataSource"
+        },
+        {
+          "$ref": "#/$defs/ImportTransactions"
+        },
+        {
+          "$ref": "#/$defs/NormalizeImportBatch"
+        },
+        {
+          "$ref": "#/$defs/ReconcileImportBatch"
+        },
+        {
+          "$ref": "#/$defs/ClassifyTransactions"
+        },
+        {
+          "$ref": "#/$defs/ConfirmClassification"
+        },
+        {
+          "$ref": "#/$defs/RejectClassification"
+        },
+        {
+          "$ref": "#/$defs/CreateClassificationRule"
+        },
+        {
+          "$ref": "#/$defs/DetectTransfers"
+        },
+        {
+          "$ref": "#/$defs/ConfirmTransfer"
+        },
+        {
+          "$ref": "#/$defs/LinkTransactionRelation"
+        },
+        {
+          "$ref": "#/$defs/DetectRecurringPatterns"
+        },
+        {
+          "$ref": "#/$defs/ConfirmRecurringPattern"
+        },
+        {
+          "$ref": "#/$defs/CalculateCashflow"
+        },
+        {
+          "$ref": "#/$defs/GenerateForecast"
+        },
+        {
+          "$ref": "#/$defs/EvaluateForecast"
+        },
+        {
+          "$ref": "#/$defs/DetectTaxCandidates"
+        },
+        {
+          "$ref": "#/$defs/ConfirmTaxCandidate"
+        },
+        {
+          "$ref": "#/$defs/AttachEvidence"
+        },
+        {
+          "$ref": "#/$defs/GenerateTaxPreparationPackage"
+        },
+        {
+          "$ref": "#/$defs/CloseFinancialPeriod"
+        },
+        {
+          "$ref": "#/$defs/ReopenFinancialPeriod"
+        },
+        {
+          "$ref": "#/$defs/DeleteImportBatch"
+        },
+        {
+          "$ref": "#/$defs/PurgeFinanceWorkspace"
+        }
+      ],
+      "title": "Finance Extension command catalog"
+    },
+    "common.schema.json": {
+      "$defs": {
+        "Actor": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "USER",
+                "AGENT",
+                "SYSTEM",
+                "ADMIN",
+                "EXTERNAL_SERVICE"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "type": "object"
+        },
+        "Confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "Currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        },
+        "Date": {
+          "format": "date",
+          "type": "string"
+        },
+        "DateTime": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "DecimalAmount": {
+          "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,8})?$",
+          "type": "string"
+        },
+        "EntityId": {
+          "pattern": "^[a-z][a-z0-9_]*_[A-Za-z0-9_-]{6,128}$",
+          "type": "string"
+        },
+        "LocalAbsolutePath": {
+          "description": "A host-local absolute path. Semantic validation is mandatory.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "Money": {
+          "additionalProperties": false,
+          "properties": {
+            "amount": {
+              "$ref": "#/$defs/DecimalAmount"
+            },
+            "currency": {
+              "$ref": "#/$defs/Currency"
+            }
+          },
+          "required": [
+            "amount",
+            "currency"
+          ],
+          "type": "object"
+        },
+        "OwnerId": {
+          "pattern": "^user_local_[A-Za-z0-9_-]{2,128}$",
+          "type": "string"
+        },
+        "PolicyVersion": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*@[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "type": "string"
+        },
+        "RuleAction": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "category_id": {
+              "$ref": "#/$defs/EntityId"
+            },
+            "merchant_id": {
+              "$ref": "#/$defs/EntityId"
+            },
+            "recurring_candidate": {
+              "type": "boolean"
+            },
+            "subcategory_id": {
+              "$ref": "#/$defs/EntityId"
+            }
+          },
+          "type": "object"
+        },
+        "RuleCondition": {
+          "additionalProperties": false,
+          "properties": {
+            "field": {
+              "enum": [
+                "counterparty",
+                "normalized_description",
+                "merchant_id",
+                "amount",
+                "currency",
+                "direction",
+                "account_id"
+              ]
+            },
+            "operator": {
+              "enum": [
+                "EQUALS",
+                "CONTAINS",
+                "STARTS_WITH",
+                "MATCHES",
+                "LT",
+                "LTE",
+                "GT",
+                "GTE",
+                "IN"
+              ]
+            },
+            "value": {}
+          },
+          "required": [
+            "field",
+            "operator",
+            "value"
+          ],
+          "type": "object"
+        },
+        "SecurityContext": {
+          "additionalProperties": false,
+          "properties": {
+            "classification": {
+              "const": "RESTRICTED"
+            },
+            "data_type": {
+              "const": "FINANCIAL"
+            },
+            "domain": {
+              "const": "PERSONAL"
+            },
+            "git_eligible": {
+              "const": false
+            },
+            "network_egress": {
+              "const": "DENY"
+            },
+            "purpose": {
+              "const": "PERSONAL_FINANCE_ANALYSIS"
+            },
+            "storage_scope": {
+              "const": "LOCAL_DEVICE_ONLY"
+            },
+            "trust_zone": {
+              "const": "PRIVATE_LOCAL"
+            }
+          },
+          "required": [
+            "domain",
+            "data_type",
+            "classification",
+            "purpose",
+            "storage_scope",
+            "trust_zone",
+            "network_egress",
+            "git_eligible"
+          ],
+          "type": "object"
+        },
+        "Sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "Version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+          "type": "string"
+        }
+      },
+      "$id": "https://agent-os.local/finance/schemas/common.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "Finance Extension common types"
+    },
+    "dashboard.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/dashboard.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "effective_expenses": {
+              "type": "string"
+            },
+            "effective_income": {
+              "type": "string"
+            },
+            "expected_month_end_surplus": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "liquid_balance": {
+              "type": "string"
+            },
+            "liquid_balance_as_of": {
+              "format": "date",
+              "type": "string"
+            },
+            "month": {
+              "pattern": "^[0-9]{4}-[0-9]{2}$",
+              "type": "string"
+            },
+            "net_cashflow": {
+              "type": "string"
+            },
+            "net_worth": {
+              "type": "string"
+            },
+            "net_worth_as_of": {
+              "format": "date",
+              "type": "string"
+            },
+            "open_reviews": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "projected_month_end_balance": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "remaining_expected_expenses": {
+              "type": "string"
+            },
+            "remaining_expected_income": {
+              "type": "string"
+            },
+            "savings_rate": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "month",
+            "effective_income",
+            "effective_expenses",
+            "net_cashflow",
+            "open_reviews"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "events.schema.json": {
+      "$defs": {
+        "CashflowCalculated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "CashflowCalculated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/CashflowPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "CashflowPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "analysis_version": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "cashflow_analysis_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "financial_period_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "free_cashflow": {
+              "$ref": "common.schema.json#/$defs/Money"
+            },
+            "policy_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            },
+            "savings_rate": {
+              "maximum": 1,
+              "minimum": -1000,
+              "type": "number"
+            },
+            "total_expenses": {
+              "$ref": "common.schema.json#/$defs/Money"
+            },
+            "total_income": {
+              "$ref": "common.schema.json#/$defs/Money"
+            }
+          },
+          "required": [
+            "cashflow_analysis_id",
+            "financial_period_id",
+            "analysis_version",
+            "total_income",
+            "total_expenses",
+            "free_cashflow",
+            "savings_rate",
+            "policy_version"
+          ],
+          "type": "object"
+        },
+        "ClassificationPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "category_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "classification_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "confidence": {
+              "$ref": "common.schema.json#/$defs/Confidence"
+            },
+            "source": {
+              "enum": [
+                "USER",
+                "USER_RULE",
+                "SYSTEM_RULE",
+                "MERCHANT_RULE",
+                "STATISTICAL_MODEL",
+                "LOCAL_LLM",
+                "IMPORT_SOURCE"
+              ]
+            },
+            "status": {
+              "enum": [
+                "PROPOSED",
+                "AUTO_ACCEPTED",
+                "USER_CONFIRMED",
+                "REVIEW_REQUIRED"
+              ]
+            },
+            "subcategory_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "supersedes_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "transaction_id",
+            "classification_id",
+            "category_id",
+            "source",
+            "confidence",
+            "status"
+          ],
+          "type": "object"
+        },
+        "ClassificationRuleConflictDetected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "ClassificationRuleConflictDetected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RulePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ClassificationRuleCreated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "ClassificationRuleCreated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RulePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "DataSourcePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "data_source_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "format": {
+              "maxLength": 40,
+              "minLength": 1,
+              "type": "string"
+            },
+            "source_type": {
+              "enum": [
+                "BANK_EXPORT",
+                "CREDIT_CARD_EXPORT",
+                "BROKER_EXPORT",
+                "MANUAL_ENTRY",
+                "TAX_IMPORT",
+                "DOCUMENT_IMPORT"
+              ]
+            },
+            "status": {
+              "const": "ACTIVE"
+            }
+          },
+          "required": [
+            "data_source_id",
+            "source_type",
+            "format",
+            "status"
+          ],
+          "type": "object"
+        },
+        "DataSourceRegistered": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "DataSourceRegistered"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DataSourcePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "DeletionPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "deleted_entity_counts": {
+              "additionalProperties": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "deletion_mode": {
+              "enum": [
+                "DELETE_DERIVED_ONLY",
+                "DELETE_SOURCE_AND_DERIVED"
+              ]
+            },
+            "import_batch_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "import_batch_id",
+            "deletion_mode",
+            "deleted_entity_counts"
+          ],
+          "type": "object"
+        },
+        "DuplicatePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "import_batch_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "match_score": {
+              "$ref": "common.schema.json#/$defs/Confidence"
+            },
+            "transaction_ids": {
+              "items": {
+                "$ref": "common.schema.json#/$defs/EntityId"
+              },
+              "minItems": 2,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "import_batch_id",
+            "transaction_ids",
+            "match_score"
+          ],
+          "type": "object"
+        },
+        "EventBase": {
+          "properties": {
+            "actor": {
+              "$ref": "common.schema.json#/$defs/Actor"
+            },
+            "aggregate_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "aggregate_type": {
+              "enum": [
+                "DataSource",
+                "ImportBatch",
+                "Transaction",
+                "ClassificationRule",
+                "TransferMatch",
+                "RecurringPattern",
+                "FinancialPeriod",
+                "Forecast",
+                "TaxCandidate",
+                "EvidenceDocument",
+                "FinanceWorkspace"
+              ]
+            },
+            "aggregate_version": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "approval_id": {
+              "pattern": "^approval_local_[A-Za-z0-9_-]{6,128}$",
+              "type": "string"
+            },
+            "causation_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "correlation_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "event_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "event_type": {
+              "$ref": "#/$defs/EventType"
+            },
+            "occurred_at": {
+              "$ref": "common.schema.json#/$defs/DateTime"
+            },
+            "owner_id": {
+              "$ref": "common.schema.json#/$defs/OwnerId"
+            },
+            "policy_decision_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "recorded_at": {
+              "$ref": "common.schema.json#/$defs/DateTime"
+            },
+            "schema_version": {
+              "const": "1.0.0"
+            },
+            "security_context": {
+              "$ref": "common.schema.json#/$defs/SecurityContext"
+            }
+          },
+          "required": [
+            "schema_version",
+            "event_id",
+            "event_type",
+            "aggregate_type",
+            "aggregate_id",
+            "aggregate_version",
+            "owner_id",
+            "occurred_at",
+            "recorded_at",
+            "correlation_id",
+            "causation_id",
+            "actor",
+            "security_context",
+            "payload"
+          ],
+          "type": "object"
+        },
+        "EventType": {
+          "enum": [
+            "DataSourceRegistered",
+            "ImportBatchCreated",
+            "RawTransactionsImported",
+            "ImportBatchFailed",
+            "ImportBatchNormalized",
+            "ImportBatchReconciled",
+            "PossibleDuplicateDetected",
+            "TransactionClassificationProposed",
+            "TransactionClassificationAutoAccepted",
+            "TransactionReviewRequired",
+            "TransactionClassificationConfirmed",
+            "ClassificationRuleCreated",
+            "HistoricalTransactionsReclassified",
+            "ClassificationRuleConflictDetected",
+            "TransferMatchProposed",
+            "TransferMatchAutoConfirmed",
+            "TransferMatchConfirmed",
+            "TransferMatchRejected",
+            "TransferMatchBroken",
+            "RecurringPatternDetected",
+            "RecurringPatternConfirmed",
+            "RecurringPatternRejected",
+            "RecurringPatternEnded",
+            "CashflowCalculated",
+            "ForecastGenerated",
+            "ForecastEvaluated",
+            "TaxCandidateDetected",
+            "TaxCandidateConfirmed",
+            "TaxCandidateRejected",
+            "TaxAdvisorReviewRequested",
+            "EvidenceDocumentStored",
+            "EvidenceLinked",
+            "TaxPreparationPackageGenerated",
+            "FinancialPeriodClosed",
+            "FinancialPeriodReopened",
+            "ImportBatchDeleted",
+            "FinanceWorkspacePurged"
+          ]
+        },
+        "EvidenceDocumentStored": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "EvidenceDocumentStored"
+                },
+                "payload": {
+                  "$ref": "#/$defs/EvidenceStoredPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "EvidenceLinked": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "EvidenceLinked"
+                },
+                "payload": {
+                  "$ref": "#/$defs/EvidenceLinkedPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "EvidenceLinkedPayload": {
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "required": [
+                "transaction_id"
+              ]
+            },
+            {
+              "required": [
+                "tax_candidate_id"
+              ]
+            }
+          ],
+          "properties": {
+            "document_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "relation_type": {
+              "enum": [
+                "SUPPORTS",
+                "RECEIPT_FOR",
+                "CERTIFICATE_FOR",
+                "INVOICE_FOR"
+              ]
+            },
+            "tax_candidate_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "document_id",
+            "relation_type"
+          ],
+          "type": "object"
+        },
+        "EvidenceStoredPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "content_hash": {
+              "$ref": "common.schema.json#/$defs/Sha256"
+            },
+            "document_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "extraction_status": {
+              "enum": [
+                "UPLOADED",
+                "SCANNED",
+                "EXTRACTED",
+                "REVIEW_REQUIRED",
+                "CONFIRMED",
+                "FAILED"
+              ]
+            },
+            "storage_reference_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "document_id",
+            "content_hash",
+            "storage_reference_id",
+            "extraction_status"
+          ],
+          "type": "object"
+        },
+        "FinanceWorkspacePurged": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "FinanceWorkspacePurged"
+                },
+                "payload": {
+                  "$ref": "#/$defs/PurgePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "FinancialPeriodClosed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "FinancialPeriodClosed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/PeriodPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "FinancialPeriodReopened": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "FinancialPeriodReopened"
+                },
+                "payload": {
+                  "$ref": "#/$defs/PeriodPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ForecastEvaluated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "ForecastEvaluated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ForecastEvaluatedPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ForecastEvaluatedPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "absolute_error": {
+              "$ref": "common.schema.json#/$defs/Money"
+            },
+            "actual_period_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "actual_value": {
+              "$ref": "common.schema.json#/$defs/Money"
+            },
+            "forecast_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "percentage_error": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "predicted_value": {
+              "$ref": "common.schema.json#/$defs/Money"
+            }
+          },
+          "required": [
+            "forecast_id",
+            "actual_period_id",
+            "predicted_value",
+            "actual_value",
+            "absolute_error",
+            "percentage_error"
+          ],
+          "type": "object"
+        },
+        "ForecastGenerated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "ForecastGenerated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ForecastGeneratedPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ForecastGeneratedPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "base_date": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "forecast_ids": {
+              "items": {
+                "$ref": "common.schema.json#/$defs/EntityId"
+              },
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "forecast_type": {
+              "enum": [
+                "MONTH_END_BALANCE",
+                "MONTHLY_SURPLUS",
+                "CASHFLOW",
+                "NET_WORTH",
+                "LIQUIDITY_RUNWAY"
+              ]
+            },
+            "horizon_end": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "policy_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            },
+            "scenarios": {
+              "items": {
+                "enum": [
+                  "CONSERVATIVE",
+                  "BASE",
+                  "OPTIMISTIC"
+                ]
+              },
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "forecast_ids",
+            "forecast_type",
+            "base_date",
+            "horizon_end",
+            "scenarios",
+            "policy_version"
+          ],
+          "type": "object"
+        },
+        "HistoricalTransactionsReclassified": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "HistoricalTransactionsReclassified"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RulePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ImportBatchCreated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "ImportBatchCreated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ImportBatchCreatedPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ImportBatchCreatedPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "account_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "data_source_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "file_hash": {
+              "$ref": "common.schema.json#/$defs/Sha256"
+            },
+            "import_batch_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "parser_version": {
+              "$ref": "common.schema.json#/$defs/Version"
+            },
+            "status": {
+              "const": "RECEIVED"
+            }
+          },
+          "required": [
+            "import_batch_id",
+            "data_source_id",
+            "account_id",
+            "file_hash",
+            "parser_version",
+            "status"
+          ],
+          "type": "object"
+        },
+        "ImportBatchDeleted": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "ImportBatchDeleted"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DeletionPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ImportBatchFailed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "ImportBatchFailed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ImportFailurePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ImportBatchNormalized": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "ImportBatchNormalized"
+                },
+                "payload": {
+                  "$ref": "#/$defs/NormalizationPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ImportBatchReconciled": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "ImportBatchReconciled"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ReconciliationPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ImportCountPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "import_batch_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "record_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "status": {
+              "const": "PARSING"
+            }
+          },
+          "required": [
+            "import_batch_id",
+            "record_count",
+            "status"
+          ],
+          "type": "object"
+        },
+        "ImportFailurePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "failure_code": {
+              "pattern": "^FINANCE_[A-Z0-9_]+$",
+              "type": "string"
+            },
+            "import_batch_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "local_details_reference": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "status": {
+              "enum": [
+                "VALIDATION_FAILED",
+                "PARSING_FAILED",
+                "PARTIALLY_COMPLETED",
+                "CANCELLED"
+              ]
+            }
+          },
+          "required": [
+            "import_batch_id",
+            "failure_code",
+            "retryable",
+            "status"
+          ],
+          "type": "object"
+        },
+        "NormalizationPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "import_batch_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "normalized_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "policy_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            },
+            "rejected_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "warning_count": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "import_batch_id",
+            "normalized_count",
+            "rejected_count",
+            "warning_count",
+            "policy_version"
+          ],
+          "type": "object"
+        },
+        "PeriodPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "analysis_version": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "financial_period_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "reason": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "CLOSED",
+                "REOPENED"
+              ]
+            }
+          },
+          "required": [
+            "financial_period_id",
+            "status",
+            "analysis_version"
+          ],
+          "type": "object"
+        },
+        "PossibleDuplicateDetected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "PossibleDuplicateDetected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DuplicatePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "PurgePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "failure_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "installation_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "result": {
+              "enum": [
+                "SUCCESS",
+                "PARTIAL_FAILURE"
+              ]
+            }
+          },
+          "required": [
+            "installation_id",
+            "result"
+          ],
+          "type": "object"
+        },
+        "RawTransactionsImported": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "RawTransactionsImported"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ImportCountPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "ReconciliationPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "conflict_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "duplicate_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "import_batch_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "new_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "policy_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            },
+            "possible_duplicate_count": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "import_batch_id",
+            "new_count",
+            "duplicate_count",
+            "possible_duplicate_count",
+            "conflict_count",
+            "policy_version"
+          ],
+          "type": "object"
+        },
+        "RecurringPatternConfirmed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "RecurringPatternConfirmed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RecurringPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "RecurringPatternDetected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "RecurringPatternDetected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RecurringPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "RecurringPatternEnded": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "RecurringPatternEnded"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RecurringPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "RecurringPatternRejected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "RecurringPatternRejected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RecurringPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "RecurringPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "confidence": {
+              "$ref": "common.schema.json#/$defs/Confidence"
+            },
+            "next_expected_date": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "pattern_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "status": {
+              "enum": [
+                "CANDIDATE",
+                "CONFIRMED",
+                "PAUSED",
+                "ENDED",
+                "REJECTED"
+              ]
+            }
+          },
+          "required": [
+            "pattern_id",
+            "status",
+            "confidence"
+          ],
+          "type": "object"
+        },
+        "RulePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "affected_transaction_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "conflicting_rule_ids": {
+              "items": {
+                "$ref": "common.schema.json#/$defs/EntityId"
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "rule_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "status": {
+              "enum": [
+                "ACTIVE",
+                "CONFLICT",
+                "DISABLED"
+              ]
+            }
+          },
+          "required": [
+            "rule_id",
+            "status",
+            "affected_transaction_count"
+          ],
+          "type": "object"
+        },
+        "TaxAdvisorReviewRequested": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TaxAdvisorReviewRequested"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TaxCandidatePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TaxCandidateConfirmed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TaxCandidateConfirmed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TaxCandidatePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TaxCandidateDetected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TaxCandidateDetected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TaxCandidatePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TaxCandidatePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "jurisdiction": {
+              "const": "DE"
+            },
+            "rule_version": {
+              "$ref": "common.schema.json#/$defs/PolicyVersion"
+            },
+            "status": {
+              "enum": [
+                "DETECTED",
+                "REVIEW_REQUIRED",
+                "USER_CONFIRMED",
+                "USER_REJECTED",
+                "ADVISOR_REVIEW_REQUESTED"
+              ]
+            },
+            "tax_candidate_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "tax_year": {
+              "maximum": 2200,
+              "minimum": 2000,
+              "type": "integer"
+            },
+            "transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "tax_candidate_id",
+            "transaction_id",
+            "tax_year",
+            "jurisdiction",
+            "status",
+            "rule_version"
+          ],
+          "type": "object"
+        },
+        "TaxCandidateRejected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TaxCandidateRejected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TaxCandidatePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TaxPackagePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "candidate_count": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "content_hash": {
+              "$ref": "common.schema.json#/$defs/Sha256"
+            },
+            "output_format": {
+              "enum": [
+                "LOCAL_PDF_REPORT",
+                "LOCAL_CSV",
+                "LOCAL_JSON",
+                "ADVISOR_PACKAGE"
+              ]
+            },
+            "package_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "tax_year": {
+              "maximum": 2200,
+              "minimum": 2000,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "package_id",
+            "tax_year",
+            "output_format",
+            "candidate_count",
+            "content_hash"
+          ],
+          "type": "object"
+        },
+        "TaxPreparationPackageGenerated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TaxPreparationPackageGenerated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TaxPackagePayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TransactionClassificationAutoAccepted": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TransactionClassificationAutoAccepted"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ClassificationPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TransactionClassificationConfirmed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TransactionClassificationConfirmed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ClassificationPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TransactionClassificationProposed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TransactionClassificationProposed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ClassificationPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TransactionReviewRequired": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TransactionReviewRequired"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ClassificationPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TransferMatchAutoConfirmed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TransferMatchAutoConfirmed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TransferPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TransferMatchBroken": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TransferMatchBroken"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TransferPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TransferMatchConfirmed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TransferMatchConfirmed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TransferPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TransferMatchProposed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TransferMatchProposed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TransferPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TransferMatchRejected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/EventBase"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "TransferMatchRejected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TransferPayload"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "TransferPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "incoming_transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "match_score": {
+              "$ref": "common.schema.json#/$defs/Confidence"
+            },
+            "outgoing_transaction_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            },
+            "status": {
+              "enum": [
+                "PROPOSED",
+                "AUTO_CONFIRMED",
+                "USER_CONFIRMED",
+                "REJECTED",
+                "BROKEN"
+              ]
+            },
+            "transfer_match_id": {
+              "$ref": "common.schema.json#/$defs/EntityId"
+            }
+          },
+          "required": [
+            "transfer_match_id",
+            "outgoing_transaction_id",
+            "incoming_transaction_id",
+            "status"
+          ],
+          "type": "object"
+        }
+      },
+      "$id": "https://agent-os.local/finance/schemas/events.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DataSourceRegistered"
+        },
+        {
+          "$ref": "#/$defs/ImportBatchCreated"
+        },
+        {
+          "$ref": "#/$defs/RawTransactionsImported"
+        },
+        {
+          "$ref": "#/$defs/ImportBatchFailed"
+        },
+        {
+          "$ref": "#/$defs/ImportBatchNormalized"
+        },
+        {
+          "$ref": "#/$defs/ImportBatchReconciled"
+        },
+        {
+          "$ref": "#/$defs/PossibleDuplicateDetected"
+        },
+        {
+          "$ref": "#/$defs/TransactionClassificationProposed"
+        },
+        {
+          "$ref": "#/$defs/TransactionClassificationAutoAccepted"
+        },
+        {
+          "$ref": "#/$defs/TransactionReviewRequired"
+        },
+        {
+          "$ref": "#/$defs/TransactionClassificationConfirmed"
+        },
+        {
+          "$ref": "#/$defs/ClassificationRuleCreated"
+        },
+        {
+          "$ref": "#/$defs/HistoricalTransactionsReclassified"
+        },
+        {
+          "$ref": "#/$defs/ClassificationRuleConflictDetected"
+        },
+        {
+          "$ref": "#/$defs/TransferMatchProposed"
+        },
+        {
+          "$ref": "#/$defs/TransferMatchAutoConfirmed"
+        },
+        {
+          "$ref": "#/$defs/TransferMatchConfirmed"
+        },
+        {
+          "$ref": "#/$defs/TransferMatchRejected"
+        },
+        {
+          "$ref": "#/$defs/TransferMatchBroken"
+        },
+        {
+          "$ref": "#/$defs/RecurringPatternDetected"
+        },
+        {
+          "$ref": "#/$defs/RecurringPatternConfirmed"
+        },
+        {
+          "$ref": "#/$defs/RecurringPatternRejected"
+        },
+        {
+          "$ref": "#/$defs/RecurringPatternEnded"
+        },
+        {
+          "$ref": "#/$defs/CashflowCalculated"
+        },
+        {
+          "$ref": "#/$defs/ForecastGenerated"
+        },
+        {
+          "$ref": "#/$defs/ForecastEvaluated"
+        },
+        {
+          "$ref": "#/$defs/TaxCandidateDetected"
+        },
+        {
+          "$ref": "#/$defs/TaxCandidateConfirmed"
+        },
+        {
+          "$ref": "#/$defs/TaxCandidateRejected"
+        },
+        {
+          "$ref": "#/$defs/TaxAdvisorReviewRequested"
+        },
+        {
+          "$ref": "#/$defs/EvidenceDocumentStored"
+        },
+        {
+          "$ref": "#/$defs/EvidenceLinked"
+        },
+        {
+          "$ref": "#/$defs/TaxPreparationPackageGenerated"
+        },
+        {
+          "$ref": "#/$defs/FinancialPeriodClosed"
+        },
+        {
+          "$ref": "#/$defs/FinancialPeriodReopened"
+        },
+        {
+          "$ref": "#/$defs/ImportBatchDeleted"
+        },
+        {
+          "$ref": "#/$defs/FinanceWorkspacePurged"
+        }
+      ],
+      "title": "Finance Extension append-only domain event catalog"
+    },
+    "forecast.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/forecast.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "month": {
+              "type": "string"
+            },
+            "scenarios": {
+              "additionalProperties": {
+                "required": [
+                  "forecast_id",
+                  "scenario",
+                  "predicted_surplus",
+                  "source_event_sequence",
+                  "forecast_policy_version",
+                  "status"
+                ],
+                "type": "object"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "month",
+            "scenarios"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "forecast_commands.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/forecast_commands.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "pattern": "^cmd_[a-f0-9]{32}$",
+          "type": "string"
+        },
+        "command_type": {
+          "enum": [
+            "DetectRecurringPatterns",
+            "ConfirmRecurringPattern",
+            "RejectRecurringPattern",
+            "UpdateRecurringPattern",
+            "PauseRecurringPattern",
+            "EndRecurringPattern",
+            "CreateExpectedTransaction",
+            "CancelExpectedTransaction",
+            "CreateForecast",
+            "EvaluateForecast",
+            "SupersedeForecast"
+          ]
+        },
+        "idempotency_key": {
+          "minLength": 8,
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "command_id",
+        "command_type",
+        "idempotency_key",
+        "payload"
+      ],
+      "title": "Finance Extension 0.5.0 recurring and forecast commands",
+      "type": "object"
+    },
+    "forecast_evaluation.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/forecast_evaluation.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "evaluations": {
+              "type": "array"
+            },
+            "month": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "month",
+            "evaluations"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "forecast_events.schema.json": {
+      "$defs": {
+        "Base": {
+          "additionalProperties": false,
+          "properties": {
+            "aggregate_id": {
+              "minLength": 8,
+              "type": "string"
+            },
+            "aggregate_type": {
+              "enum": [
+                "RecurringPattern",
+                "ExpectedTransaction",
+                "Forecast"
+              ]
+            },
+            "aggregate_version": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "causation_id": {
+              "type": "string"
+            },
+            "correlation_id": {
+              "type": "string"
+            },
+            "event_id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "event_type": {
+              "type": "string"
+            },
+            "occurred_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "payload": {
+              "type": "object"
+            },
+            "schema_version": {
+              "const": "1.0.0"
+            }
+          },
+          "required": [
+            "schema_version",
+            "event_id",
+            "event_type",
+            "aggregate_type",
+            "aggregate_id",
+            "aggregate_version",
+            "occurred_at",
+            "correlation_id",
+            "causation_id",
+            "payload"
+          ],
+          "type": "object"
+        },
+        "ExpectedPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "account_id": {
+              "type": "string"
+            },
+            "amount_lower_bound": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "amount_upper_bound": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "category_code": {
+              "type": "string"
+            },
+            "direction": {
+              "enum": [
+                "INCOME",
+                "EXPENSE"
+              ]
+            },
+            "expected_amount": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "expected_date": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "expected_transaction_id": {
+              "pattern": "^expected_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "matched_transaction_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "merchant_key": {
+              "type": "string"
+            },
+            "recurring_pattern_id": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "EXPECTED",
+                "MATCHED",
+                "MISSED",
+                "CANCELLED",
+                "SUPERSEDED"
+              ]
+            }
+          },
+          "required": [
+            "expected_transaction_id",
+            "recurring_pattern_id",
+            "account_id",
+            "merchant_key",
+            "expected_date",
+            "expected_amount",
+            "amount_lower_bound",
+            "amount_upper_bound",
+            "direction",
+            "category_code",
+            "status",
+            "matched_transaction_id"
+          ],
+          "type": "object"
+        },
+        "ExpectedTransactionCancelled": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "ExpectedTransaction"
+                },
+                "event_type": {
+                  "const": "ExpectedTransactionCancelled"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ExpectedPayload"
+                }
+              }
+            }
+          ]
+        },
+        "ExpectedTransactionCreated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "ExpectedTransaction"
+                },
+                "event_type": {
+                  "const": "ExpectedTransactionCreated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ExpectedPayload"
+                }
+              }
+            }
+          ]
+        },
+        "ExpectedTransactionMatched": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "ExpectedTransaction"
+                },
+                "event_type": {
+                  "const": "ExpectedTransactionMatched"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ExpectedPayload"
+                }
+              }
+            }
+          ]
+        },
+        "ExpectedTransactionMissed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "ExpectedTransaction"
+                },
+                "event_type": {
+                  "const": "ExpectedTransactionMissed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ExpectedPayload"
+                }
+              }
+            }
+          ]
+        },
+        "ForecastCreated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "Forecast"
+                },
+                "event_type": {
+                  "const": "ForecastCreated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ForecastPayload"
+                }
+              }
+            }
+          ]
+        },
+        "ForecastEvaluated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "Forecast"
+                },
+                "event_type": {
+                  "const": "ForecastEvaluated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ForecastPayload"
+                }
+              }
+            }
+          ]
+        },
+        "ForecastPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "absolute_error": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "actual_expenses": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "actual_income": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "actual_surplus": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "assumptions": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "base_date": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "component_accuracy": {
+              "additionalProperties": false,
+              "properties": {
+                "actual_variable_expenses": {
+                  "$ref": "common.schema.json#/$defs/DecimalAmount"
+                },
+                "predicted_variable_expenses": {
+                  "$ref": "common.schema.json#/$defs/DecimalAmount"
+                },
+                "recurring_expenses_matched": {
+                  "$ref": "common.schema.json#/$defs/DecimalAmount"
+                },
+                "recurring_income_matched": {
+                  "$ref": "common.schema.json#/$defs/DecimalAmount"
+                },
+                "surplus_absolute_error": {
+                  "$ref": "common.schema.json#/$defs/DecimalAmount"
+                }
+              },
+              "required": [
+                "recurring_income_matched",
+                "recurring_expenses_matched",
+                "predicted_variable_expenses",
+                "actual_variable_expenses",
+                "surplus_absolute_error"
+              ],
+              "type": "object"
+            },
+            "confidence": {
+              "enum": [
+                "LOW",
+                "MEDIUM",
+                "HIGH"
+              ]
+            },
+            "evaluated_at": {
+              "$ref": "common.schema.json#/$defs/DateTime"
+            },
+            "expected_fixed_expenses": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "expected_income": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "expected_transactions_matched": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "expected_transactions_missed": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "forecast_id": {
+              "pattern": "^forecast_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "forecast_policy_version": {
+              "const": "forecast@1.0.0"
+            },
+            "forecast_type": {
+              "const": "MONTH_END_CASHFLOW"
+            },
+            "lower_bound": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "percentage_error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "period_end": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "period_start": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "predicted_surplus": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "predicted_variable_expenses": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "realized_expenses": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "realized_income": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "scenario": {
+              "enum": [
+                "CONSERVATIVE",
+                "BASE",
+                "OPTIMISTIC"
+              ]
+            },
+            "source_event_sequence": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "status": {
+              "enum": [
+                "ACTIVE",
+                "SUPERSEDED",
+                "EVALUATED"
+              ]
+            },
+            "upper_bound": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            }
+          },
+          "required": [
+            "forecast_id",
+            "forecast_type",
+            "base_date",
+            "period_start",
+            "period_end",
+            "scenario",
+            "realized_income",
+            "realized_expenses",
+            "expected_income",
+            "expected_fixed_expenses",
+            "predicted_variable_expenses",
+            "predicted_surplus",
+            "lower_bound",
+            "upper_bound",
+            "confidence",
+            "assumptions",
+            "source_event_sequence",
+            "forecast_policy_version",
+            "status"
+          ],
+          "type": "object"
+        },
+        "ForecastSuperseded": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "Forecast"
+                },
+                "event_type": {
+                  "const": "ForecastSuperseded"
+                },
+                "payload": {
+                  "$ref": "#/$defs/ForecastPayload"
+                }
+              }
+            }
+          ]
+        },
+        "RecurringPatternConfirmed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "RecurringPattern"
+                },
+                "event_type": {
+                  "const": "RecurringPatternConfirmed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RecurringPayload"
+                }
+              }
+            }
+          ]
+        },
+        "RecurringPatternEnded": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "RecurringPattern"
+                },
+                "event_type": {
+                  "const": "RecurringPatternEnded"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RecurringPayload"
+                }
+              }
+            }
+          ]
+        },
+        "RecurringPatternPaused": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "RecurringPattern"
+                },
+                "event_type": {
+                  "const": "RecurringPatternPaused"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RecurringPayload"
+                }
+              }
+            }
+          ]
+        },
+        "RecurringPatternProposed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "RecurringPattern"
+                },
+                "event_type": {
+                  "const": "RecurringPatternProposed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RecurringPayload"
+                }
+              }
+            }
+          ]
+        },
+        "RecurringPatternRejected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "RecurringPattern"
+                },
+                "event_type": {
+                  "const": "RecurringPatternRejected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RecurringPayload"
+                }
+              }
+            }
+          ]
+        },
+        "RecurringPatternUpdated": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "RecurringPattern"
+                },
+                "event_type": {
+                  "const": "RecurringPatternUpdated"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RecurringPayload"
+                }
+              }
+            }
+          ]
+        },
+        "RecurringPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "account_id": {
+              "type": "string"
+            },
+            "amount_tolerance": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "category_code": {
+              "type": "string"
+            },
+            "confidence": {
+              "enum": [
+                "LOW",
+                "MEDIUM",
+                "HIGH"
+              ]
+            },
+            "detection_policy_version": {
+              "const": "recurring@1.0.0"
+            },
+            "direction": {
+              "enum": [
+                "INCOME",
+                "EXPENSE"
+              ]
+            },
+            "expected_amount": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "expected_day_from": {
+              "maximum": 31,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "expected_day_to": {
+              "maximum": 31,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "first_observed_date": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "frequency": {
+              "enum": [
+                "WEEKLY",
+                "BIWEEKLY",
+                "MONTHLY",
+                "BIMONTHLY",
+                "QUARTERLY",
+                "SEMI_ANNUALLY",
+                "ANNUALLY",
+                "IRREGULAR"
+              ]
+            },
+            "last_observed_date": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "merchant_key": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "next_expected_date": {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            "pattern_id": {
+              "pattern": "^pattern_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "source_fingerprint": {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "source_transaction_ids": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 3,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "status": {
+              "enum": [
+                "PROPOSED",
+                "ACTIVE",
+                "REJECTED",
+                "PAUSED",
+                "ENDED"
+              ]
+            },
+            "version": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "pattern_id",
+            "account_id",
+            "merchant_key",
+            "direction",
+            "category_code",
+            "frequency",
+            "expected_amount",
+            "amount_tolerance",
+            "expected_day_from",
+            "expected_day_to",
+            "first_observed_date",
+            "last_observed_date",
+            "next_expected_date",
+            "confidence",
+            "status",
+            "source_transaction_ids",
+            "source_fingerprint",
+            "detection_policy_version",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "$id": "https://agent-os.local/finance/schemas/forecast_events.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RecurringPatternProposed"
+        },
+        {
+          "$ref": "#/$defs/RecurringPatternConfirmed"
+        },
+        {
+          "$ref": "#/$defs/RecurringPatternRejected"
+        },
+        {
+          "$ref": "#/$defs/RecurringPatternUpdated"
+        },
+        {
+          "$ref": "#/$defs/RecurringPatternPaused"
+        },
+        {
+          "$ref": "#/$defs/RecurringPatternEnded"
+        },
+        {
+          "$ref": "#/$defs/ExpectedTransactionCreated"
+        },
+        {
+          "$ref": "#/$defs/ExpectedTransactionMatched"
+        },
+        {
+          "$ref": "#/$defs/ExpectedTransactionMissed"
+        },
+        {
+          "$ref": "#/$defs/ExpectedTransactionCancelled"
+        },
+        {
+          "$ref": "#/$defs/ForecastCreated"
+        },
+        {
+          "$ref": "#/$defs/ForecastEvaluated"
+        },
+        {
+          "$ref": "#/$defs/ForecastSuperseded"
+        }
+      ],
+      "title": "Finance Extension 0.5.0 recurring and forecast events"
+    },
+    "key_status.response.schema.json": {
+      "$defs": {
+        "key": {
+          "properties": {
+            "fingerprint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "enum": [
+                "AVAILABLE",
+                "NOT_PROVISIONED"
+              ]
+            },
+            "strategy": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "strategy",
+            "status",
+            "fingerprint"
+          ],
+          "type": "object"
+        }
+      },
+      "$id": "https://agent-os.local/finance/schemas/key_status.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "archive_key": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/key"
+                },
+                {
+                  "properties": {
+                    "independent_from_store": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "database_key": {
+              "$ref": "#/$defs/key"
+            }
+          },
+          "required": [
+            "database_key",
+            "archive_key"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "liability_overview.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/liability_overview.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "required": [
+            "valuation_currency",
+            "total_liabilities",
+            "liabilities",
+            "currency_conflicts"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "liquidity_overview.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/liquidity_overview.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "required": [
+            "valuation_currency",
+            "as_of",
+            "liquid_funds",
+            "accounts",
+            "stale_account_ids",
+            "currency_conflicts"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "migration_status.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/migration_status.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "current_store_schema_version": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "downgrade_protection": {
+              "const": "ENABLED"
+            },
+            "history": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "status": {
+              "enum": [
+                "CURRENT",
+                "MIGRATION_REQUIRED",
+                "DOWNGRADE_BLOCKED"
+              ]
+            },
+            "supported_store_schema_version": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "current_store_schema_version",
+            "supported_store_schema_version",
+            "status",
+            "history",
+            "downgrade_protection"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "net_worth_history.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/net_worth_history.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "history": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "history"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "net_worth_overview.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/net_worth_overview.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "required": [
+            "valuation_currency",
+            "as_of",
+            "liquid_funds",
+            "investments",
+            "total_assets",
+            "liabilities",
+            "net_worth",
+            "currency_conflicts"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "projected_month_end_balance.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/projected_month_end_balance.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "required": [
+            "month",
+            "status",
+            "latest_confirmed_liquid_balance",
+            "projected_month_end_balance",
+            "snapshot_dates",
+            "source_event_sequence"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "reconciliation_commands.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/reconciliation_commands.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "pattern": "^cmd_[a-f0-9]{32}$",
+          "type": "string"
+        },
+        "command_type": {
+          "enum": [
+            "DetectDuplicates",
+            "ConfirmDuplicate",
+            "RejectDuplicate",
+            "DetectTransfers",
+            "ConfirmTransfer",
+            "RejectTransfer",
+            "BreakTransferMatch",
+            "DetectRefunds",
+            "ConfirmRefund",
+            "RejectRefund"
+          ]
+        },
+        "idempotency_key": {
+          "minLength": 8,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "amount": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "incoming_transaction_id": {
+              "type": "string"
+            },
+            "month": {
+              "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])$",
+              "type": "string"
+            },
+            "original_transaction_id": {
+              "type": "string"
+            },
+            "outgoing_transaction_id": {
+              "type": "string"
+            },
+            "refund_transaction_id": {
+              "type": "string"
+            },
+            "relation_id": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "command_id",
+        "command_type",
+        "idempotency_key",
+        "payload"
+      ],
+      "title": "Finance Extension 0.4.0 reconciliation commands",
+      "type": "object"
+    },
+    "reconciliation_events.schema.json": {
+      "$defs": {
+        "Base": {
+          "additionalProperties": false,
+          "properties": {
+            "aggregate_id": {
+              "pattern": "^(?:dup|trf|rfd)_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "aggregate_type": {
+              "enum": [
+                "DuplicateRelation",
+                "TransferRelation",
+                "RefundRelation"
+              ]
+            },
+            "aggregate_version": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "causation_id": {
+              "type": "string"
+            },
+            "correlation_id": {
+              "type": "string"
+            },
+            "event_id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "event_type": {
+              "type": "string"
+            },
+            "occurred_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "payload": {
+              "type": "object"
+            },
+            "schema_version": {
+              "const": "1.0.0"
+            }
+          },
+          "required": [
+            "schema_version",
+            "event_id",
+            "event_type",
+            "aggregate_type",
+            "aggregate_id",
+            "aggregate_version",
+            "occurred_at",
+            "correlation_id",
+            "causation_id",
+            "payload"
+          ],
+          "type": "object"
+        },
+        "DuplicatePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "decided_by": {
+              "enum": [
+                "USER",
+                "SYSTEM"
+              ]
+            },
+            "duplicate_transaction_id": {
+              "type": "string"
+            },
+            "match_type": {
+              "enum": [
+                "EXACT_DUPLICATE",
+                "LIKELY_DUPLICATE"
+              ]
+            },
+            "policy_version": {
+              "const": "reconciliation@1.0.0"
+            },
+            "primary_transaction_id": {
+              "type": "string"
+            },
+            "relation_id": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "DETECTED",
+                "CONFIRMED",
+                "REJECTED"
+              ]
+            }
+          },
+          "required": [
+            "relation_id",
+            "primary_transaction_id",
+            "duplicate_transaction_id",
+            "match_type",
+            "policy_version",
+            "status"
+          ],
+          "type": "object"
+        },
+        "DuplicateTransactionConfirmed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "DuplicateRelation"
+                },
+                "event_type": {
+                  "const": "DuplicateTransactionConfirmed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DuplicatePayload"
+                }
+              }
+            }
+          ]
+        },
+        "DuplicateTransactionDetected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "DuplicateRelation"
+                },
+                "event_type": {
+                  "const": "DuplicateTransactionDetected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DuplicatePayload"
+                }
+              }
+            }
+          ]
+        },
+        "DuplicateTransactionRejected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "DuplicateRelation"
+                },
+                "event_type": {
+                  "const": "DuplicateTransactionRejected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/DuplicatePayload"
+                }
+              }
+            }
+          ]
+        },
+        "RefundPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "confirmed_amount": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "currency": {
+              "$ref": "common.schema.json#/$defs/Currency"
+            },
+            "decided_by": {
+              "const": "USER"
+            },
+            "original_transaction_id": {
+              "type": "string"
+            },
+            "policy_version": {
+              "const": "reconciliation@1.0.0"
+            },
+            "proposed_amount": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "refund_transaction_id": {
+              "type": "string"
+            },
+            "relation_id": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "PROPOSED",
+                "CONFIRMED",
+                "REJECTED"
+              ]
+            }
+          },
+          "required": [
+            "relation_id",
+            "refund_transaction_id",
+            "original_transaction_id",
+            "proposed_amount",
+            "currency",
+            "policy_version",
+            "status"
+          ],
+          "type": "object"
+        },
+        "RefundRelationConfirmed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "RefundRelation"
+                },
+                "event_type": {
+                  "const": "RefundRelationConfirmed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RefundPayload"
+                }
+              }
+            }
+          ]
+        },
+        "RefundRelationProposed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "RefundRelation"
+                },
+                "event_type": {
+                  "const": "RefundRelationProposed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RefundPayload"
+                }
+              }
+            }
+          ]
+        },
+        "RefundRelationRejected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "RefundRelation"
+                },
+                "event_type": {
+                  "const": "RefundRelationRejected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/RefundPayload"
+                }
+              }
+            }
+          ]
+        },
+        "TransferMatchBroken": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "TransferRelation"
+                },
+                "event_type": {
+                  "const": "TransferMatchBroken"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TransferPayload"
+                }
+              }
+            }
+          ]
+        },
+        "TransferMatchConfirmed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "TransferRelation"
+                },
+                "event_type": {
+                  "const": "TransferMatchConfirmed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TransferPayload"
+                }
+              }
+            }
+          ]
+        },
+        "TransferMatchProposed": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "TransferRelation"
+                },
+                "event_type": {
+                  "const": "TransferMatchProposed"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TransferPayload"
+                }
+              }
+            }
+          ]
+        },
+        "TransferMatchRejected": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "TransferRelation"
+                },
+                "event_type": {
+                  "const": "TransferMatchRejected"
+                },
+                "payload": {
+                  "$ref": "#/$defs/TransferPayload"
+                }
+              }
+            }
+          ]
+        },
+        "TransferPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "amount": {
+              "$ref": "common.schema.json#/$defs/DecimalAmount"
+            },
+            "confidence": {
+              "pattern": "^(?:0(?:\\.[0-9]+)?|1(?:\\.0+)?)$",
+              "type": "string"
+            },
+            "currency": {
+              "$ref": "common.schema.json#/$defs/Currency"
+            },
+            "decided_by": {
+              "const": "USER"
+            },
+            "incoming_transaction_id": {
+              "type": "string"
+            },
+            "outgoing_transaction_id": {
+              "type": "string"
+            },
+            "policy_version": {
+              "const": "reconciliation@1.0.0"
+            },
+            "relation_id": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "PROPOSED",
+                "CONFIRMED",
+                "REJECTED",
+                "BROKEN"
+              ]
+            }
+          },
+          "required": [
+            "relation_id",
+            "outgoing_transaction_id",
+            "incoming_transaction_id",
+            "amount",
+            "currency",
+            "confidence",
+            "policy_version",
+            "status"
+          ],
+          "type": "object"
+        }
+      },
+      "$id": "https://agent-os.local/finance/schemas/reconciliation_events.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DuplicateTransactionDetected"
+        },
+        {
+          "$ref": "#/$defs/DuplicateTransactionConfirmed"
+        },
+        {
+          "$ref": "#/$defs/DuplicateTransactionRejected"
+        },
+        {
+          "$ref": "#/$defs/TransferMatchProposed"
+        },
+        {
+          "$ref": "#/$defs/TransferMatchConfirmed"
+        },
+        {
+          "$ref": "#/$defs/TransferMatchRejected"
+        },
+        {
+          "$ref": "#/$defs/TransferMatchBroken"
+        },
+        {
+          "$ref": "#/$defs/RefundRelationProposed"
+        },
+        {
+          "$ref": "#/$defs/RefundRelationConfirmed"
+        },
+        {
+          "$ref": "#/$defs/RefundRelationRejected"
+        }
+      ],
+      "title": "Finance Extension 0.4.0 reconciliation events"
+    },
+    "recovery_commands.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/recovery_commands.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "pattern": "^cmd_[a-f0-9]{32}$",
+          "type": "string"
+        },
+        "command_type": {
+          "enum": [
+            "CreateBackup",
+            "VerifyBackup",
+            "RestoreBackup",
+            "DeleteBackup",
+            "ExportFinanceData",
+            "ImportFinanceArchive",
+            "RotateEncryptionKey",
+            "RepairLocalStore",
+            "ValidateStoreIntegrity"
+          ]
+        },
+        "idempotency_key": {
+          "minLength": 8,
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "command_id",
+        "command_type",
+        "idempotency_key",
+        "payload"
+      ],
+      "title": "Finance Extension 0.8.0 local recovery commands",
+      "type": "object"
+    },
+    "recurring_pattern_list.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/recurring_pattern_list.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "patterns": {
+              "items": {
+                "properties": {
+                  "confidence": {
+                    "type": "string"
+                  },
+                  "expected_amount": {
+                    "type": "string"
+                  },
+                  "frequency": {
+                    "type": "string"
+                  },
+                  "merchant_key": {
+                    "type": "string"
+                  },
+                  "pattern_id": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "pattern_id",
+                  "merchant_key",
+                  "frequency",
+                  "expected_amount",
+                  "status",
+                  "confidence"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "patterns"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "review_queue.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/review_queue.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "reviews": {
+              "type": "array"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "runtime_security_status.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/runtime_security_status.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "checks": {
+              "additionalProperties": {
+                "enum": [
+                  "PASSED",
+                  "FAILED",
+                  "NOT_CHECKED"
+                ]
+              },
+              "type": "object"
+            },
+            "extension_version": {
+              "type": "string"
+            },
+            "last_event_sequence": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "schema_version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "extension_version",
+            "schema_version",
+            "checks",
+            "last_event_sequence"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "startup_status.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/startup_status.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "checks": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "error_code": {
+              "pattern": "^FINANCE_[A-Z0-9_]+$",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "read_only_diagnostics_available": {
+              "const": true
+            },
+            "recovery_document": {
+              "const": "RECOVERY.md"
+            },
+            "status": {
+              "enum": [
+                "READY",
+                "WORKSPACE_LOCKED",
+                "KEYCHAIN_UNAVAILABLE",
+                "STORE_CORRUPTED",
+                "MIGRATION_REQUIRED",
+                "MIGRATION_FAILED",
+                "BACKUP_REQUIRED",
+                "INCOMPATIBLE_VERSION",
+                "BUNDLE_TAMPERED",
+                "INSUFFICIENT_SPACE"
+              ]
+            }
+          },
+          "required": [
+            "status",
+            "error_code",
+            "checks",
+            "read_only_diagnostics_available",
+            "recovery_document"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "enum": [
+            "READY",
+            "ERROR"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "store_integrity.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/store_integrity.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "checked_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "error_code": {
+              "type": "string"
+            },
+            "event_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "import_file_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "last_event_sequence": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "status": {
+              "enum": [
+                "VALID",
+                "INVALID"
+              ]
+            },
+            "storage_encryption": {
+              "const": "FERNET_AUTHENTICATED"
+            },
+            "store_schema_version": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "status",
+            "checked_at"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "transaction_detail.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/transaction_detail.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "transaction_list.response.schema.json": {
+      "$id": "https://agent-os.local/finance/schemas/transaction_list.response.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "data": {
+          "properties": {
+            "transactions": {
+              "items": {
+                "properties": {
+                  "amount": {
+                    "type": "string"
+                  },
+                  "booking_date": {
+                    "type": "string"
+                  },
+                  "category_code": {
+                    "type": "string"
+                  },
+                  "counterparty": {
+                    "type": "string"
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "transaction_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "transaction_id",
+                  "booking_date",
+                  "amount",
+                  "currency",
+                  "counterparty",
+                  "category_code"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "transactions"
+          ],
+          "type": "object"
+        },
+        "event_store_sequence": {
+          "type": "integer"
+        },
+        "projection_sequence": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "projection_sequence",
+        "event_store_sequence",
+        "data"
+      ],
+      "type": "object"
+    },
+    "vertical_slice_events.schema.json": {
+      "$defs": {
+        "Base": {
+          "additionalProperties": false,
+          "properties": {
+            "aggregate_id": {
+              "type": "string"
+            },
+            "aggregate_type": {
+              "type": "string"
+            },
+            "aggregate_version": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "causation_id": {
+              "type": "string"
+            },
+            "correlation_id": {
+              "type": "string"
+            },
+            "event_id": {
+              "pattern": "^evt_[a-f0-9]{32}$",
+              "type": "string"
+            },
+            "event_type": {
+              "type": "string"
+            },
+            "occurred_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "payload": {
+              "type": "object"
+            },
+            "schema_version": {
+              "const": "1.0.0"
+            }
+          },
+          "required": [
+            "schema_version",
+            "event_id",
+            "event_type",
+            "aggregate_type",
+            "aggregate_id",
+            "aggregate_version",
+            "occurred_at",
+            "correlation_id",
+            "causation_id",
+            "payload"
+          ],
+          "type": "object"
+        },
+        "ImportBatchCompleted": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "ImportBatchCompleted"
+                },
+                "payload": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "import_batch_id": {
+                      "type": "string"
+                    },
+                    "record_count": {
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "import_batch_id",
+                    "record_count"
+                  ],
+                  "type": "object"
+                }
+              }
+            }
+          ]
+        },
+        "ImportBatchStarted": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "ImportBatch"
+                },
+                "event_type": {
+                  "const": "ImportBatchStarted"
+                },
+                "payload": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "file_hash": {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    "import_batch_id": {
+                      "type": "string"
+                    },
+                    "parser_version": {
+                      "const": "1.0.0"
+                    }
+                  },
+                  "required": [
+                    "import_batch_id",
+                    "file_hash",
+                    "parser_version"
+                  ],
+                  "type": "object"
+                }
+              }
+            }
+          ]
+        },
+        "RawTransactionImported": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "event_type": {
+                  "const": "RawTransactionImported"
+                },
+                "payload": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "account_id": {
+                      "type": "string"
+                    },
+                    "content_hash": {
+                      "pattern": "^sha256:[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    "import_batch_id": {
+                      "type": "string"
+                    },
+                    "raw_fields": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "amount": {
+                          "type": "string"
+                        },
+                        "booking_date": {
+                          "type": "string"
+                        },
+                        "counterparty": {
+                          "type": "string"
+                        },
+                        "currency": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "value_date": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "booking_date",
+                        "value_date",
+                        "amount",
+                        "currency",
+                        "counterparty",
+                        "description"
+                      ],
+                      "type": "object"
+                    },
+                    "source_record_index": {
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "import_batch_id",
+                    "source_record_index",
+                    "account_id",
+                    "raw_fields",
+                    "content_hash"
+                  ],
+                  "type": "object"
+                }
+              }
+            }
+          ]
+        },
+        "TransactionNormalized": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Base"
+            },
+            {
+              "properties": {
+                "aggregate_type": {
+                  "const": "Transaction"
+                },
+                "event_type": {
+                  "const": "TransactionNormalized"
+                },
+                "payload": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "account_id": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,8})?$",
+                      "type": "string"
+                    },
+                    "booking_date": {
+                      "format": "date",
+                      "type": "string"
+                    },
+                    "counterparty": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "pattern": "^[A-Z]{3}$",
+                      "type": "string"
+                    },
+                    "direction": {
+                      "enum": [
+                        "DEBIT",
+                        "CREDIT"
+                      ]
+                    },
+                    "normalization_policy_version": {
+                      "const": "1.0.0"
+                    },
+                    "normalized_description": {
+                      "type": "string"
+                    },
+                    "raw_transaction_event_id": {
+                      "type": "string"
+                    },
+                    "transaction_id": {
+                      "type": "string"
+                    },
+                    "transaction_type": {
+                      "enum": [
+                        "INCOME",
+                        "EXPENSE"
+                      ]
+                    },
+                    "value_date": {
+                      "format": "date",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "transaction_id",
+                    "raw_transaction_event_id",
+                    "account_id",
+                    "booking_date",
+                    "value_date",
+                    "amount",
+                    "currency",
+                    "direction",
+                    "counterparty",
+                    "normalized_description",
+                    "transaction_type",
+                    "normalization_policy_version"
+                  ],
+                  "type": "object"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "$id": "https://agent-os.local/finance/schemas/vertical_slice_events.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ImportBatchStarted"
+        },
+        {
+          "$ref": "#/$defs/RawTransactionImported"
+        },
+        {
+          "$ref": "#/$defs/ImportBatchCompleted"
+        },
+        {
+          "$ref": "#/$defs/TransactionNormalized"
+        }
+      ]
+    }
+  },
+  "sha256": {
+    "account_balance_history.response.schema.json": "72be8d0c7c2b092b8478b41baae4545648a1827117d8aef9675a77f66d87eaea",
+    "account_commands.schema.json": "53b885fb79b7cb50b9931e103a93c779dc37d862b5cdc81c79accf3260179103",
+    "account_detail.response.schema.json": "7e6a42e68947ca48f5715124e31b38b69dd1903885c4586c5c973e81980efdbf",
+    "account_events.schema.json": "95d4a017cbb54e81874ca387cf480f6e673fba241a2fd3595e8b494f7aa634ae",
+    "account_list.response.schema.json": "b3400bb88c01a9704b4e71c9bfe88a41dd7fc72275ec66c9592dac17f8339b99",
+    "asset_allocation.response.schema.json": "3786c6a3d17425eea83811fbe3ce349837d032ca8ddf7e943cd70697ea709bae",
+    "backup_list.response.schema.json": "472230caf6fd5f87cda8aa8842df7e1fd816708d2714dbaa392d4b844138fc5d",
+    "balance_reconciliation.response.schema.json": "a6e6edc1323110bd1aedc28e63750abb4938ae1b812e18daace44da0fabb8823",
+    "capability_manifest.response.schema.json": "b0ab8199b7aa5ff4815af80ef996f5225838cac352baa4de0fe178cdf9bd9f91",
+    "classification_events.schema.json": "6f1c9bfcb1a1f79bd45f2c364ec260f291f1337da178dd61f99a19de348596c0",
+    "commands.schema.json": "509076e5137d00fbeb054c2784c5faf21a5fff0c060dbb87bd1e31e9d4a9fb17",
+    "common.schema.json": "97c5dde5887290cf1c807757df63790fbfced3ce14183dcf4e617e1c6ccd44f0",
+    "dashboard.response.schema.json": "012b1ec47e6c8068905631d28d21335ddfce128d292026f0d1a8c84b205f6689",
+    "events.schema.json": "657f31df56d0485260404bb20c9e641b5431884c59473af1ef486b9ecaa9c89a",
+    "forecast.response.schema.json": "9f631280d5be8146987d1f4e65ecc3e18f9d92a345bbe7b5746c0b00614f2501",
+    "forecast_commands.schema.json": "ad12973469772080eba92e8088660dd80b916b5072cbedb3bf68e9d0b63db944",
+    "forecast_evaluation.response.schema.json": "86f1334b5def7dd50ff71c93b4883f4af0a94a316ee40feb74697f21296d7ed9",
+    "forecast_events.schema.json": "b9fc5ef96794c58bcf4295488426bec33a172f5992e4d6ad404531e4c7e71eb6",
+    "key_status.response.schema.json": "67c480408fe328461857caf3a5a15a0cffeb1503e98016b05260797ad50e7eee",
+    "liability_overview.response.schema.json": "c2c52f99708ca92dcf02a84a727ab4e31c70d1419b780ed2ce24cb0e113ded17",
+    "liquidity_overview.response.schema.json": "e3a1b64f83e0445335c6c8281085823721d02b9b862450b7d4365bab1db34e8b",
+    "migration_status.response.schema.json": "545f990b4bcc389d9b61e55d711ab8626c23926953b7f7e87b75774f2ae0479b",
+    "net_worth_history.response.schema.json": "febc83210664239b66460c68425d88f787ad66136f39f62e4c362395a54d0901",
+    "net_worth_overview.response.schema.json": "1945ec7b231a826a1e9754cc7571d9433ea92afee93c3781e12934c7625888c2",
+    "projected_month_end_balance.response.schema.json": "4e28770f7c16840f5d8a89f686c7605e51d81d7a12956602249f5e9a7518e866",
+    "reconciliation_commands.schema.json": "bc5beff50a8721688a5c87c1c04a0169ebcabadefdb4b56579ca043cbfde28c7",
+    "reconciliation_events.schema.json": "e95d96734fb4946eeabe7e3cbb55e3118d92ed10e74e9c6040fe3d1d0d20267e",
+    "recovery_commands.schema.json": "ec881a025c4a3af524d3fd1a66e85a77fb37697bf04edad94bacb19334762d0f",
+    "recurring_pattern_list.response.schema.json": "653dabf6e091274e38bea7f637e4e42d8b52d0966ffdca6a362984e7e0bf9f32",
+    "review_queue.response.schema.json": "da8df3830a5740fdc8087fa0b357d067d0735b43ff173053e78eaf50e9a5d541",
+    "runtime_security_status.response.schema.json": "bd6c0639437d165beb1a9cb131a879f17d5ba72c29f9ea53f3245dd4df749c94",
+    "startup_status.response.schema.json": "1e83ca65e8aa19dc42c1a7e8e6a1fb291e1c4be3e12741ac757c427ab6327bb3",
+    "store_integrity.response.schema.json": "5fe6b6ee1fd93f9ddcedf04964fbda492589ec077273ff3dba9293b70a2d85dd",
+    "transaction_detail.response.schema.json": "c94db3290cd8fcb95970268c87be7c5586555b0ccee1bf1a73aed1540a749f47",
+    "transaction_list.response.schema.json": "48b0f20d166a1ffd6ef81c1341dc36e8052688fe241e52ae2d22c89ecf4800ce",
+    "vertical_slice_events.schema.json": "f573775af3a5d7750287046ac132ff2d9a7250144594aecd7705b475ff03bb54"
+  }
+}

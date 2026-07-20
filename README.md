@@ -24,7 +24,7 @@ without network access from a verified local artifact:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install --no-index /absolute/release/agent_os_finance-0.9.0-py3-none-any.whl
+.venv/bin/pip install --no-index /absolute/release/agent_os_finance-1.0.0-py3-none-any.whl
 ```
 
 Production keys live in the OS credential store. The database identity is
@@ -34,7 +34,22 @@ Production keys live in the OS credential store. The database identity is
 and are not production key recovery mechanisms. Losing both the store key and
 a usable archive key makes encrypted data unrecoverable.
 
-## Vertical Slices 0.2.0 through 0.9.0
+## Agent OS Finance 1.0.0
+
+Agent OS Finance 1.0.0 ist eine vollständig lokal betriebene persönliche
+Finanzanwendung. Sie unterstützt das definierte CSV-Importformat,
+Transaktionsklassifikation, Dubletten-, Transfer- und Erstattungsbereinigung,
+wiederkehrende Zahlungen, Cashflow- und Monatsprognosen, Konten, Salden,
+Liquidität, Nettovermögen sowie verschlüsselte Backups und Wiederherstellung.
+
+Alle Finanzdaten verbleiben auf dem lokalen Gerät. Netzwerkzugriff,
+Cloud-Synchronisation, externe KI, externe OCR und Git-Ablage produktiver
+Finanzdaten sind technisch und vertraglich ausgeschlossen. Vollständige
+Supportgrenzen stehen in [`SUPPORT.md`](SUPPORT.md), der finale Abnahmelauf in
+[`ACCEPTANCE.md`](ACCEPTANCE.md) und die Änderungen in
+[`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+
+## Vertical Slices 0.2.0 through 1.0.0
 
 The first executable slice supports only `GenericFinanceCsvV1`:
 
@@ -182,7 +197,10 @@ trust root.
 ```bash
 finance-release --output /absolute/release \
   --signing-key /secure/offline/release-ed25519.pem \
-  --python-tests 75 --frontend-tests 5 --schemas 36
+  --python-tests 80 --frontend-tests 5 --schemas 36 \
+  --acceptance-report /absolute/acceptance-report.json \
+  --critical-findings 0 --high-findings 0 \
+  --offline-verified
 ```
 
 The product and build require no network access. For startup failures, do not

@@ -1,4 +1,4 @@
-# Finance Extension contracts and Vertical Slice v0.9.0
+# Finance Extension contracts and MVP v1.0.0
 
 This directory turns the agreed finance domain model into executable interface
 contracts. It deliberately contains no production finance data and has no
@@ -45,6 +45,11 @@ Version 0.9.0 adds single-writer coordination, explicit stale-lock recovery,
 archive resource limits, atomic migration rollback, startup integrity checks,
 contract compatibility classification, encrypted minimal diagnostics and a
 reproducible signed release pipeline with two SBOM formats.
+
+Version 1.0.0 freezes the MVP feature set and adds the Wheel-only acceptance
+runner, complete signed release-set verification, measured capacity boundaries
+and final support/release documentation. Store schema 3, event schema 1.0.0 and
+contract package 1.1.0 remain independently versioned.
 
 ## Binding security invariants
 

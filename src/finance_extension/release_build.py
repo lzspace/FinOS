@@ -39,8 +39,8 @@ UI_ROOT = ROOT / "ui" / "dist"
 EMBEDDED_INTEGRITY = Path(__file__).with_name("release_integrity.json")
 SOURCE_DATE_EPOCH = "1767225600"  # 2026-01-01T00:00:00Z
 CONTRACT_VERSION = "1.1.0"
-PREVIOUS_CONTRACT_VERSION = "1.0.0"
-PREVIOUS_CONTRACT_CATALOG = ROOT / "extensions" / "finance" / "contracts" / "catalog-0.8.0.json"
+PREVIOUS_CONTRACT_VERSION = "1.1.0"
+PREVIOUS_CONTRACT_CATALOG = ROOT / "extensions" / "finance" / "contracts" / "catalog-0.9.0.json"
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -88,7 +88,12 @@ def build_reproducible_wheel(destination: str | Path) -> dict[str, Any]:
 
 
 def _components() -> list[dict[str, Any]]:
-    packages = ("cryptography", "jsonschema", "keyring")
+    lock = ROOT / "requirements-runtime.lock"
+    packages = [
+        line.split("==", 1)[0]
+        for line in lock.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
     return [
         {"type": "library", "name": name, "version": package_version(name)}
         for name in packages
@@ -97,8 +102,8 @@ def _components() -> list[dict[str, Any]]:
 
 def _write_sboms(output: Path) -> tuple[Path, Path]:
     components = _components()
-    cyclone = output / "sbom.cyclonedx.json"
-    spdx = output / "sbom.spdx.json"
+    cyclone = output / "cyclonedx-sbom.json"
+    spdx = output / "spdx-sbom.json"
     _write_json(
         cyclone,
         {
@@ -117,7 +122,7 @@ def _write_sboms(output: Path) -> tuple[Path, Path]:
             "SPDXID": "SPDXRef-DOCUMENT",
             "name": f"agent-os-finance-{__version__}",
             "documentNamespace": f"https://agent-os.local/spdx/agent-os-finance-{__version__}",
-            "creationInfo": {"created": "2026-01-01T00:00:00Z", "creators": ["Tool: finance-release-0.9.0"]},
+            "creationInfo": {"created": "2026-01-01T00:00:00Z", "creators": ["Tool: finance-release-1.0.0"]},
             "packages": [
                 {
                     "SPDXID": f"SPDXRef-Package-{item['name']}",
@@ -138,10 +143,34 @@ def create_release(
     signing_key: str | Path,
     *,
     test_summary: dict[str, int] | None = None,
+    offline_verified: bool = False,
+    acceptance_report: str | Path | None = None,
+    critical_findings: int = 0,
+    high_findings: int = 0,
 ) -> dict[str, Any]:
     output = Path(destination)
     output.mkdir(parents=True, exist_ok=True)
+    if any(output.iterdir()):
+        raise ReleaseBuildError("FINANCE_RELEASE_DIRECTORY_NOT_EMPTY")
     wheel = build_reproducible_wheel(output)
+    acceptance: dict[str, Any] | None = None
+    acceptance_path: Path | None = None
+    if acceptance_report is not None:
+        source_report = Path(acceptance_report)
+        try:
+            acceptance = json.loads(source_report.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ReleaseBuildError("FINANCE_ACCEPTANCE_REPORT_INVALID") from exc
+        if (
+            acceptance.get("status") != "PASSED"
+            or acceptance.get("source") != "INSTALLED_WHEEL"
+            or acceptance.get("wheel_sha256") != wheel["sha256"]
+        ):
+            raise ReleaseBuildError("FINANCE_ACCEPTANCE_REPORT_INVALID")
+        acceptance_path = output / "acceptance-report.json"
+        _write_json(acceptance_path, acceptance)
+    if offline_verified and acceptance is None:
+        raise ReleaseBuildError("FINANCE_ACCEPTANCE_REPORT_REQUIRED")
     integrity = json.loads(EMBEDDED_INTEGRITY.read_text(encoding="utf-8"))
     catalog_path = output / "contract-catalog.json"
     current_catalog = create_contract_catalog(SCHEMA_ROOT)
@@ -174,11 +203,21 @@ def create_release(
         "schema_catalog_sha256": integrity["schemas"]["sha256"],
         "supported_store_versions": [1, 2, 3],
         "minimum_source_version": "0.2.0",
-        "offline_verified": True,
+        "offline_verified": offline_verified,
         "network_dependencies": [],
         "artifact": {"name": Path(wheel["path"]).name, "sha256": wheel["sha256"]},
         "reproducible_build": {"verified": True, "independent_build_count": 2, "source_date_epoch": SOURCE_DATE_EPOCH},
         "supported_versions": {"application_minimum": "0.2.0", "store_schema": [1, 2, 3], "archive_format": [1], "contract": CONTRACT_VERSION},
+        "support_boundaries": {
+            "platforms": ["macOS-arm64", "macOS-x86_64", "Linux-x86_64"],
+            "python": ["3.11", "3.12", "3.13", "3.14"],
+            "keychains": ["macOS-Keychain", "SecretService-compatible"],
+            "import_profiles": ["GenericFinanceCsvV1"],
+            "migration_sources": ["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0"],
+            "maximum_configured_archive_bytes": 536870912,
+            "maximum_tested_archive_bytes": 524288,
+            "maximum_tested_csv_rows": 10000,
+        },
         "build_environment": {"python": platform.python_version(), "platform": platform.system(), "network_required": False},
         "integrity": integrity,
         "sbom": {
@@ -187,6 +226,21 @@ def create_release(
         },
         "contract_catalog_sha256": sha256_file(catalog_path),
         "test_summary": test_summary or {"python": 0, "frontend": 0, "schemas": 0},
+        "acceptance": (
+            {
+                "status": acceptance["status"],
+                "source": acceptance["source"],
+                "projection_sha256": acceptance["projection_sha256"],
+                "report_sha256": sha256_file(acceptance_path),
+            }
+            if acceptance is not None and acceptance_path is not None
+            else None
+        ),
+        "security_review": {
+            "critical_findings": critical_findings,
+            "high_findings": high_findings,
+            "release_blocked": critical_findings > 0 or high_findings > 0,
+        },
         "contract_change": contract_change,
         "signing": {"algorithm": "Ed25519", "public_key_sha256": fingerprint},
     }
@@ -194,13 +248,31 @@ def create_release(
     signed = [
         Path(wheel["path"]), manifest_path, catalog_path, ui_catalog_path, cyclone, spdx
     ]
-    signatures = [sign_file(path, key) for path in signed]
+    if acceptance_path is not None:
+        signed.append(acceptance_path)
+    manifest_signature = sign_file(
+        manifest_path, key, output / "release-manifest.sig"
+    )
+    signatures = [
+        sign_file(path, key)
+        for path in signed
+        if path != manifest_path
+    ]
+    signatures.append(manifest_signature)
+    checksums_path = output / "checksums.sha256"
+    checksummed = [*signed, public_path]
+    checksums_path.write_text(
+        "".join(f"{sha256_file(path)}  {path.name}\n" for path in sorted(checksummed)),
+        encoding="ascii",
+    )
+    signatures.append(sign_file(checksums_path, key))
     return {
         "release_manifest": str(manifest_path),
         "wheel": wheel,
         "signed_artifacts": [str(path) for path in signed],
         "signatures": [str(path) for path in signatures],
         "public_key": str(public_path),
+        "checksums": str(checksums_path),
     }
 
 
@@ -211,13 +283,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--python-tests", type=int, required=True)
     parser.add_argument("--frontend-tests", type=int, required=True)
     parser.add_argument("--schemas", type=int, required=True)
+    parser.add_argument("--offline-verified", action="store_true")
+    parser.add_argument("--acceptance-report")
+    parser.add_argument("--critical-findings", type=int, required=True)
+    parser.add_argument("--high-findings", type=int, required=True)
     args = parser.parse_args(argv)
     summary = {
         "python": args.python_tests,
         "frontend": args.frontend_tests,
         "schemas": args.schemas,
     }
-    print(json.dumps(create_release(args.output, args.signing_key, test_summary=summary), indent=2))
+    print(
+        json.dumps(
+            create_release(
+                args.output,
+                args.signing_key,
+                test_summary=summary,
+                offline_verified=args.offline_verified,
+                acceptance_report=args.acceptance_report,
+                critical_findings=args.critical_findings,
+                high_findings=args.high_findings,
+            ),
+            indent=2,
+        )
+    )
     return 0
 
 

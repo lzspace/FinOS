@@ -108,8 +108,10 @@ def _declared_change(previous: str, current: str) -> str:
         after = tuple(int(part) for part in current.split("."))
     except ValueError as exc:
         raise ContractCompatibilityError("FINANCE_CONTRACT_VERSION_INVALID") from exc
-    if len(before) != 3 or len(after) != 3 or after <= before:
+    if len(before) != 3 or len(after) != 3 or after < before:
         raise ContractCompatibilityError("FINANCE_CONTRACT_VERSION_INVALID")
+    if after == before:
+        return "PATCH"
     if after[0] > before[0]:
         return "MAJOR"
     if after[1] > before[1]:

@@ -6,7 +6,7 @@ one authenticated snapshot. An exception before persistence leaves the prior
 encrypted bytes unchanged. Stores newer than schema 3 and archives requiring a
 newer application are rejected; downgrade writes are forbidden.
 
-| Application source | Source store | Route to 0.9.0 / schema 3 | Verification |
+| Application source | Source store | Route to 1.0.0 / schema 3 | Verification |
 |---|---:|---|---|
 | 0.2.0 | legacy 1 | 1 → 2 → 3 | events, imports, cashflow rebuild |
 | 0.3.0 | legacy 1 | 1 → 2 → 3 | classifications and rule history |
@@ -16,6 +16,11 @@ newer application are rejected; downgrade writes are forbidden.
 | 0.7.0 | legacy 1 | 1 → 2 → 3 | accounts, balances and wealth |
 | 0.8.0 | 2 | 2 → 3 | backups, key state and recovery |
 | 0.9.0 | 3 | no-op | migration idempotency |
+
+The checked-in synthetic fixture catalog at
+`tests/fixtures/migrations/supported_versions.json` is the immutable source for
+all eight migration-entry tests. Product 1.0.0 intentionally keeps store schema
+3 and contract version 1.1.0; the product version does not rewrite either.
 
 Version 3 adds release metadata without rewriting events. Old version-1 and
 version-2 backups remain importable after complete verification and are then

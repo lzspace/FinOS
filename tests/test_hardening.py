@@ -120,22 +120,24 @@ class WorkspaceHardeningTests(unittest.TestCase):
             reopened.close()
 
     def test_migration_matrix_preserves_events_and_rebuilds_projection(self) -> None:
-        source_versions = {
-            "0.2.0": 1,
-            "0.3.0": 1,
-            "0.4.0": 1,
-            "0.5.0": 1,
-            "0.6.0": 1,
-            "0.7.0": 1,
-            "0.8.0": 2,
-        }
-        for application_version, schema_version in source_versions.items():
+        fixture_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "migrations"
+            / "supported_versions.json"
+        )
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        self.assertEqual(fixture["marker"], "SYNTHETIC_TEST_DATA")
+        for source_fixture in fixture["sources"]:
+            application_version = source_fixture["application_version"]
+            schema_version = source_fixture["store_schema_version"]
             with self.subTest(source=application_version):
                 data = self.root / f"data-{application_version}"
                 source = self.root / f"source-{application_version}.csv"
                 source.write_text(
                     "booking_date,value_date,amount,currency,counterparty,description\n"
-                    "2026-07-01,2026-07-01,100.00,EUR,Synthetic,Salary\n"
+                    + "\n".join(fixture["rows"])
+                    + "\n"
                 )
                 store = LocalFinanceStore(data, self.key).open()
                 batch = import_csv(store, source, "acc_01")
@@ -160,9 +162,11 @@ class WorkspaceHardeningTests(unittest.TestCase):
                         before,
                     )
                     self.assertEqual(monthly_cashflow(migrated, "2026-07"), projection)
-                    self.assertEqual(
-                        migrated.migration_history()[0]["from_version"], schema_version
-                    )
+                    history = migrated.migration_history()
+                    if schema_version < 3:
+                        self.assertEqual(history[0]["from_version"], schema_version)
+                    else:
+                        self.assertEqual(history, [])
                 finally:
                     migrated.close()
 

@@ -37,6 +37,10 @@ class ReleaseSecurityTests(unittest.TestCase):
         (self.ui / "index.js").write_text("tampered")
         with self.assertRaisesRegex(ReleaseIntegrityError, "FINANCE_BUNDLE_TAMPERED"):
             verify_integrity_manifest(manifest, self.schemas, self.ui)
+        (self.ui / "index.js").write_text("safe")
+        (self.schemas / "event.schema.json").write_text('{"tampered":true}')
+        with self.assertRaisesRegex(ReleaseIntegrityError, "FINANCE_BUNDLE_TAMPERED"):
+            verify_integrity_manifest(manifest, self.schemas, self.ui)
 
     def test_ed25519_signature_rejects_modified_artifact(self) -> None:
         artifact = self.root / "artifact.whl"

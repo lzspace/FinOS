@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-os-finance"
-version = "0.9.0"
+version = "1.0.0"
 description = "Local-only, encrypted personal-finance vertical slice"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,6 +21,8 @@ dev = ["build==1.5.0", "pytest==9.1.1", "ruff==0.15.22"]
 [project.scripts]
 finance = "finance_extension.cli:main"
 finance-release = "finance_extension.release_build:main"
+finance-release-verify = "finance_extension.release_verify:main"
+finance-acceptance = "finance_extension.acceptance:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/finance_extension"]

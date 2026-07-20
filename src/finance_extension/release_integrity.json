@@ -1,5 +1,5 @@
 {
-  "application_version": "0.9.0",
+  "application_version": "1.0.0",
   "format_version": 1,
   "schemas": {
     "files": {
@@ -45,9 +45,9 @@
   "ui_bundle": {
     "files": {
       "assets/index-BuJPnwAu.css": "c865470f60e5b673687179936f71d5dcb1357eb76fd21b7fbb028909a82578e9",
-      "assets/index-CS_rmMOk.js": "acad3d36b6417330ece97548f2bc017f18a9649294505a83d0fa1db724fc36d8",
-      "index.html": "37deb4c90517c31c5013a25665aa54e19d1d89fa7ea11faa2c189701d86ec952"
+      "assets/index-ztuCfqry.js": "59712b642d5946f4ad06c1b97d721ca096ed4e3571915fdd7c23bde144dfd5fc",
+      "index.html": "c3cc6ddecae4d46fdd89baf0cb03391bef7a69a0caea1cfe100c8064b8d1f601"
     },
-    "sha256": "b5c034c4deeac8862bae64f094fd2d5baf4f442f16a8cdfd3c10d5401e4ef0e1"
+    "sha256": "917d8b98c5bb54002b56db1ca82242a27122b014e3a575a34a7b717ef1295b88"
   }
 }

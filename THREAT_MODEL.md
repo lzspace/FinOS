@@ -1,4 +1,4 @@
-# Threat model 0.9.0
+# Threat model 1.0.0
 
 The protected assets are event history, encrypted import sources, projections,
 keys, backups, release contracts and UI code. The attacker may modify local
