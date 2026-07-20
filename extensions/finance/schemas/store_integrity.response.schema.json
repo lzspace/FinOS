@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/store_integrity.response.schema.json",
+  "type": "object",
+  "required": ["schema_version", "state", "projection_sequence", "event_store_sequence", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "state": { "type": "string" },
+    "projection_sequence": { "type": "integer", "minimum": 0 },
+    "event_store_sequence": { "type": "integer", "minimum": 0 },
+    "data": {
+      "type": "object",
+      "required": ["status", "checked_at"],
+      "properties": {
+        "status": { "enum": ["VALID", "INVALID"] },
+        "checked_at": { "type": "string", "format": "date-time" },
+        "store_schema_version": { "type": "integer", "minimum": 1 },
+        "event_count": { "type": "integer", "minimum": 0 },
+        "last_event_sequence": { "type": "integer", "minimum": 0 },
+        "import_file_count": { "type": "integer", "minimum": 0 },
+        "storage_encryption": { "const": "FERNET_AUTHENTICATED" },
+        "error_code": { "type": "string" }
+      }
+    }
+  }
+}

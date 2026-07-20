@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Callable
 
 from . import __version__
@@ -36,6 +37,7 @@ from .classification import (
     create_rule,
     reject_classification,
 )
+from .crypto import KeyProvider, KeychainKeyProvider
 from .forecasting import (
     confirm_recurring_pattern,
     create_forecasts,
@@ -67,6 +69,20 @@ from .reconciliation import (
     reject_refund,
     reject_transfer,
     relation_review,
+)
+from .recovery import (
+    create_backup,
+    delete_backup,
+    export_finance_data,
+    import_finance_archive,
+    key_status,
+    list_backups,
+    migration_status,
+    repair_local_store,
+    restore_backup,
+    rotate_encryption_key,
+    validate_store_integrity,
+    verify_archive,
 )
 from .store import LocalFinanceStore, StoreInvariantError
 from .storage_policy import validate_runtime_path
@@ -127,6 +143,10 @@ COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
         "currency",
     ),
     "CorrectLiabilitySnapshot": ("snapshot_id", "amount", "reason"),
+    "VerifyBackup": ("archive_path",),
+    "RestoreBackup": ("archive_path",),
+    "DeleteBackup": ("archive_id",),
+    "ImportFinanceArchive": ("archive_path",),
 }
 
 
@@ -138,10 +158,21 @@ class FinanceApplicationService:
     """
 
     def __init__(
-        self, store: LocalFinanceStore, *, network_egress_disabled: bool | None = None
+        self,
+        store: LocalFinanceStore,
+        *,
+        network_egress_disabled: bool | None = None,
+        archive_key_provider: KeyProvider | None = None,
+        backup_directory: str | Path | None = None,
+        export_directory: str | Path | None = None,
     ) -> None:
         self._store = store
         self._network_egress_disabled = network_egress_disabled
+        self._archive_key_provider = archive_key_provider or KeychainKeyProvider(
+            service="agent-os.finance.backup", username="archive"
+        )
+        self._backup_directory = backup_directory
+        self._export_directory = export_directory
 
     def _sequence(self) -> int:
         events = self._store.events()
@@ -187,6 +218,10 @@ class FinanceApplicationService:
             "GetForecastEvaluation": self._forecast_evaluation,
             "ListImportBatches": self._import_batches,
             "GetImportBatch": self._import_batch,
+            "ListBackups": self._backups,
+            "GetStoreIntegrity": self._store_integrity,
+            "GetKeyStatus": self._key_status,
+            "GetMigrationStatus": self._migration_status,
         }
         if query_name not in queries:
             raise ApplicationContractError("FINANCE_QUERY_UNSUPPORTED")
@@ -209,6 +244,10 @@ class FinanceApplicationService:
                     "liquidity": True,
                     "net_worth": True,
                     "wealth": True,
+                    "backup": True,
+                    "restore": True,
+                    "data_export": True,
+                    "migrations": True,
                     "tax": False,
                     "receipts": False,
                     "cloud_sync": False,
@@ -577,6 +616,29 @@ class FinanceApplicationService:
         ).fetchone()
         return self._envelope(dict(row) if row else None, status="READY" if row else "EMPTY")
 
+    def _backups(self, _: dict[str, Any]) -> dict[str, Any]:
+        rows = list_backups(
+            self._store, self._archive_key_provider, self._backup_directory
+        )
+        state = (
+            "EMPTY"
+            if not rows
+            else "PARTIAL"
+            if any(row["verification_status"] != "VALID" for row in rows)
+            else "READY"
+        )
+        return self._envelope({"backups": rows}, status=state)
+
+    def _store_integrity(self, _: dict[str, Any]) -> dict[str, Any]:
+        result = validate_store_integrity(self._store)
+        return self._envelope(result, status="READY" if result["status"] == "VALID" else "ERROR")
+
+    def _key_status(self, _: dict[str, Any]) -> dict[str, Any]:
+        return self._envelope(key_status(self._store, self._archive_key_provider))
+
+    def _migration_status(self, _: dict[str, Any]) -> dict[str, Any]:
+        return self._envelope(migration_status(self._store))
+
     def command(self, command_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         required = COMMAND_REQUIRED_FIELDS.get(command_name, ())
         if any(field not in payload for field in required):
@@ -681,6 +743,48 @@ class FinanceApplicationService:
             result = correct_liability_snapshot(
                 self._store, payload["snapshot_id"], payload["amount"], payload["reason"]
             )
+        elif command_name == "CreateBackup":
+            result = create_backup(
+                self._store, self._archive_key_provider, self._backup_directory
+            )
+        elif command_name == "VerifyBackup":
+            verified = verify_archive(
+                payload["archive_path"],
+                self._archive_key_provider,
+                expected_kind="BACKUP",
+                repository_roots=self._store.repository_roots,
+                known_network_roots=self._store.known_network_roots,
+            )
+            result = {**verified.manifest, "verification_status": "VALID"}
+        elif command_name == "RestoreBackup":
+            result = restore_backup(
+                self._store, payload["archive_path"], self._archive_key_provider
+            )
+        elif command_name == "DeleteBackup":
+            result = delete_backup(
+                self._store,
+                self._archive_key_provider,
+                payload["archive_id"],
+                self._backup_directory,
+            )
+        elif command_name == "ExportFinanceData":
+            result = export_finance_data(
+                self._store,
+                self._archive_key_provider,
+                payload.get("destination_directory", self._export_directory),
+            )
+        elif command_name == "ImportFinanceArchive":
+            result = import_finance_archive(
+                self._store, payload["archive_path"], self._archive_key_provider
+            )
+        elif command_name == "RotateEncryptionKey":
+            result = rotate_encryption_key(
+                self._store, self._archive_key_provider, self._backup_directory
+            )
+        elif command_name == "RepairLocalStore":
+            result = repair_local_store(self._store)
+        elif command_name == "ValidateStoreIntegrity":
+            result = validate_store_integrity(self._store)
         else:
             raise ApplicationContractError("FINANCE_COMMAND_UNSUPPORTED")
         return {

@@ -37,7 +37,13 @@ class ApplicationServiceTests(unittest.TestCase):
         ).open()
         batch = import_csv(self.store, source, "acc_01")
         normalize_batch(self.store, batch)
-        self.application = FinanceApplicationService(self.store)
+        self.archive_key = StaticKeyProvider(Fernet.generate_key())
+        self.application = FinanceApplicationService(
+            self.store,
+            archive_key_provider=self.archive_key,
+            backup_directory=root / "backups",
+            export_directory=root / "exports",
+        )
 
     def tearDown(self) -> None:
         self.store.close()
@@ -142,6 +148,24 @@ class ApplicationServiceTests(unittest.TestCase):
         self._validate(liabilities, "liability_overview.response.schema.json")
         self._validate(allocation, "asset_allocation.response.schema.json")
         self._validate(projected, "projected_month_end_balance.response.schema.json")
+
+    def test_recovery_commands_and_status_queries_use_versioned_contracts(self) -> None:
+        empty = self.application.query("ListBackups")
+        created = self.application.command("CreateBackup", {})
+        archive_path = created["result"]["path"]
+        verified = self.application.command("VerifyBackup", {"archive_path": archive_path})
+        backups = self.application.query("ListBackups")
+        integrity = self.application.query("GetStoreIntegrity")
+        keys = self.application.query("GetKeyStatus")
+        migrations = self.application.query("GetMigrationStatus")
+
+        self.assertEqual(empty["state"], "EMPTY")
+        self.assertEqual(verified["result"]["verification_status"], "VALID")
+        self.assertTrue(keys["data"]["archive_key"]["independent_from_store"])
+        self._validate(backups, "backup_list.response.schema.json")
+        self._validate(integrity, "store_integrity.response.schema.json")
+        self._validate(keys, "key_status.response.schema.json")
+        self._validate(migrations, "migration_status.response.schema.json")
 
 
 if __name__ == "__main__":

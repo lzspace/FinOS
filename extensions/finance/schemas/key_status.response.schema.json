@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/key_status.response.schema.json",
+  "type": "object",
+  "required": ["schema_version", "state", "projection_sequence", "event_store_sequence", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "state": { "type": "string" },
+    "projection_sequence": { "type": "integer", "minimum": 0 },
+    "event_store_sequence": { "type": "integer", "minimum": 0 },
+    "data": {
+      "type": "object",
+      "required": ["database_key", "archive_key"],
+      "properties": {
+        "database_key": { "$ref": "#/$defs/key" },
+        "archive_key": {
+          "allOf": [
+            { "$ref": "#/$defs/key" },
+            { "type": "object", "properties": { "independent_from_store": { "type": ["boolean", "null"] } } }
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "key": {
+      "type": "object",
+      "required": ["strategy", "status", "fingerprint"],
+      "properties": {
+        "strategy": { "type": "string" },
+        "status": { "enum": ["AVAILABLE", "NOT_PROVISIONED"] },
+        "fingerprint": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

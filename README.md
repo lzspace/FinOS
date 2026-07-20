@@ -17,7 +17,7 @@ python -m finance_extension.repository_guard --all
 ruff check src tests
 ```
 
-## Vertical Slices 0.2.0 through 0.7.0
+## Vertical Slices 0.2.0 through 0.8.0
 
 The first executable slice supports only `GenericFinanceCsvV1`:
 
@@ -127,4 +127,24 @@ finance --data-dir /absolute/local/finance-data balance record \
 finance --data-dir /absolute/local/finance-data balance reconcile --account acc_main
 finance --data-dir /absolute/local/finance-data liquidity
 finance --data-dir /absolute/local/finance-data net-worth
+```
+
+Version 0.8.0 adds local disaster recovery: complete authenticated backups,
+pre-restore integrity and compatibility validation, atomic full-store restore,
+portable encrypted exports, key rotation with a mandatory recovery backup, and
+versioned store migrations with downgrade protection. Database and archive keys
+use separate Keychain identities (`agent-os.finance/database` and
+`agent-os.finance.backup/archive`). Partial restoration and cloud targets are
+deliberately unsupported.
+
+```bash
+finance --data-dir /absolute/local/finance-data backup create
+finance --data-dir /absolute/local/finance-data backup list
+finance --data-dir /absolute/local/finance-data backup verify /absolute/backup.finance-backup
+finance --data-dir /absolute/local/finance-data backup restore /absolute/backup.finance-backup
+finance --data-dir /absolute/local/finance-data data export
+finance --data-dir /absolute/local/finance-data store validate
+finance --data-dir /absolute/local/finance-data store migrations
+finance --data-dir /absolute/local/finance-data key status
+finance --data-dir /absolute/local/finance-data key rotate
 ```

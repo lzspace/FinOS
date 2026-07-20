@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from decimal import Decimal
 
@@ -51,6 +52,20 @@ from .reconciliation import (
     reject_refund,
     reject_transfer,
     relation_review,
+)
+from .recovery import (
+    create_backup,
+    delete_backup,
+    export_finance_data,
+    import_finance_archive,
+    key_status,
+    list_backups,
+    migration_status,
+    repair_local_store,
+    restore_backup,
+    rotate_encryption_key,
+    validate_store_integrity,
+    verify_archive,
 )
 from .store import LocalFinanceStore
 
@@ -194,6 +209,37 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("liquidity")
     sub.add_parser("net-worth")
+
+    backup = sub.add_parser("backup")
+    backup_sub = backup.add_subparsers(dest="backup_action", required=True)
+    backup_create = backup_sub.add_parser("create")
+    backup_create.add_argument("--directory")
+    backup_sub.add_parser("list").add_argument("--directory")
+    backup_verify = backup_sub.add_parser("verify")
+    backup_verify.add_argument("archive")
+    backup_restore = backup_sub.add_parser("restore")
+    backup_restore.add_argument("archive")
+    backup_delete = backup_sub.add_parser("delete")
+    backup_delete.add_argument("--id", required=True)
+    backup_delete.add_argument("--directory")
+
+    data = sub.add_parser("data")
+    data_sub = data.add_subparsers(dest="data_action", required=True)
+    data_export = data_sub.add_parser("export")
+    data_export.add_argument("--directory")
+    data_import = data_sub.add_parser("import-archive")
+    data_import.add_argument("archive")
+
+    store_parser = sub.add_parser("store")
+    store_sub = store_parser.add_subparsers(dest="store_action", required=True)
+    for action in ("validate", "repair", "migrations"):
+        store_sub.add_parser(action)
+
+    key_parser = sub.add_parser("key")
+    key_sub = key_parser.add_subparsers(dest="key_action", required=True)
+    key_sub.add_parser("status")
+    key_rotate = key_sub.add_parser("rotate")
+    key_rotate.add_argument("--backup-directory")
     return parser
 
 
@@ -230,8 +276,54 @@ def main() -> int:
         if os.getenv("FINANCE_TEST_KEY")
         else KeychainKeyProvider()
     )
+    archive_provider = (
+        StaticKeyProvider(os.environ["FINANCE_BACKUP_TEST_KEY"].encode())
+        if os.getenv("FINANCE_BACKUP_TEST_KEY")
+        else KeychainKeyProvider(service="agent-os.finance.backup", username="archive")
+    )
     with LocalFinanceStore(args.data_dir, provider) as store:
-        if args.action == "account":
+        if args.action == "backup":
+            if args.backup_action == "create":
+                result = create_backup(store, archive_provider, args.directory)
+            elif args.backup_action == "list":
+                result = list_backups(store, archive_provider, args.directory)
+            elif args.backup_action == "verify":
+                verified = verify_archive(
+                    args.archive,
+                    archive_provider,
+                    expected_kind="BACKUP",
+                    repository_roots=store.repository_roots,
+                    known_network_roots=store.known_network_roots,
+                )
+                result = {**verified.manifest, "verification_status": "VALID"}
+            elif args.backup_action == "restore":
+                result = restore_backup(store, args.archive, archive_provider)
+            else:
+                result = delete_backup(store, archive_provider, args.id, args.directory)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif args.action == "data":
+            result = (
+                export_finance_data(store, archive_provider, args.directory)
+                if args.data_action == "export"
+                else import_finance_archive(store, args.archive, archive_provider)
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif args.action == "store":
+            if args.store_action == "validate":
+                result = validate_store_integrity(store)
+            elif args.store_action == "repair":
+                result = repair_local_store(store)
+            else:
+                result = migration_status(store)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif args.action == "key":
+            result = (
+                key_status(store, archive_provider)
+                if args.key_action == "status"
+                else rotate_encryption_key(store, archive_provider, args.backup_directory)
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif args.action == "account":
             if args.account_action == "create":
                 account_id = create_account(
                     store,

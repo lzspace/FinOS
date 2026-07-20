@@ -7,6 +7,8 @@
 **/documents/
 **/reports/
 **/backups/
+**/finance-backups/
+**/finance-exports/
 
 # Bank exports, databases, evidence and generated reports.
 *.csv
@@ -23,6 +25,8 @@
 *.sqlite
 *.sqlite3
 *.backup
+*.finance-backup
+*.finance-archive
 *.jsonl
 *.log
 

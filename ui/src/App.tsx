@@ -3,14 +3,18 @@ import { financeBridge, SchemaCompatibilityError } from "./bridge";
 import type {
   CapabilityManifest,
   Account,
+  BackupRecord,
   Dashboard,
   Envelope,
   ExpectedTransaction,
   ForecastScenario,
   LiquidityOverview,
   NetWorthOverview,
+  KeyStatus,
+  MigrationStatus,
   RecurringPattern,
   RuntimeSecurityStatus,
+  StoreIntegrity,
   Transaction,
   ViewState,
 } from "./contracts/generated";
@@ -74,12 +78,12 @@ function useModalFocus(first: RefObject<HTMLButtonElement | null>, onClose: () =
 
 const navigation: Array<{ id: PageId; text: string; icon: string; capability?: string }> = [
   { id: "overview", text: "Übersicht", icon: "⌂" },
-  { id: "accounts", text: "Konten", icon: "▤", capability: "accounts" },
   { id: "transactions", text: "Transaktionen", icon: "↕", capability: "classification" },
   { id: "categories", text: "Kategorien", icon: "◫", capability: "classification" },
+  { id: "accounts", text: "Konten", icon: "▤", capability: "accounts" },
+  { id: "wealth", text: "Vermögen", icon: "◈", capability: "wealth" },
   { id: "recurring", text: "Wiederkehrend", icon: "↻", capability: "recurring_patterns" },
   { id: "forecast", text: "Prognose", icon: "⌁", capability: "forecasting" },
-  { id: "wealth", text: "Vermögen", icon: "◈", capability: "wealth" },
   { id: "reviews", text: "Prüfungen", icon: "✓", capability: "reconciliation" },
   { id: "imports", text: "Importe", icon: "⇩", capability: "imports" },
   { id: "settings", text: "Einstellungen", icon: "⚙" },
@@ -320,5 +324,37 @@ function Imports() {
 
 function Settings({ manifest }: { manifest: CapabilityManifest }) {
   const result = useFinanceQuery<RuntimeSecurityStatus>("GetRuntimeSecurityStatus");
-  return <QueryBoundary result={result}>{(security) => <><section className="section-intro"><div><h2>Laufzeitsicherheit</h2><p>Dynamisch geprüft. „Nicht geprüft“ wird ausdrücklich nicht als sicher gewertet.</p></div><span className="version-chip">Extension {manifest.extension_version} · Schema {manifest.schema_version}</span></section><section className="security-grid">{Object.entries(security.checks).map(([name, status]) => <article className="panel security-check" key={name}><span className={`security-icon ${status.toLowerCase()}`}>{status === "PASSED" ? "✓" : status === "FAILED" ? "!" : "?"}</span><div><strong>{label(name)}</strong><small>{status === "PASSED" ? "Bestanden" : status === "FAILED" ? "Fehlgeschlagen" : "Nicht geprüft"}</small></div></article>)}</section><section className="panel settings-info"><PanelHeader title="Lokaler Datenvertrag" subtitle="UI → Desktop IPC → Application Service"/><dl><div><dt>Letzte Event-Sequenz</dt><dd>#{security.last_event_sequence}</dd></div><div><dt>Netzwerkressourcen</dt><dd>Keine</dd></div><div><dt>Direkter Store-Zugriff</dt><dd>Nicht erlaubt</dd></div><div><dt>Externe Modelle</dt><dd>Deaktiviert</dd></div></dl></section></>}</QueryBoundary>;
+  const backups = useFinanceQuery<{ backups: BackupRecord[] }>("ListBackups");
+  const integrity = useFinanceQuery<StoreIntegrity>("GetStoreIntegrity");
+  const keys = useFinanceQuery<KeyStatus>("GetKeyStatus");
+  const migrations = useFinanceQuery<MigrationStatus>("GetMigrationStatus");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState("");
+  const [restorePath, setRestorePath] = useState<string | null>(null);
+  const [rotateReady, setRotateReady] = useState(false);
+  const rows = backups.envelope?.data.backups ?? [];
+  const latest = rows.find((item) => item.verification_status === "VALID");
+  const run = async (command: string, payload: Record<string, unknown>, success: string) => {
+    setBusy(command); setMessage("");
+    try { await financeBridge.command(command, payload); setMessage(success); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Lokale Operation fehlgeschlagen."); }
+    finally { setBusy(""); }
+  };
+  return <QueryBoundary result={result}>{(security) => <>
+    <section className="section-intro"><div><h2>Laufzeitsicherheit</h2><p>Dynamisch geprüft. „Nicht geprüft“ wird ausdrücklich nicht als sicher gewertet.</p></div><span className="version-chip">Extension {manifest.extension_version} · Schema {manifest.schema_version}</span></section>
+    <section className="security-grid">{Object.entries(security.checks).map(([name, status]) => <article className="panel security-check" key={name}><span className={`security-icon ${status.toLowerCase()}`}>{status === "PASSED" ? "✓" : status === "FAILED" ? "!" : "?"}</span><div><strong>{label(name)}</strong><small>{status === "PASSED" ? "Bestanden" : status === "FAILED" ? "Fehlgeschlagen" : "Nicht geprüft"}</small></div></article>)}</section>
+    <h2 className="subheading">Datensicherheit und Wiederherstellung</h2>
+    {message && <div className="toast" role="status">{message}</div>}
+    <section className="recovery-grid">
+      <article className="panel recovery-card"><span className="recovery-icon">▣</span><div><h3>Datensicherung</h3><p>Vollständige, authentifiziert verschlüsselte Archive mit unabhängigem lokalem Schlüssel.</p><strong>{rows.length} lokale Backups</strong><small>{latest?.created_at ? `Zuletzt ${date(latest.created_at)}` : "Noch keine Sicherung"}</small></div><button className="primary small" disabled={Boolean(busy)} onClick={() => run("CreateBackup", {}, "Backup wurde vollständig erstellt und verifiziert.")}>Backup erstellen</button></article>
+      <article className="panel recovery-card"><span className="recovery-icon">↺</span><div><h3>Datenwiederherstellung</h3><p>Vor dem atomaren Austausch werden Archiv, Version, Schema und alle enthaltenen Dateien geprüft.</p><strong>{latest ? "Verifiziertes Backup verfügbar" : "Kein gültiges Backup"}</strong><small>Keine Teilwiederherstellung</small></div><button className="secondary small" disabled={!latest || Boolean(busy)} onClick={() => setRestorePath(latest?.path ?? null)}>Wiederherstellen</button></article>
+      <article className="panel recovery-card"><span className="recovery-icon">⇧</span><div><h3>Datenexport</h3><p>Portables lokales Finanzarchiv ohne Cloud-Übertragung oder externe Verarbeitung.</p><strong>Verschlüsselt und vollständig</strong><small>Formatversion 1</small></div><button className="secondary small" disabled={Boolean(busy)} onClick={() => run("ExportFinanceData", {}, "Lokales Finanzarchiv wurde exportiert und verifiziert.")}>Archiv exportieren</button></article>
+      <article className="panel recovery-card"><span className={`recovery-icon ${integrity.envelope?.data.status === "VALID" ? "ok" : "warn"}`}>{integrity.envelope?.data.status === "VALID" ? "✓" : "!"}</span><div><h3>Speicherintegrität</h3><p>SQLite-Struktur, Event-Hashes, Aggregate-Versionen, Schemas und Importdateien.</p><strong>{integrity.envelope?.data.status === "VALID" ? "Integrität bestätigt" : "Prüfung erforderlich"}</strong><small>{integrity.envelope?.data.event_count ?? 0} Events · Schema {integrity.envelope?.data.store_schema_version ?? "–"}</small></div><div className="card-actions"><button className="secondary small" disabled={Boolean(busy)} onClick={() => run("ValidateStoreIntegrity", {}, "Vollständige Integritätsprüfung abgeschlossen.")}>Prüfen</button><button className="secondary small" disabled={integrity.envelope?.data.status !== "VALID" || Boolean(busy)} onClick={() => run("RepairLocalStore", {}, "Projektions-Checkpoints wurden zurückgesetzt; Ansichten werden neu aufgebaut.")}>Reparieren</button></div></article>
+      <article className="panel recovery-card"><span className="recovery-icon">⌘</span><div><h3>Schlüsselstatus</h3><p>Datenbank- und Backup-Schlüssel bleiben getrennt in der lokalen Schlüsselverwaltung.</p><strong>{keys.envelope?.data.archive_key.independent_from_store ? "Schlüssel getrennt" : "Backup-Schlüssel nicht bereit"}</strong><small>Store {keys.envelope?.data.database_key.fingerprint ?? "–"} · Backup {keys.envelope?.data.archive_key.fingerprint ?? "–"}</small></div><button className="secondary small" disabled={Boolean(busy)} onClick={() => setRotateReady(true)}>Schlüssel rotieren</button></article>
+      <article className="panel recovery-card"><span className="recovery-icon ok">↑</span><div><h3>Migrationen</h3><p>Store-Upgrades sind protokolliert; neuere Datenstände werden nicht mit älterer Software geöffnet.</p><strong>{migrations.envelope?.data.status === "CURRENT" ? "Schema aktuell" : "Migration erforderlich"}</strong><small>Store v{migrations.envelope?.data.current_store_schema_version ?? "–"} · Downgrade-Schutz aktiv</small></div><span className="status-badge confirmed">{migrations.envelope?.data.status ?? "LOADING"}</span></article>
+    </section>
+    {restorePath && <section className="restore-warning panel" role="alert"><div><strong>Vollständige Wiederherstellung bestätigen</strong><p>Der aktuelle lokale Store wird erst nach erfolgreicher Integritäts- und Kompatibilitätsprüfung atomar ersetzt.</p></div><button className="danger-link" onClick={() => setRestorePath(null)}>Abbrechen</button><button className="primary small" disabled={Boolean(busy)} onClick={() => run("RestoreBackup", { archive_path: restorePath }, "Backup wurde vollständig wiederhergestellt.").then(() => setRestorePath(null))}>Wiederherstellung bestätigen</button></section>}
+    {rotateReady && <section className="restore-warning panel" role="alert"><div><strong>Schlüsselrotation bestätigen</strong><p>Vor der Rotation wird automatisch ein verifiziertes Recovery-Backup mit dem unabhängigen Archivschlüssel erzeugt.</p></div><button className="danger-link" onClick={() => setRotateReady(false)}>Abbrechen</button><button className="primary small" disabled={Boolean(busy)} onClick={() => run("RotateEncryptionKey", {}, "Schlüssel wurde nach einem Recovery-Backup atomar rotiert.").then(() => setRotateReady(false))}>Rotation bestätigen</button></section>}
+    <section className="panel settings-info"><PanelHeader title="Lokaler Datenvertrag" subtitle="UI → Desktop IPC → Application Service"/><dl><div><dt>Letzte Event-Sequenz</dt><dd>#{security.last_event_sequence}</dd></div><div><dt>Netzwerkressourcen</dt><dd>Keine</dd></div><div><dt>Direkter Store-Zugriff</dt><dd>Nicht erlaubt</dd></div><div><dt>Externe Modelle</dt><dd>Deaktiviert</dd></div></dl></section>
+  </>}</QueryBoundary>;
 }

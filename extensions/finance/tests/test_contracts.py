@@ -30,6 +30,11 @@ class ContractTests(unittest.TestCase):
         reasons = inspect_file(Path("notes.txt"), b"account " + synthetic_iban)
         self.assertIn("likely IBAN", reasons)
 
+    def test_repository_guard_rejects_recovery_archives(self) -> None:
+        for path in (Path("finance.finance-backup"), Path("finance.finance-archive")):
+            reasons = inspect_file(path, b"synthetic encrypted archive")
+            self.assertTrue(any("blocked" in reason for reason in reasons))
+
 
 if __name__ == "__main__":
     unittest.main()

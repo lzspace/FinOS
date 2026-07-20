@@ -1,4 +1,4 @@
-# Finance Extension contracts and Vertical Slice v0.7.0
+# Finance Extension contracts and Vertical Slice v0.8.0
 
 This directory turns the agreed finance domain model into executable interface
 contracts. It deliberately contains no production finance data and has no
@@ -34,6 +34,12 @@ explicit balance reconciliation, asset and liability valuations, consolidated
 liquidity and net-worth projections, and a balance-based month-end forecast.
 Reported and calculated balances are never conflated. Foreign currencies stay
 visible as conflicts until an explicit valuation rate is available.
+
+Version 0.8.0 adds authenticated local backup and portable export archives,
+complete pre-restore verification, atomic rollback-safe restoration, independent
+archive-key handling, encryption-key rotation, store integrity checks and
+versioned migration history. Newer stores and archives are rejected by older
+software; partial restoration and cloud destinations are forbidden.
 
 ## Binding security invariants
 
@@ -75,11 +81,13 @@ never binary floating point.
   balance, asset and liability changes.
 - the 0.7.0 account, liquidity, net-worth and projected-balance response
   schemas extend the local Application API without adding a public HTTP API.
+- `schemas/recovery_commands.schema.json` and the backup, integrity, key and
+  migration response schemas define the local 0.8.0 disaster-recovery boundary.
 - `examples/`: synthetic envelopes for integration tests and documentation.
 
 ## Local UI boundary
 
-The source is in `ui/`. `npm run generate:contracts` verifies the nine
+The source is in `ui/`. `npm run generate:contracts` verifies 23
 versioned response schemas before generating the TypeScript contract module.
 `npm run build` creates a relative-path production bundle, and
 `npm run check:offline` rejects external resource candidates. Production uses

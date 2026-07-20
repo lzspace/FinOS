@@ -16,9 +16,11 @@ SYNTHETIC_MARKER = b"SYNTHETIC_TEST_DATA"
 BLOCKED_SUFFIXES = {
     ".csv", ".tsv", ".xlsx", ".xls", ".ofx", ".qif", ".mt940", ".sta",
     ".camt", ".pdf", ".db", ".sqlite", ".sqlite3", ".backup", ".jsonl", ".log",
-    ".key", ".pem", ".p12", ".pfx",
+    ".key", ".pem", ".p12", ".pfx", ".finance-backup", ".finance-archive",
 }
-BLOCKED_PATH_PARTS = {".finance-data", "finance-runtime", "runtime-data"}
+BLOCKED_PATH_PARTS = {
+    ".finance-data", "finance-runtime", "runtime-data", "finance-backups", "finance-exports"
+}
 IGNORED_PATH_PARTS = {
     ".git",
     "__pycache__",

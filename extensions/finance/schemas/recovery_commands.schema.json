@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/recovery_commands.schema.json",
+  "title": "Finance Extension 0.8.0 local recovery commands",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command_id", "command_type", "idempotency_key", "payload"],
+  "properties": {
+    "command_id": { "type": "string", "pattern": "^cmd_[a-f0-9]{32}$" },
+    "command_type": {
+      "enum": [
+        "CreateBackup", "VerifyBackup", "RestoreBackup", "DeleteBackup",
+        "ExportFinanceData", "ImportFinanceArchive", "RotateEncryptionKey",
+        "RepairLocalStore", "ValidateStoreIntegrity"
+      ]
+    },
+    "idempotency_key": { "type": "string", "minLength": 8 },
+    "payload": { "type": "object" }
+  }
+}

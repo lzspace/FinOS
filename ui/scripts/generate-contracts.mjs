@@ -25,6 +25,10 @@ const required = [
   "liability_overview.response.schema.json",
   "asset_allocation.response.schema.json",
   "projected_month_end_balance.response.schema.json",
+  "backup_list.response.schema.json",
+  "store_integrity.response.schema.json",
+  "key_status.response.schema.json",
+  "migration_status.response.schema.json",
 ];
 
 for (const name of required) {
