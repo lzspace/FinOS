@@ -1,0 +1,693 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/commands.schema.json",
+  "title": "Finance Extension command catalog",
+  "oneOf": [
+    { "$ref": "#/$defs/RegisterDataSource" },
+    { "$ref": "#/$defs/ImportTransactions" },
+    { "$ref": "#/$defs/NormalizeImportBatch" },
+    { "$ref": "#/$defs/ReconcileImportBatch" },
+    { "$ref": "#/$defs/ClassifyTransactions" },
+    { "$ref": "#/$defs/ConfirmClassification" },
+    { "$ref": "#/$defs/RejectClassification" },
+    { "$ref": "#/$defs/CreateClassificationRule" },
+    { "$ref": "#/$defs/DetectTransfers" },
+    { "$ref": "#/$defs/ConfirmTransfer" },
+    { "$ref": "#/$defs/LinkTransactionRelation" },
+    { "$ref": "#/$defs/DetectRecurringPatterns" },
+    { "$ref": "#/$defs/ConfirmRecurringPattern" },
+    { "$ref": "#/$defs/CalculateCashflow" },
+    { "$ref": "#/$defs/GenerateForecast" },
+    { "$ref": "#/$defs/EvaluateForecast" },
+    { "$ref": "#/$defs/DetectTaxCandidates" },
+    { "$ref": "#/$defs/ConfirmTaxCandidate" },
+    { "$ref": "#/$defs/AttachEvidence" },
+    { "$ref": "#/$defs/GenerateTaxPreparationPackage" },
+    { "$ref": "#/$defs/CloseFinancialPeriod" },
+    { "$ref": "#/$defs/ReopenFinancialPeriod" },
+    { "$ref": "#/$defs/DeleteImportBatch" },
+    { "$ref": "#/$defs/PurgeFinanceWorkspace" }
+  ],
+  "$defs": {
+    "CommandBase": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "command_id",
+        "command_type",
+        "owner_id",
+        "initiated_by",
+        "initiated_at",
+        "correlation_id",
+        "idempotency_key",
+        "security_context",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0.0" },
+        "command_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "command_type": { "$ref": "#/$defs/CommandType" },
+        "owner_id": { "$ref": "common.schema.json#/$defs/OwnerId" },
+        "initiated_by": { "$ref": "common.schema.json#/$defs/Actor" },
+        "initiated_at": { "$ref": "common.schema.json#/$defs/DateTime" },
+        "correlation_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "causation_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 256
+        },
+        "security_context": { "$ref": "common.schema.json#/$defs/SecurityContext" }
+      }
+    },
+    "CommandType": {
+      "enum": [
+        "RegisterDataSource",
+        "ImportTransactions",
+        "NormalizeImportBatch",
+        "ReconcileImportBatch",
+        "ClassifyTransactions",
+        "ConfirmClassification",
+        "RejectClassification",
+        "CreateClassificationRule",
+        "DetectTransfers",
+        "ConfirmTransfer",
+        "LinkTransactionRelation",
+        "DetectRecurringPatterns",
+        "ConfirmRecurringPattern",
+        "CalculateCashflow",
+        "GenerateForecast",
+        "EvaluateForecast",
+        "DetectTaxCandidates",
+        "ConfirmTaxCandidate",
+        "AttachEvidence",
+        "GenerateTaxPreparationPackage",
+        "CloseFinancialPeriod",
+        "ReopenFinancialPeriod",
+        "DeleteImportBatch",
+        "PurgeFinanceWorkspace"
+      ]
+    },
+    "LocalApprovalId": {
+      "type": "string",
+      "pattern": "^approval_local_[A-Za-z0-9_-]{6,128}$"
+    },
+    "RegisterDataSource": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "RegisterDataSource" },
+            "payload": { "$ref": "#/$defs/RegisterDataSourcePayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ImportTransactions": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "ImportTransactions" },
+            "payload": { "$ref": "#/$defs/ImportTransactionsPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "NormalizeImportBatch": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "NormalizeImportBatch" },
+            "payload": { "$ref": "#/$defs/NormalizeImportBatchPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ReconcileImportBatch": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "ReconcileImportBatch" },
+            "payload": { "$ref": "#/$defs/ReconcileImportBatchPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ClassifyTransactions": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "ClassifyTransactions" },
+            "payload": { "$ref": "#/$defs/ClassifyTransactionsPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ConfirmClassification": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "ConfirmClassification" },
+            "payload": { "$ref": "#/$defs/ConfirmClassificationPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "RejectClassification": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "RejectClassification" },
+            "payload": { "$ref": "#/$defs/RejectClassificationPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CreateClassificationRule": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "CreateClassificationRule" },
+            "payload": { "$ref": "#/$defs/CreateClassificationRulePayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "DetectTransfers": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "DetectTransfers" },
+            "payload": { "$ref": "#/$defs/DetectTransfersPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ConfirmTransfer": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "ConfirmTransfer" },
+            "payload": { "$ref": "#/$defs/ConfirmTransferPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "LinkTransactionRelation": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "LinkTransactionRelation" },
+            "payload": { "$ref": "#/$defs/LinkTransactionRelationPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "DetectRecurringPatterns": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "DetectRecurringPatterns" },
+            "payload": { "$ref": "#/$defs/DetectRecurringPatternsPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ConfirmRecurringPattern": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "ConfirmRecurringPattern" },
+            "payload": { "$ref": "#/$defs/ConfirmRecurringPatternPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CalculateCashflow": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "CalculateCashflow" },
+            "payload": { "$ref": "#/$defs/CalculateCashflowPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "GenerateForecast": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "GenerateForecast" },
+            "payload": { "$ref": "#/$defs/GenerateForecastPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "EvaluateForecast": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "EvaluateForecast" },
+            "payload": { "$ref": "#/$defs/EvaluateForecastPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "DetectTaxCandidates": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "DetectTaxCandidates" },
+            "payload": { "$ref": "#/$defs/DetectTaxCandidatesPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ConfirmTaxCandidate": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "ConfirmTaxCandidate" },
+            "payload": { "$ref": "#/$defs/ConfirmTaxCandidatePayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "AttachEvidence": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "AttachEvidence" },
+            "payload": { "$ref": "#/$defs/AttachEvidencePayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "GenerateTaxPreparationPackage": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "GenerateTaxPreparationPackage" },
+            "payload": { "$ref": "#/$defs/GenerateTaxPreparationPackagePayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CloseFinancialPeriod": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "CloseFinancialPeriod" },
+            "payload": { "$ref": "#/$defs/CloseFinancialPeriodPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ReopenFinancialPeriod": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "ReopenFinancialPeriod" },
+            "payload": { "$ref": "#/$defs/ReopenFinancialPeriodPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "DeleteImportBatch": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "DeleteImportBatch" },
+            "payload": { "$ref": "#/$defs/DeleteImportBatchPayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "PurgeFinanceWorkspace": {
+      "allOf": [
+        { "$ref": "#/$defs/CommandBase" },
+        {
+          "properties": {
+            "command_type": { "const": "PurgeFinanceWorkspace" },
+            "payload": { "$ref": "#/$defs/PurgeFinanceWorkspacePayload" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "RegisterDataSourcePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display_name", "source_type", "provider", "format", "local_directory"],
+      "properties": {
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "source_type": {
+          "enum": ["BANK_EXPORT", "CREDIT_CARD_EXPORT", "BROKER_EXPORT", "MANUAL_ENTRY", "TAX_IMPORT", "DOCUMENT_IMPORT"]
+        },
+        "provider": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "format": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "default_account_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "local_directory": { "$ref": "common.schema.json#/$defs/LocalAbsolutePath" }
+      }
+    },
+    "ImportTransactionsPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_file_path", "data_source_id", "account_id", "import_mode"],
+      "properties": {
+        "source_file_path": { "$ref": "common.schema.json#/$defs/LocalAbsolutePath" },
+        "data_source_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "account_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "import_mode": { "enum": ["VALIDATE_ONLY", "IMPORT_NEW", "FORCE_REIMPORT"] },
+        "expected_file_hash": { "$ref": "common.schema.json#/$defs/Sha256" },
+        "approval_id": { "$ref": "#/$defs/LocalApprovalId" }
+      }
+    },
+    "NormalizeImportBatchPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["import_batch_id", "normalization_policy_version"],
+      "properties": {
+        "import_batch_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "normalization_policy_version": { "$ref": "common.schema.json#/$defs/PolicyVersion" }
+      }
+    },
+    "ReconcileImportBatchPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["import_batch_id", "reconciliation_policy_version"],
+      "properties": {
+        "import_batch_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "reconciliation_policy_version": { "$ref": "common.schema.json#/$defs/PolicyVersion" }
+      }
+    },
+    "ClassifyTransactionsPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction_ids", "classification_policy_version", "minimum_auto_accept_confidence"],
+      "properties": {
+        "transaction_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/EntityId" }
+        },
+        "classification_policy_version": { "$ref": "common.schema.json#/$defs/PolicyVersion" },
+        "allow_local_llm": { "type": "boolean", "default": false },
+        "minimum_auto_accept_confidence": { "$ref": "common.schema.json#/$defs/Confidence" }
+      }
+    },
+    "ConfirmClassificationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction_id", "category_id", "confirmation_scope"],
+      "properties": {
+        "transaction_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "category_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "subcategory_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "confirmation_scope": {
+          "enum": ["THIS_TRANSACTION_ONLY", "ALL_MATCHING_MERCHANT_TRANSACTIONS", "FUTURE_MATCHING_TRANSACTIONS", "ALL_HISTORICAL_AND_FUTURE_MATCHES"]
+        },
+        "comment": { "type": "string", "maxLength": 1000 },
+        "approval_id": { "$ref": "#/$defs/LocalApprovalId" }
+      }
+    },
+    "RejectClassificationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification_id", "reason", "request_new_proposal"],
+      "properties": {
+        "classification_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "request_new_proposal": { "type": "boolean" }
+      }
+    },
+    "CreateClassificationRulePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "priority", "scope", "conditions", "actions", "valid_from", "apply_retroactively"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "scope": { "enum": ["SINGLE_TRANSACTION", "MERCHANT", "ACCOUNT", "USER", "WORKSPACE"] },
+        "conditions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "common.schema.json#/$defs/RuleCondition" }
+        },
+        "actions": { "$ref": "common.schema.json#/$defs/RuleAction" },
+        "valid_from": { "$ref": "common.schema.json#/$defs/Date" },
+        "valid_until": { "$ref": "common.schema.json#/$defs/Date" },
+        "apply_retroactively": { "type": "boolean" },
+        "approval_id": { "$ref": "#/$defs/LocalApprovalId" }
+      }
+    },
+    "DetectTransfersPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["period_start", "period_end", "account_ids", "matching_policy_version"],
+      "properties": {
+        "period_start": { "$ref": "common.schema.json#/$defs/Date" },
+        "period_end": { "$ref": "common.schema.json#/$defs/Date" },
+        "account_ids": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/EntityId" }
+        },
+        "matching_policy_version": { "$ref": "common.schema.json#/$defs/PolicyVersion" }
+      }
+    },
+    "ConfirmTransferPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outgoing_transaction_id", "incoming_transaction_id", "decision"],
+      "properties": {
+        "outgoing_transaction_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "incoming_transaction_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "decision": { "enum": ["CONFIRM", "REJECT", "BREAK_EXISTING_MATCH"] }
+      }
+    },
+    "LinkTransactionRelationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_transaction_id", "target_transaction_id", "relation_type", "related_amount"],
+      "properties": {
+        "source_transaction_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "target_transaction_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "relation_type": { "enum": ["REFUND_OF", "REVERSAL_OF", "FEE_FOR", "INSTALLMENT_OF", "SPLIT_FROM", "MERGED_INTO"] },
+        "related_amount": { "$ref": "common.schema.json#/$defs/Money" }
+      }
+    },
+    "DetectRecurringPatternsPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_ids", "history_start", "history_end", "minimum_occurrences"],
+      "properties": {
+        "account_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/EntityId" }
+        },
+        "history_start": { "$ref": "common.schema.json#/$defs/Date" },
+        "history_end": { "$ref": "common.schema.json#/$defs/Date" },
+        "minimum_occurrences": { "type": "integer", "minimum": 2, "maximum": 120 }
+      }
+    },
+    "ConfirmRecurringPatternPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern_id", "decision"],
+      "properties": {
+        "pattern_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "decision": { "enum": ["CONFIRM", "REJECT", "PAUSE", "MARK_ENDED"] },
+        "expected_amount_override": { "$ref": "common.schema.json#/$defs/Money" },
+        "frequency_override": { "enum": ["WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUALLY", "ANNUALLY", "IRREGULAR"] }
+      }
+    },
+    "CalculateCashflowPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["financial_period_id", "calculation_policy_version", "force_new_version"],
+      "properties": {
+        "financial_period_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "calculation_policy_version": { "$ref": "common.schema.json#/$defs/PolicyVersion" },
+        "force_new_version": { "type": "boolean" }
+      }
+    },
+    "GenerateForecastPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["forecast_type", "base_date", "horizon_end", "scenario_set", "forecast_policy_version"],
+      "properties": {
+        "forecast_type": { "enum": ["MONTH_END_BALANCE", "MONTHLY_SURPLUS", "CASHFLOW", "NET_WORTH", "LIQUIDITY_RUNWAY"] },
+        "base_date": { "$ref": "common.schema.json#/$defs/Date" },
+        "horizon_end": { "$ref": "common.schema.json#/$defs/Date" },
+        "scenario_set": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["CONSERVATIVE", "BASE", "OPTIMISTIC"] }
+        },
+        "forecast_policy_version": { "$ref": "common.schema.json#/$defs/PolicyVersion" }
+      }
+    },
+    "EvaluateForecastPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["forecast_id", "actual_period_id"],
+      "properties": {
+        "forecast_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "actual_period_id": { "$ref": "common.schema.json#/$defs/EntityId" }
+      }
+    },
+    "DetectTaxCandidatesPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tax_year", "jurisdiction", "transaction_ids", "tax_rule_package_version"],
+      "properties": {
+        "tax_year": { "type": "integer", "minimum": 2000, "maximum": 2200 },
+        "jurisdiction": { "const": "DE" },
+        "transaction_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/EntityId" }
+        },
+        "tax_rule_package_version": { "$ref": "common.schema.json#/$defs/PolicyVersion" }
+      }
+    },
+    "ConfirmTaxCandidatePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tax_candidate_id", "decision"],
+      "properties": {
+        "tax_candidate_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "decision": { "enum": ["CONFIRM", "REJECT", "MARK_FOR_ADVISOR_REVIEW"] },
+        "confirmed_amount": { "$ref": "common.schema.json#/$defs/Money" },
+        "business_share": { "type": "number", "minimum": 0, "maximum": 1 },
+        "comment": { "type": "string", "maxLength": 2000 }
+      }
+    },
+    "AttachEvidencePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_path", "relation_type"],
+      "anyOf": [
+        { "required": ["transaction_id"] },
+        { "required": ["tax_candidate_id"] }
+      ],
+      "properties": {
+        "document_path": { "$ref": "common.schema.json#/$defs/LocalAbsolutePath" },
+        "transaction_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "tax_candidate_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "relation_type": { "enum": ["SUPPORTS", "RECEIPT_FOR", "CERTIFICATE_FOR", "INVOICE_FOR"] }
+      }
+    },
+    "GenerateTaxPreparationPackagePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tax_year", "included_candidate_ids", "output_format", "output_directory", "approval_id"],
+      "properties": {
+        "tax_year": { "type": "integer", "minimum": 2000, "maximum": 2200 },
+        "included_candidate_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/EntityId" }
+        },
+        "output_format": { "enum": ["LOCAL_PDF_REPORT", "LOCAL_CSV", "LOCAL_JSON", "ADVISOR_PACKAGE"] },
+        "output_directory": { "$ref": "common.schema.json#/$defs/LocalAbsolutePath" },
+        "approval_id": { "$ref": "#/$defs/LocalApprovalId" }
+      }
+    },
+    "CloseFinancialPeriodPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["financial_period_id", "cashflow_analysis_id", "unresolved_item_policy", "approval_id"],
+      "properties": {
+        "financial_period_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "cashflow_analysis_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "unresolved_item_policy": { "enum": ["REQUIRE_NONE", "ALLOW_WITH_WARNING", "ALLOW_BELOW_THRESHOLD"] },
+        "approval_id": { "$ref": "#/$defs/LocalApprovalId" }
+      }
+    },
+    "ReopenFinancialPeriodPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["financial_period_id", "reason", "approval_id"],
+      "properties": {
+        "financial_period_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "approval_id": { "$ref": "#/$defs/LocalApprovalId" }
+      }
+    },
+    "DeleteImportBatchPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["import_batch_id", "deletion_mode", "reason", "approval_id"],
+      "properties": {
+        "import_batch_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "deletion_mode": { "enum": ["DELETE_DERIVED_ONLY", "DELETE_SOURCE_AND_DERIVED"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "approval_id": { "$ref": "#/$defs/LocalApprovalId" }
+      }
+    },
+    "PurgeFinanceWorkspacePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["installation_id", "approval_id", "confirmation_token"],
+      "properties": {
+        "installation_id": { "$ref": "common.schema.json#/$defs/EntityId" },
+        "approval_id": { "$ref": "#/$defs/LocalApprovalId" },
+        "confirmation_token": { "type": "string", "minLength": 16, "maxLength": 256 }
+      }
+    }
+  }
+}

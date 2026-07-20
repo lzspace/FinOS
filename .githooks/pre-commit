@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+exec python3 extensions/finance/tools/finance_repo_guard.py --staged
+

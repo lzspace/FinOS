@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-os-finance"
+version = "0.3.0"
+description = "Local-only, encrypted personal-finance vertical slice"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Internal use only"}
+dependencies = [
+  "cryptography>=42.0",
+  "jsonschema[format-nongpl]>=4.22",
+  "keyring>=24.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+finance = "finance_extension.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/finance_extension"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"extensions/finance" = "extensions/finance"
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "extensions/finance/tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+lint.ignore = ["E701", "E702"]

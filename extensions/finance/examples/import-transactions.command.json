@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0.0",
+  "command_id": "cmd_import_demo_001",
+  "command_type": "ImportTransactions",
+  "owner_id": "user_local_01",
+  "initiated_by": {
+    "type": "USER",
+    "id": "user_local_01"
+  },
+  "initiated_at": "2026-07-20T14:00:00Z",
+  "correlation_id": "run_import_demo_001",
+  "idempotency_key": "synthetic-import-demo-sha256",
+  "security_context": {
+    "domain": "PERSONAL",
+    "data_type": "FINANCIAL",
+    "classification": "RESTRICTED",
+    "purpose": "PERSONAL_FINANCE_ANALYSIS",
+    "storage_scope": "LOCAL_DEVICE_ONLY",
+    "trust_zone": "PRIVATE_LOCAL",
+    "network_egress": "DENY",
+    "git_eligible": false
+  },
+  "payload": {
+    "source_file_path": "/local/app-data/agent-os/finance/imports/synthetic-demo.csv",
+    "data_source_id": "source_demo_001",
+    "account_id": "account_demo_001",
+    "import_mode": "IMPORT_NEW"
+  }
+}
+

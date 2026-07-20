@@ -1,0 +1,30 @@
+id: agent-os.finance
+name: Finance Extension
+version: 0.3.0
+contract_version: 1.0.0
+jurisdiction: DE
+audience:
+  - private_individual
+  - employee
+storage:
+  scope: LOCAL_DEVICE_ONLY
+  trust_zone: PRIVATE_LOCAL
+  repository_storage: DENY
+  cloud_sync: DENY
+  encryption_at_rest: REQUIRED
+network:
+  egress: DENY
+  external_llm_processing: DENY
+  external_ocr_processing: DENY
+  telemetry: LOCAL_ONLY
+contracts:
+  common: schemas/common.schema.json
+  commands: schemas/commands.schema.json
+  events: schemas/events.schema.json
+policies:
+  - POL-FIN-001_LOCAL_STORAGE_ONLY
+  - POL-FIN-002_NO_EXTERNAL_PROCESSING
+  - POL-FIN-003_USER_DECISIONS_AUTHORITATIVE
+  - POL-FIN-004_IMMUTABLE_RAW_DATA
+  - POL-FIN-005_EXPORT_REQUIRES_APPROVAL
+  - POL-FIN-006_GIT_PROHIBITION

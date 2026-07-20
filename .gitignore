@@ -1,0 +1,51 @@
+# Finance runtime data must never be committed. Runtime storage belongs outside
+# the repository; these rules are a second line of defence.
+**/.finance-data/
+**/finance-runtime/
+**/runtime-data/
+**/imports/
+**/documents/
+**/reports/
+**/backups/
+
+# Bank exports, databases, evidence and generated reports.
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.ofx
+*.qif
+*.mt940
+*.sta
+*.camt
+*.pdf
+*.db
+*.sqlite
+*.sqlite3
+*.backup
+*.jsonl
+*.log
+
+# Local configuration and secrets.
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+local-config.json
+
+# Explicitly allow marked, synthetic fixtures only.
+!extensions/finance/tests/fixtures/synthetic/*.csv
+
+# Development artefacts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.coverage
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+.DS_Store

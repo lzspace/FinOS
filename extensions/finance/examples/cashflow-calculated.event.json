@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0.0",
+  "event_id": "event_cashflow_demo_001",
+  "event_type": "CashflowCalculated",
+  "aggregate_type": "FinancialPeriod",
+  "aggregate_id": "period_demo_2026_07",
+  "aggregate_version": 1,
+  "owner_id": "user_local_01",
+  "occurred_at": "2026-07-20T14:05:00Z",
+  "recorded_at": "2026-07-20T14:05:00Z",
+  "correlation_id": "run_import_demo_001",
+  "causation_id": "cmd_cashflow_demo_001",
+  "actor": {
+    "type": "AGENT",
+    "id": "personal_finance_agent_local"
+  },
+  "security_context": {
+    "domain": "PERSONAL",
+    "data_type": "FINANCIAL",
+    "classification": "RESTRICTED",
+    "purpose": "PERSONAL_FINANCE_ANALYSIS",
+    "storage_scope": "LOCAL_DEVICE_ONLY",
+    "trust_zone": "PRIVATE_LOCAL",
+    "network_egress": "DENY",
+    "git_eligible": false
+  },
+  "payload": {
+    "cashflow_analysis_id": "analysis_demo_2026_07",
+    "financial_period_id": "period_demo_2026_07",
+    "analysis_version": 1,
+    "total_income": { "amount": "3200.00", "currency": "EUR" },
+    "total_expenses": { "amount": "-2140.50", "currency": "EUR" },
+    "free_cashflow": { "amount": "1059.50", "currency": "EUR" },
+    "savings_rate": 0.33109375,
+    "policy_version": "cashflow@1.0.0"
+  }
+}

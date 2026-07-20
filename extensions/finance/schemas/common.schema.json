@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/common.schema.json",
+  "title": "Finance Extension common types",
+  "$defs": {
+    "EntityId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*_[A-Za-z0-9_-]{6,128}$"
+    },
+    "OwnerId": {
+      "type": "string",
+      "pattern": "^user_local_[A-Za-z0-9_-]{2,128}$"
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "Version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$"
+    },
+    "PolicyVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]*@[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "DecimalAmount": {
+      "type": "string",
+      "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,8})?$"
+    },
+    "Currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "Money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "$ref": "#/$defs/DecimalAmount" },
+        "currency": { "$ref": "#/$defs/Currency" }
+      }
+    },
+    "Date": {
+      "type": "string",
+      "format": "date"
+    },
+    "DateTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "LocalAbsolutePath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A host-local absolute path. Semantic validation is mandatory."
+    },
+    "Actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {
+          "enum": ["USER", "AGENT", "SYSTEM", "ADMIN", "EXTERNAL_SERVICE"]
+        },
+        "id": { "type": "string", "minLength": 1, "maxLength": 160 }
+      }
+    },
+    "SecurityContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "domain",
+        "data_type",
+        "classification",
+        "purpose",
+        "storage_scope",
+        "trust_zone",
+        "network_egress",
+        "git_eligible"
+      ],
+      "properties": {
+        "domain": { "const": "PERSONAL" },
+        "data_type": { "const": "FINANCIAL" },
+        "classification": { "const": "RESTRICTED" },
+        "purpose": { "const": "PERSONAL_FINANCE_ANALYSIS" },
+        "storage_scope": { "const": "LOCAL_DEVICE_ONLY" },
+        "trust_zone": { "const": "PRIVATE_LOCAL" },
+        "network_egress": { "const": "DENY" },
+        "git_eligible": { "const": false }
+      }
+    },
+    "RuleCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "operator", "value"],
+      "properties": {
+        "field": {
+          "enum": [
+            "counterparty",
+            "normalized_description",
+            "merchant_id",
+            "amount",
+            "currency",
+            "direction",
+            "account_id"
+          ]
+        },
+        "operator": {
+          "enum": ["EQUALS", "CONTAINS", "STARTS_WITH", "MATCHES", "LT", "LTE", "GT", "GTE", "IN"]
+        },
+        "value": {}
+      }
+    },
+    "RuleAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "category_id": { "$ref": "#/$defs/EntityId" },
+        "subcategory_id": { "$ref": "#/$defs/EntityId" },
+        "merchant_id": { "$ref": "#/$defs/EntityId" },
+        "recurring_candidate": { "type": "boolean" }
+      }
+    },
+    "Confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  }
+}

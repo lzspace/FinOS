@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/classification_events.schema.json",
+  "title": "Finance Extension 0.3.0 classification events",
+  "oneOf": [
+    { "$ref": "#/$defs/TransactionClassificationProposed" },
+    { "$ref": "#/$defs/TransactionClassificationConfirmed" },
+    { "$ref": "#/$defs/TransactionClassificationRejected" },
+    { "$ref": "#/$defs/ClassificationRuleCreated" },
+    { "$ref": "#/$defs/ClassificationRuleApplied" }
+  ],
+  "$defs": {
+    "CategoryCode": {
+      "enum": ["INCOME_SALARY", "INCOME_OTHER", "HOUSING_RENT", "HOUSING_UTILITIES", "FOOD_GROCERIES", "FOOD_RESTAURANTS", "MOBILITY_PUBLIC_TRANSPORT", "MOBILITY_FUEL", "HEALTH", "INSURANCE", "LEISURE", "SUBSCRIPTIONS", "EDUCATION", "FEES", "TAXES", "OTHER_EXPENSE", "UNCLASSIFIED"]
+    },
+    "Base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "event_id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "occurred_at", "correlation_id", "causation_id", "payload"],
+      "properties": {
+        "schema_version": { "const": "1.0.0" },
+        "event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "event_type": { "type": "string" },
+        "aggregate_type": { "enum": ["Transaction", "ClassificationRule"] },
+        "aggregate_id": { "type": "string", "minLength": 6 },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "correlation_id": { "type": "string" },
+        "causation_id": { "type": "string" },
+        "payload": { "type": "object" }
+      }
+    },
+    "ProposalPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction_id", "normalized_event_id", "category_code", "confidence", "status", "policy_version", "ruleset_hash", "matching_rule_ids"],
+      "properties": {
+        "transaction_id": { "type": "string" },
+        "normalized_event_id": { "type": "string" },
+        "category_code": { "$ref": "#/$defs/CategoryCode" },
+        "confidence": { "type": "string", "pattern": "^(?:0(?:\\.0)?|1(?:\\.0)?)$" },
+        "status": { "enum": ["PROPOSED", "CONFLICT", "UNCLASSIFIED"] },
+        "policy_version": { "const": "rules@1.0.0" },
+        "ruleset_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "matching_rule_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "DecisionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction_id", "normalized_event_id", "category_code", "status", "confirmed_by", "policy_version"],
+      "properties": {
+        "transaction_id": { "type": "string" },
+        "normalized_event_id": { "type": "string" },
+        "category_code": { "$ref": "#/$defs/CategoryCode" },
+        "status": { "const": "CONFIRMED" },
+        "confirmed_by": { "const": "USER" },
+        "policy_version": { "const": "rules@1.0.0" }
+      }
+    },
+    "RejectionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction_id", "proposed_event_id", "category_code", "status", "rejected_by"],
+      "properties": {
+        "transaction_id": { "type": "string" },
+        "proposed_event_id": { "type": "string" },
+        "category_code": { "$ref": "#/$defs/CategoryCode" },
+        "status": { "const": "REJECTED" },
+        "rejected_by": { "const": "USER" }
+      }
+    },
+    "RulePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "rule_version", "field", "operator", "value", "category_code", "priority"],
+      "properties": {
+        "rule_id": { "type": "string" },
+        "rule_version": { "type": "integer", "minimum": 1 },
+        "field": { "enum": ["counterparty", "normalized_description"] },
+        "operator": { "enum": ["CONTAINS", "EQUALS", "STARTS_WITH"] },
+        "value": { "type": "string", "minLength": 1 },
+        "category_code": { "$ref": "#/$defs/CategoryCode" },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 1000 }
+      }
+    },
+    "RuleAppliedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction_id", "rule_id", "rule_version", "category_code"],
+      "properties": {
+        "transaction_id": { "type": "string" },
+        "rule_id": { "type": "string" },
+        "rule_version": { "type": "integer", "minimum": 1 },
+        "category_code": { "$ref": "#/$defs/CategoryCode" }
+      }
+    },
+    "TransactionClassificationProposed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "TransactionClassificationProposed" }, "aggregate_type": { "const": "Transaction" }, "payload": { "$ref": "#/$defs/ProposalPayload" } } }] },
+    "TransactionClassificationConfirmed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "TransactionClassificationConfirmed" }, "aggregate_type": { "const": "Transaction" }, "payload": { "$ref": "#/$defs/DecisionPayload" } } }] },
+    "TransactionClassificationRejected": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "TransactionClassificationRejected" }, "aggregate_type": { "const": "Transaction" }, "payload": { "$ref": "#/$defs/RejectionPayload" } } }] },
+    "ClassificationRuleCreated": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ClassificationRuleCreated" }, "aggregate_type": { "const": "ClassificationRule" }, "payload": { "$ref": "#/$defs/RulePayload" } } }] },
+    "ClassificationRuleApplied": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ClassificationRuleApplied" }, "aggregate_type": { "const": "Transaction" }, "payload": { "$ref": "#/$defs/RuleAppliedPayload" } } }] }
+  }
+}
