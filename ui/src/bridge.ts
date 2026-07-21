@@ -14,7 +14,12 @@ declare global {
 }
 
 const supportedCommands = new Set([
-  "ImportTransactions", "ClassifyTransactions", "ConfirmClassification",
+  "ImportTransactions", "AnalyzeImportFile", "MapImportSections",
+  "ImportMappedSections", "RecordOpeningBalance", "RecordClosingBalance",
+  "RecordOpeningSecurityPosition", "ReconcileImportedPeriodBalance",
+  "DetectInvestmentFundingRelations", "ConfirmInvestmentFundingRelation",
+  "RejectInvestmentFundingRelation", "BreakInvestmentFundingRelation",
+  "ClassifyTransactions", "ConfirmClassification",
   "RejectClassification", "CreateClassificationRule", "DetectDuplicates",
   "ConfirmDuplicate", "RejectDuplicate", "DetectTransfers", "ConfirmTransfer",
   "RejectTransfer", "BreakTransferMatch", "DetectRefunds", "ConfirmRefund",

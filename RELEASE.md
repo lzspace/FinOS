@@ -1,4 +1,4 @@
-# Release procedure 1.0.0
+# Release procedure 1.1.0
 
 1. Use the exact Python and npm dependency versions declared in
    `pyproject.toml`, `requirements-runtime.lock`, `package.json` and
@@ -23,8 +23,9 @@
 7. In an isolated environment install the wheel and its pinned dependencies
    from a local wheelhouse using `--no-index`. Run `finance-acceptance`; the
    command refuses execution from the repository source tree. It creates only
-   synthetic data, exercises every MVP domain, restarts, restores, rotates the
-   key and compares the complete projection snapshot.
+   synthetic data, exercises every MVP domain including the German
+   multi-account import, restarts, restores, rotates the key and compares the
+   complete projection snapshot.
 
 The release manifest records application and supported versions, artifact
 hashes, build environment, offline requirement, integrity roots, SBOM hashes,

@@ -340,10 +340,67 @@ function Imports() {
   const result = useFinanceQuery<{ imports: Array<Record<string, string>> }>("ListImportBatches");
   const [message, setMessage] = useState("");
   const [sourcePath, setSourcePath] = useState<string | null>(null);
-  const [accountId, setAccountId] = useState("acc_01");
-  const choose = async () => { const path = await financeBridge.selectImportFile(); setSourcePath(path); setMessage(path ? "CSV wurde lokal ausgewählt. Prüfe das Zielkonto und bestätige den Import." : "Die lokale Dateiauswahl ist nur im Desktop-Wrapper verfügbar."); };
-  const runImport = async () => { if (!sourcePath) return; await financeBridge.command("ImportTransactions", { source_file_path: sourcePath, account_id: accountId }); setMessage("CSV wurde lokal importiert und normalisiert."); setSourcePath(null); };
-  return <><section className="import-hero panel"><span className="import-icon">⇩</span><div><h2>CSV lokal importieren</h2><p>Originaldateien werden verschlüsselt gespeichert. Die UI erhält nur einen kontrollierten Dateipfad über Desktop IPC.</p>{sourcePath && <div className="import-confirm"><span>Ausgewählte lokale Datei</span><strong>{sourcePath.split(/[\\/]/).pop()}</strong><label>Zielkonto<input value={accountId} onChange={(event) => setAccountId(event.target.value)} /></label><button className="primary" onClick={runImport}>Import bestätigen</button></div>}</div><button className="primary" onClick={choose}>CSV auswählen</button></section>{message && <div className="toast" role="status">{message}</div>}<QueryBoundary result={result}>{({ imports }) => <section className="panel table-panel"><PanelHeader title="Importhistorie" subtitle="Inhaltshashes statt Quelldateien"/><table><thead><tr><th>Import</th><th>Zeitpunkt</th><th>Parser</th><th>Status</th><th>Inhaltshash</th></tr></thead><tbody>{imports.map((item) => <tr key={item.import_id}><td><strong>{item.import_id}</strong></td><td>{date(item.created_at)}</td><td>{item.parser_version}</td><td><span className="status-badge confirmed">{item.status}</span></td><td><code>{item.content_hash}</code></td></tr>)}</tbody></table></section>}</QueryBoundary></>;
+  const [step, setStep] = useState(1);
+  const [busy, setBusy] = useState(false);
+  const [analysis, setAnalysis] = useState<Record<string, unknown> | null>(null);
+  const [accountsBySection, setAccountsBySection] = useState<Record<string, string>>({});
+  const [openingByAccount, setOpeningByAccount] = useState<Record<string, string>>({});
+  const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null);
+  const sections = (analysis?.sections as Array<Record<string, unknown>> | undefined) ?? [];
+  const analysisId = String(analysis?.analysis_id ?? "");
+  const priorDate = analysis?.period_start
+    ? new Date(new Date(String(analysis.period_start)).getTime() - 86_400_000).toISOString().slice(0, 10)
+    : "";
+  const choose = async () => {
+    const path = await financeBridge.selectImportFile();
+    setSourcePath(path);
+    if (!path) { setMessage("Die lokale Dateiauswahl ist nur im Desktop-Wrapper verfügbar."); return; }
+    setBusy(true); setMessage("");
+    try {
+      const response = await financeBridge.command("AnalyzeImportFile", { source_file_path: path, requested_profile: "GermanMultiAccountCsvV1" }) as { result?: Record<string, unknown> };
+      setAnalysis(response.result ?? null); setStep(2); setMessage("Datei wurde ausschließlich lokal analysiert.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Importanalyse fehlgeschlagen."); }
+    finally { setBusy(false); }
+  };
+  const mapSections = async () => {
+    const mappings = sections.map((section) => ({
+      section_id: section.section_id,
+      account_id: section.section_type === "UNKNOWN" ? null : accountsBySection[String(section.section_id)],
+      action: section.section_type === "UNKNOWN" ? "SKIP_SECTION" : "USE_EXISTING_ACCOUNT",
+    }));
+    if (mappings.some((item) => item.action !== "SKIP_SECTION" && !item.account_id)) { setMessage("Ordne jedem unterstützten Abschnitt ein lokales Konto zu."); return; }
+    setBusy(true);
+    try { await financeBridge.command("MapImportSections", { analysis_id: analysisId, section_mappings: mappings }); setStep(3); setMessage("Abschnittszuordnung wurde als Event gespeichert."); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Kontenzuordnung fehlgeschlagen."); }
+    finally { setBusy(false); }
+  };
+  const recordOpenings = async () => {
+    const cashSections = sections.filter((section) => section.section_type === "CHECKING_TRANSACTIONS" || section.section_type === "SAVINGS_TRANSACTIONS");
+    if (cashSections.some((section) => !openingByAccount[accountsBySection[String(section.section_id)]])) { setMessage("Bestätige für Giro- und Tagesgeldkonten einen Anfangssaldo."); return; }
+    setBusy(true);
+    try {
+      for (const section of cashSections) {
+        const accountId = accountsBySection[String(section.section_id)];
+        await financeBridge.command("RecordOpeningBalance", { account_id: accountId, balance_date: priorDate, booked_balance: openingByAccount[accountId], available_balance: null, currency: "EUR", source: "MANUAL_ENTRY", confirmation: true, comment: "Im Importassistenten bestätigt" });
+      }
+      setStep(4); setMessage("Anfangswerte wurden explizit bestätigt.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Anfangssaldo konnte nicht gespeichert werden."); }
+    finally { setBusy(false); }
+  };
+  const execute = async () => {
+    setBusy(true);
+    try {
+      const response = await financeBridge.command("ImportMappedSections", { analysis_id: analysisId, parser_profile: "GermanMultiAccountCsvV1", parser_version: "1.0.0", import_mode: "IMPORT_NEW" }) as { result?: Record<string, unknown> };
+      setImportResult(response.result ?? null); setStep(5); setMessage("Multi-Account-Import wurde lokal abgeschlossen.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Import fehlgeschlagen."); }
+    finally { setBusy(false); }
+  };
+  return <>
+    <section className="import-hero panel"><span className="import-icon">⇩</span><div><h2>Deutschen Multi-Account-Export importieren</h2><p>CP1252/UTF-8, Semikolon, deutsche Beträge und getrennte Giro-, Tagesgeld- und Depotabschnitte. Originaldateien werden verschlüsselt gespeichert.</p><div className="review-tabs" aria-label="Importschritte">{["Datei", "Abschnitte", "Anfangswerte", "Vorschau", "Ergebnis"].map((title, index) => <span key={title} className={step === index + 1 ? "status-badge confirmed" : "status-badge"}>{index + 1}. {title}</span>)}</div></div><button className="primary" disabled={busy} onClick={choose}>{sourcePath ? "Andere CSV wählen" : "CSV auswählen"}</button></section>
+    {message && <div className="toast" role="status">{message}</div>}
+    {analysis && step >= 2 && <section className="panel"><PanelHeader title={sourcePath?.split(/[\\/]/).pop() ?? "Analysierte Datei"} subtitle={`${String(analysis.detected_profile)} · ${String(analysis.encoding)} · ${String(analysis.period_start ?? "–")} bis ${String(analysis.period_end ?? "–")}`} /><p><code>{String(analysis.file_hash)}</code> · {String(analysis.file_size)} Bytes</p>{step === 2 && <><div className="account-grid">{sections.map((section) => <article className="summary-card" key={String(section.section_id)}><span className="eyebrow">{String(section.section_type)}</span><h3>{String(section.original_title)}</h3><p>{String(section.record_count)} Buchungen · {section.empty ? "leer, gültig" : "Daten erkannt"}</p>{section.section_type === "UNKNOWN" ? <span className="status-badge missed">WIRD ÜBERSPRUNGEN</span> : <label>Lokales Konto<input value={accountsBySection[String(section.section_id)] ?? ""} onChange={(event) => setAccountsBySection((current) => ({ ...current, [String(section.section_id)]: event.target.value }))} placeholder="acc_…" /></label>}</article>)}</div><button className="primary" disabled={busy} onClick={mapSections}>Zuordnung bestätigen</button></>}{step === 3 && <><h3>Anfangswerte zum {priorDate}</h3>{sections.filter((section) => section.section_type === "CHECKING_TRANSACTIONS" || section.section_type === "SAVINGS_TRANSACTIONS").map((section) => { const accountId = accountsBySection[String(section.section_id)]; return <label key={accountId}>{String(section.original_title)} · {accountId}<input inputMode="decimal" value={openingByAccount[accountId] ?? ""} onChange={(event) => setOpeningByAccount((current) => ({ ...current, [accountId]: event.target.value }))} placeholder="0.00" /></label>; })}<p>Für das Depot gilt: keine Anfangspositionen. Bestehende Positionen müssen vor dem Import separat erfasst werden.</p><button className="primary" disabled={busy} onClick={recordOpenings}>Anfangswerte bestätigen</button></>}{step === 4 && <><h3>Importvorschau</h3><div className="metric-grid">{sections.map((section) => <article className="metric" key={String(section.section_id)}><span>{String(section.original_title)}</span><strong>{String(section.record_count)}</strong><small>{section.empty ? "EMPTY_COMPLETED" : "erkannte Datensätze"}</small></article>)}</div><p>Es erfolgen keine automatische Saldenkorrektur und keine heuristische Verarbeitung unbekannter Abschnitte.</p><button className="primary" disabled={busy} onClick={execute}>Import verbindlich ausführen</button></>}{step === 5 && importResult && <><h3>Importergebnis</h3><div className="metric-grid"><Metric label="Kontobuchungen" value={String(importResult.normalized_transaction_count ?? 0)} tone="neutral" note="normalisiert" /><Metric label="Depotbuchungen" value={String(importResult.security_transaction_count ?? 0)} tone="neutral" note="separat" /><Metric label="Leere Abschnitte" value={String(importResult.empty_section_count ?? 0)} tone="neutral" note="gültig" /><Metric label="Status" value={String(importResult.status ?? "COMPLETED")} tone="positive" note="lokal" /></div></>}</section>}
+    <QueryBoundary result={result}>{({ imports }) => <section className="panel table-panel"><PanelHeader title="Importhistorie" subtitle="Inhaltshashes statt Quelldateien"/><table><thead><tr><th>Import</th><th>Zeitpunkt</th><th>Parser</th><th>Status</th><th>Inhaltshash</th></tr></thead><tbody>{imports.map((item) => <tr key={item.import_id}><td><strong>{item.import_id}</strong></td><td>{date(item.created_at)}</td><td>{item.parser_version}</td><td><span className="status-badge confirmed">{item.status}</span></td><td><code>{item.content_hash}</code></td></tr>)}</tbody></table></section>}</QueryBoundary>
+  </>;
 }
 
 function Settings({ manifest }: { manifest: CapabilityManifest }) {

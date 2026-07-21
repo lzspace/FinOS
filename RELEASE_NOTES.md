@@ -1,4 +1,30 @@
-# Agent OS Finance 1.0.0
+# Agent OS Finance 1.1.0
+
+Version 1.1.0 adds the explicit `GermanMultiAccountCsvV1` profile for local
+German bank exports. It analyzes CP1252 or UTF-8 semicolon files before import,
+detects checking, savings and brokerage sections, requires explicit account
+mapping and confirmed opening balances, handles empty sections, and normalizes
+cash and security transactions as separate event streams.
+
+Opening and reported closing balances remain independent snapshots. Period
+reconciliation reports calculated and reported balances plus any difference
+without correcting it. Matching checking debits and brokerage purchases can be
+confirmed as `INVESTMENT_FUNDING`, which keeps both account-level records while
+excluding the pure asset transfer from consumption cashflow.
+
+The store stays at schema 3. Contract package 1.2.0 is additive and remains
+compatible with existing 1.0.0 workspaces. No real bank file is included in
+tests, source archives or release artifacts.
+
+Supported import profiles:
+
+- `GenericFinanceCsvV1`
+- `GermanMultiAccountCsvV1` version 1.0.0
+
+Not included are bank connectivity, heuristic CSV detection, PDF/OCR, live
+prices, foreign-currency security valuation, taxes or cloud synchronization.
+
+## 1.0.0
 
 Agent OS Finance 1.0.0 is a fully local personal-finance MVP. It imports the
 defined generic CSV format and provides deterministic transaction

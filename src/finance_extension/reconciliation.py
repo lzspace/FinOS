@@ -547,6 +547,13 @@ def reconciled_transactions(store: LocalFinanceStore) -> dict[str, dict[str, Any
             event["payload"]["incoming_transaction_id"],
         )
     }
+    investment_funding_ids = {
+        event["payload"]["cash_transaction_id"]
+        for event in store.events("InvestmentFundingRelationConfirmed")
+        if event["payload"]["status"] == "CONFIRMED"
+    }
+    for event in store.events("InvestmentFundingRelationBroken"):
+        investment_funding_ids.discard(event["payload"]["cash_transaction_id"])
     refund_by_id: dict[str, dict[str, Any]] = {}
     refund_total_by_original: dict[str, Decimal] = {}
     for event in refunds.values():
@@ -561,20 +568,35 @@ def reconciled_transactions(store: LocalFinanceStore) -> dict[str, dict[str, Any
         amount = Decimal(transaction["amount"])
         duplicate = transaction_id in duplicate_ids
         transfer = transaction_id in transfer_ids
+        investment_funding = transaction_id in investment_funding_ids
         is_refund = transaction_id in refund_by_id
-        effective = Decimal("0") if duplicate or transfer or is_refund else amount
-        if transaction_id in refund_total_by_original and not duplicate and not transfer:
+        effective = (
+            Decimal("0")
+            if duplicate or transfer or investment_funding or is_refund
+            else amount
+        )
+        if (
+            transaction_id in refund_total_by_original
+            and not duplicate
+            and not transfer
+            and not investment_funding
+        ):
             effective += refund_total_by_original[transaction_id]
         result[transaction_id] = {
             "transaction_id": transaction_id,
             "duplicate_status": "CONFIRMED" if duplicate else "NONE",
             "transfer_status": "CONFIRMED" if transfer else "NONE",
+            "investment_funding_status": "CONFIRMED" if investment_funding else "NONE",
             "refund_status": "REFUND"
             if is_refund
             else ("REFUNDED" if transaction_id in refund_total_by_original else "NONE"),
             "effective_amount": effective,
-            "cashflow_relevant": not (duplicate or transfer or is_refund),
-            "category_relevant": not (duplicate or transfer or is_refund),
+            "cashflow_relevant": not (
+                duplicate or transfer or investment_funding or is_refund
+            ),
+            "category_relevant": not (
+                duplicate or transfer or investment_funding or is_refund
+            ),
         }
     return result
 
@@ -595,7 +617,11 @@ def reconciled_monthly_cashflow(store: LocalFinanceStore, month: str) -> dict[st
         view = projected[transaction_id]
         if view["duplicate_status"] == "CONFIRMED":
             excluded_duplicates += abs(amount)
-        elif view["transfer_status"] != "CONFIRMED" and view["refund_status"] != "REFUND":
+        elif (
+            view["transfer_status"] != "CONFIRMED"
+            and view["investment_funding_status"] != "CONFIRMED"
+            and view["refund_status"] != "REFUND"
+        ):
             effective_income += max(amount, Decimal("0"))
             effective_expenses += max(-amount, Decimal("0"))
     for event in refunds.values():

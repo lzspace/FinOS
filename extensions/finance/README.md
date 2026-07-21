@@ -1,11 +1,12 @@
-# Finance Extension contracts and MVP v1.0.0
+# Finance Extension contracts v1.1.0
 
 This directory turns the agreed finance domain model into executable interface
 contracts. It deliberately contains no production finance data and has no
 network dependency.
 
 Version 0.2.0 adds an executable local vertical slice in the repository-level
-`src/finance_extension/` package: strict `GenericFinanceCsvV1` input, immutable
+`src/finance_extension/` package: strict `GenericFinanceCsvV1` and
+`GermanMultiAccountCsvV1` input, immutable
 raw events, normalized transactions and a monthly cashflow projection. The
 encrypted store and import files are deliberately outside this repository.
 

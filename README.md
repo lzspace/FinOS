@@ -24,7 +24,7 @@ without network access from a verified local artifact:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install --no-index /absolute/release/agent_os_finance-1.0.0-py3-none-any.whl
+.venv/bin/pip install --no-index /absolute/release/agent_os_finance-1.1.0-py3-none-any.whl
 ```
 
 Production keys live in the OS credential store. The database identity is
@@ -34,9 +34,9 @@ Production keys live in the OS credential store. The database identity is
 and are not production key recovery mechanisms. Losing both the store key and
 a usable archive key makes encrypted data unrecoverable.
 
-## Agent OS Finance 1.0.0
+## Agent OS Finance 1.1.0
 
-Agent OS Finance 1.0.0 ist eine vollständig lokal betriebene persönliche
+Agent OS Finance 1.1.0 ist eine vollständig lokal betriebene persönliche
 Finanzanwendung. Sie unterstützt das definierte CSV-Importformat,
 Transaktionsklassifikation, Dubletten-, Transfer- und Erstattungsbereinigung,
 wiederkehrende Zahlungen, Cashflow- und Monatsprognosen, Konten, Salden,
@@ -49,7 +49,7 @@ Supportgrenzen stehen in [`SUPPORT.md`](SUPPORT.md), der finale Abnahmelauf in
 [`ACCEPTANCE.md`](ACCEPTANCE.md) und die Änderungen in
 [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
-## Vertical Slices 0.2.0 through 1.0.0
+## Vertical Slices 0.2.0 through 1.1.0
 
 The first executable slice supports only `GenericFinanceCsvV1`:
 
@@ -66,6 +66,29 @@ OS credential store under service `agent-os.finance`, username `database`, then:
 finance --data-dir /absolute/local/finance-data import /absolute/input.csv --account acc_01
 finance --data-dir /absolute/local/finance-data cashflow --month 2026-07
 ```
+
+Version 1.1.0 additionally supports the explicit German multi-account profile
+`GermanMultiAccountCsvV1` with CP1252/UTF-8, semicolon delimiters, German dates
+and decimal values, checking/savings/brokerage sections and opening-balance
+reconciliation:
+
+```bash
+finance --data-dir /absolute/local/finance-data import analyze /absolute/export.csv
+finance --data-dir /absolute/local/finance-data import map-sections \
+  --analysis analysis_HASH \
+  --section section_CHECKING=acc_checking \
+  --section section_SAVINGS=acc_savings \
+  --section section_BROKERAGE=acc_brokerage
+finance --data-dir /absolute/local/finance-data balance opening record \
+  --account acc_checking --date 2024-11-30 --amount 2450.83 --source manual
+finance --data-dir /absolute/local/finance-data import execute \
+  --analysis analysis_HASH
+finance --data-dir /absolute/local/finance-data reconcile balance \
+  --account acc_checking --from 2024-12-01 --to 2024-12-31
+```
+
+Unknown sections must be explicitly skipped with `section_ID=SKIP`; they are
+never interpreted heuristically. Checked-in parser fixtures are synthetic.
 
 The test-only `FINANCE_TEST_KEY` environment variable is intentionally limited
 to synthetic test data. Cashflow treats every positive amount as income and

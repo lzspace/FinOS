@@ -1,4 +1,4 @@
-"""Wheel-contained end-to-end acceptance scenario for the 1.0.0 release."""
+"""Wheel-contained end-to-end acceptance scenario for the 1.1.0 release."""
 
 from __future__ import annotations
 
@@ -41,6 +41,22 @@ from .forecasting import (
     recurring_patterns,
 )
 from .importer import import_csv, normalize_batch
+from .multi_account_import import (
+    analyze_import_file,
+    closing_balances,
+    confirm_investment_funding_relation,
+    detect_investment_funding_relations,
+    import_mapped_sections,
+    imported_period_reconciliations,
+    investment_funding_relations,
+    map_import_sections,
+    opening_balances,
+    reconcile_imported_period_balance,
+    record_closing_balance,
+    record_opening_balance,
+    security_positions,
+    security_transactions,
+)
 from .reconciliation import (
     confirm_duplicate,
     confirm_refund,
@@ -145,6 +161,15 @@ def _projection_snapshot(store: LocalFinanceStore) -> dict[str, Any]:
         "liquidity": liquidity_overview(store, "EUR", "2026-07-20"),
         "net_worth": net_worth_overview(store, "EUR", "2026-07-20"),
         "asset_allocation": asset_allocation(store, "EUR"),
+        "import_analyses": [
+            event["payload"] for event in store.events("ImportFileAnalyzed")
+        ],
+        "opening_balances": opening_balances(store),
+        "closing_balances": closing_balances(store),
+        "security_transactions": security_transactions(store),
+        "security_positions": security_positions(store),
+        "investment_funding_relations": investment_funding_relations(store),
+        "imported_period_reconciliations": imported_period_reconciliations(store),
     }
     return _json_safe(snapshot)
 
@@ -160,7 +185,7 @@ def run_acceptance(
     require_installed_wheel: bool = False,
     wheel_sha256: str | None = None,
 ) -> dict[str, Any]:
-    if __version__ != "1.0.0":
+    if __version__ != "1.1.0":
         raise AssertionError("FINANCE_ACCEPTANCE_VERSION_MISMATCH")
     source_kind = "INSTALLED_WHEEL" if "site-packages" in Path(__file__).parts else "SOURCE_TREE"
     if require_installed_wheel and source_kind != "INSTALLED_WHEEL":
@@ -193,6 +218,33 @@ def run_acceptance(
             account_id="acc_main",
             display_name="Synthetic Checking",
             account_type="CHECKING",
+            institution="Local Test Bank",
+            currency="EUR",
+            opened_at="2024-01-01",
+        )
+        create_account(
+            store,
+            account_id="acc_import_checking",
+            display_name="Synthetic Import Checking",
+            account_type="CHECKING",
+            institution="Local Test Bank",
+            currency="EUR",
+            opened_at="2024-01-01",
+        )
+        create_account(
+            store,
+            account_id="acc_import_savings",
+            display_name="Synthetic Import Savings",
+            account_type="SAVINGS",
+            institution="Local Test Bank",
+            currency="EUR",
+            opened_at="2024-01-01",
+        )
+        create_account(
+            store,
+            account_id="acc_import_brokerage",
+            display_name="Synthetic Import Brokerage",
+            account_type="BROKERAGE",
             institution="Local Test Bank",
             currency="EUR",
             opened_at="2024-01-01",
@@ -257,6 +309,78 @@ def run_acceptance(
             "acc_savings",
             ["2026-07-11,2026-07-11,500.00,EUR,Own Account,Transfer"],
         )
+
+        german_source = root / "synthetic-german-multi-account.csv"
+        german_source.write_bytes(
+            (
+                "Umsätze Girokonto\n"
+                "Buchungstag;Wertstellung (Valuta);Vorgang;Buchungstext;Umsatz in EUR\n"
+                "01.12.24;02.12.24;Lastschrift/Belastung;Synthetischer Einkauf;-36,85\n"
+                "05.12.24;06.12.24;Wertpapiere;Kauf Fonds WKN ABC123;-1.000,00\n\n"
+                "Umsätze Tagesgeld PLUS-Konto\nKeine Umsätze vorhanden.\n\n"
+                "Umsätze Depot\n"
+                "Buchungstag;Geschäftstag;Stück / Nom.;Bezeichnung;WKN;Währung;Ausführungskurs;Umsatz in EUR\n"
+                "06.12.24;05.12.24;10;Synthetischer Fonds;ABC123;EUR;100,00;-1.000,00\n"
+            ).encode("cp1252")
+        )
+        analysis = analyze_import_file(store, german_source)
+        account_by_section = {
+            "CHECKING_TRANSACTIONS": "acc_import_checking",
+            "SAVINGS_TRANSACTIONS": "acc_import_savings",
+            "BROKERAGE_TRANSACTIONS": "acc_import_brokerage",
+        }
+        map_import_sections(
+            store,
+            analysis["analysis_id"],
+            [
+                {
+                    "section_id": section["section_id"],
+                    "account_id": account_by_section[section["section_type"]],
+                    "action": "USE_EXISTING_ACCOUNT",
+                }
+                for section in analysis["sections"]
+            ],
+        )
+        for account_id, amount in (
+            ("acc_import_checking", "3500.00"),
+            ("acc_import_savings", "5000.00"),
+        ):
+            record_opening_balance(
+                store,
+                account_id=account_id,
+                balance_date="2024-11-30",
+                booked_balance=amount,
+                available_balance=None,
+                currency="EUR",
+                source="MANUAL_ENTRY",
+                confirmation=True,
+                comment="Synthetic acceptance balance",
+            )
+        multi_result = import_mapped_sections(store, analysis["analysis_id"])
+        if multi_result["normalized_transaction_count"] != 2:
+            raise AssertionError("FINANCE_ACCEPTANCE_MULTI_IMPORT_FAILED")
+        if detect_investment_funding_relations(store) != 1:
+            raise AssertionError("FINANCE_ACCEPTANCE_INVESTMENT_MATCH_FAILED")
+        funding_id = next(iter(investment_funding_relations(store)))
+        confirm_investment_funding_relation(store, funding_id)
+        record_closing_balance(
+            store,
+            account_id="acc_import_checking",
+            balance_date="2024-12-31",
+            booked_balance="2463.15",
+            available_balance=None,
+            currency="EUR",
+            source="BANK_STATEMENT",
+            confirmation=True,
+        )
+        imported_balance = reconcile_imported_period_balance(
+            store,
+            account_id="acc_import_checking",
+            period_start="2024-12-01",
+            period_end="2024-12-31",
+        )
+        if imported_balance["status"] != "MATCHED":
+            raise AssertionError("FINANCE_ACCEPTANCE_IMPORTED_BALANCE_FAILED")
 
         for value, category in (
             ("Employer Synthetic", "INCOME_SALARY"),

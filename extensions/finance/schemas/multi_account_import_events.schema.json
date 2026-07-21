@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/multi_account_import_events.schema.json",
+  "title": "German multi-account import events 1.0.0",
+  "allOf": [
+    { "$ref": "#/$defs/EventBase" },
+    {
+      "oneOf": [
+        { "$ref": "#/$defs/ImportFileAnalyzed" },
+        { "$ref": "#/$defs/ImportSectionMapped" },
+        { "$ref": "#/$defs/ImportSectionSkipped" },
+        { "$ref": "#/$defs/EmptyImportSectionProcessed" },
+        { "$ref": "#/$defs/OpeningBalanceRecorded" },
+        { "$ref": "#/$defs/ClosingBalanceRecorded" },
+        { "$ref": "#/$defs/SecurityTransactionNormalized" },
+        { "$ref": "#/$defs/OpeningSecurityPositionRecorded" },
+        { "$ref": "#/$defs/InvestmentFundingRelationProposed" },
+        { "$ref": "#/$defs/InvestmentFundingRelationConfirmed" },
+        { "$ref": "#/$defs/InvestmentFundingRelationRejected" },
+        { "$ref": "#/$defs/InvestmentFundingRelationBroken" },
+        { "$ref": "#/$defs/ImportedPeriodBalanceReconciled" }
+      ]
+    }
+  ],
+  "$defs": {
+    "EventBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "event_id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "occurred_at", "correlation_id", "causation_id", "payload"],
+      "properties": {
+        "schema_version": { "const": "1.0.0" },
+        "event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "event_type": { "type": "string" },
+        "aggregate_type": { "type": "string" },
+        "aggregate_id": { "type": "string", "minLength": 1 },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "correlation_id": { "type": "string", "minLength": 1 },
+        "causation_id": { "type": "string", "minLength": 1 },
+        "payload": { "type": "object" }
+      }
+    },
+    "ImportSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section_id", "section_type", "original_title", "period_start", "period_end", "record_count", "empty", "detected_columns", "proposed_account_type", "import_supported", "warnings"],
+      "properties": {
+        "section_id": { "type": "string" },
+        "section_type": { "enum": ["CHECKING_TRANSACTIONS", "SAVINGS_TRANSACTIONS", "BROKERAGE_TRANSACTIONS", "UNKNOWN"] },
+        "original_title": { "type": "string" },
+        "period_start": { "type": ["string", "null"], "format": "date" },
+        "period_end": { "type": ["string", "null"], "format": "date" },
+        "record_count": { "type": "integer", "minimum": 0 },
+        "empty": { "type": "boolean" },
+        "detected_columns": { "type": "array", "items": { "type": "string" } },
+        "proposed_account_type": { "type": ["string", "null"] },
+        "import_supported": { "type": "boolean" },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ImportFileAnalyzed": {
+      "properties": {
+        "event_type": { "const": "ImportFileAnalyzed" },
+        "aggregate_type": { "const": "ImportAnalysis" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["analysis_id", "detected_profile", "profile_version", "encoding", "delimiter", "period_start", "period_end", "sections", "warnings", "file_hash", "file_size", "status"],
+          "properties": {
+            "analysis_id": { "type": "string" },
+            "detected_profile": { "const": "GermanMultiAccountCsvV1" },
+            "profile_version": { "const": "1.0.0" },
+            "encoding": { "enum": ["cp1252", "utf-8"] },
+            "delimiter": { "const": ";" },
+            "period_start": { "type": ["string", "null"], "format": "date" },
+            "period_end": { "type": ["string", "null"], "format": "date" },
+            "sections": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ImportSection" } },
+            "warnings": { "type": "array", "items": { "type": "string" } },
+            "file_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "file_size": { "type": "integer", "minimum": 1 },
+            "status": { "const": "ANALYZED" }
+          }
+        }
+      },
+      "required": ["event_type", "aggregate_type", "payload"]
+    },
+    "MappingPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["analysis_id", "section_id", "section_type", "account_id", "action", "status", "mapped_at"],
+      "properties": {
+        "analysis_id": { "type": "string" },
+        "section_id": { "type": "string" },
+        "section_type": { "enum": ["CHECKING_TRANSACTIONS", "SAVINGS_TRANSACTIONS", "BROKERAGE_TRANSACTIONS", "UNKNOWN"] },
+        "account_id": { "type": ["string", "null"] },
+        "action": { "enum": ["USE_EXISTING_ACCOUNT", "CREATE_ACCOUNT", "SKIP_SECTION"] },
+        "status": { "enum": ["MAPPED", "SKIPPED"] },
+        "mapped_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ImportSectionMapped": { "properties": { "event_type": { "const": "ImportSectionMapped" }, "aggregate_type": { "const": "ImportSectionMapping" }, "payload": { "$ref": "#/$defs/MappingPayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ImportSectionSkipped": { "properties": { "event_type": { "const": "ImportSectionSkipped" }, "aggregate_type": { "const": "ImportSectionMapping" }, "payload": { "$ref": "#/$defs/MappingPayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "EmptyImportSectionProcessed": {
+      "properties": {
+        "event_type": { "const": "EmptyImportSectionProcessed" },
+        "aggregate_type": { "const": "ImportSection" },
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["import_batch_id", "analysis_id", "section_id", "account_id", "status"],
+          "properties": { "import_batch_id": { "type": "string" }, "analysis_id": { "type": "string" }, "section_id": { "type": "string" }, "account_id": { "type": "string" }, "status": { "const": "EMPTY_COMPLETED" } }
+        }
+      },
+      "required": ["event_type", "aggregate_type", "payload"]
+    },
+    "BalancePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["balance_id", "account_id", "balance_date", "booked_balance", "available_balance", "currency", "source", "confirmation", "comment", "recorded_at"],
+      "properties": {
+        "balance_id": { "type": "string" }, "account_id": { "type": "string" }, "balance_date": { "type": "string", "format": "date" },
+        "booked_balance": { "type": "string" }, "available_balance": { "type": ["string", "null"] }, "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "source": { "enum": ["BANK_STATEMENT", "BANK_EXPORT", "MANUAL_ENTRY", "PREVIOUS_SYSTEM", "CALCULATED"] }, "confirmation": { "type": "boolean" },
+        "comment": { "type": ["string", "null"] }, "recorded_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "OpeningBalanceRecorded": { "properties": { "event_type": { "const": "OpeningBalanceRecorded" }, "aggregate_type": { "const": "OpeningBalance" }, "payload": { "$ref": "#/$defs/BalancePayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ClosingBalanceRecorded": { "properties": { "event_type": { "const": "ClosingBalanceRecorded" }, "aggregate_type": { "const": "ClosingBalance" }, "payload": { "$ref": "#/$defs/BalancePayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "SecurityTransactionNormalized": {
+      "properties": {
+        "event_type": { "const": "SecurityTransactionNormalized" }, "aggregate_type": { "const": "SecurityTransaction" },
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["transaction_id", "import_batch_id", "section_id", "account_id", "booking_date", "trade_date", "security_name", "security_identifier_type", "security_identifier", "quantity", "execution_price", "price_currency", "settlement_amount", "settlement_currency", "transaction_type", "normalization_policy_version"],
+          "properties": {
+            "transaction_id": { "type": "string" }, "import_batch_id": { "type": "string" }, "section_id": { "type": "string" }, "account_id": { "type": "string" },
+            "booking_date": { "type": "string", "format": "date" }, "trade_date": { "type": "string", "format": "date" }, "security_name": { "type": "string" },
+            "security_identifier_type": { "enum": ["WKN", "ISIN", "OTHER"] }, "security_identifier": { "type": "string", "minLength": 1 }, "quantity": { "type": "string" },
+            "execution_price": { "type": "string" }, "price_currency": { "type": "string", "pattern": "^[A-Z]{3}$" }, "settlement_amount": { "type": "string" },
+            "settlement_currency": { "type": "string", "pattern": "^[A-Z]{3}$" }, "transaction_type": { "enum": ["INVESTMENT_PURCHASE", "INVESTMENT_SALE", "UNKNOWN_SECURITY_TRANSACTION"] },
+            "normalization_policy_version": { "const": "1.0.0" }
+          }
+        }
+      },
+      "required": ["event_type", "aggregate_type", "payload"]
+    },
+    "OpeningSecurityPositionRecorded": {
+      "properties": {
+        "event_type": { "const": "OpeningSecurityPositionRecorded" }, "aggregate_type": { "const": "SecurityPosition" },
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["position_id", "account_id", "valuation_date", "security_identifier_type", "security_identifier", "security_name", "quantity", "valuation_price", "price_currency", "market_value", "valuation_source", "confirmation"],
+          "properties": {
+            "position_id": { "type": "string" }, "account_id": { "type": "string" }, "valuation_date": { "type": "string", "format": "date" },
+            "security_identifier_type": { "enum": ["WKN", "ISIN", "OTHER"] }, "security_identifier": { "type": "string" }, "security_name": { "type": "string" },
+            "quantity": { "type": "string" }, "valuation_price": { "type": "string" }, "price_currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+            "market_value": { "type": "string" }, "valuation_source": { "type": "string" }, "confirmation": { "const": true }
+          }
+        }
+      },
+      "required": ["event_type", "aggregate_type", "payload"]
+    },
+    "FundingPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["relation_id", "cash_transaction_id", "security_transaction_id", "amount", "currency", "status", "matching_policy_version"],
+      "properties": {
+        "relation_id": { "type": "string" }, "cash_transaction_id": { "type": "string" }, "security_transaction_id": { "type": "string" },
+        "amount": { "type": "string" }, "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }, "status": { "enum": ["PROPOSED", "CONFIRMED", "REJECTED", "BROKEN"] },
+        "matching_policy_version": { "const": "investment-funding@1.0.0" }, "decided_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "InvestmentFundingRelationProposed": { "properties": { "event_type": { "const": "InvestmentFundingRelationProposed" }, "aggregate_type": { "const": "InvestmentFundingRelation" }, "payload": { "$ref": "#/$defs/FundingPayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "InvestmentFundingRelationConfirmed": { "properties": { "event_type": { "const": "InvestmentFundingRelationConfirmed" }, "aggregate_type": { "const": "InvestmentFundingRelation" }, "payload": { "$ref": "#/$defs/FundingPayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "InvestmentFundingRelationRejected": { "properties": { "event_type": { "const": "InvestmentFundingRelationRejected" }, "aggregate_type": { "const": "InvestmentFundingRelation" }, "payload": { "$ref": "#/$defs/FundingPayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "InvestmentFundingRelationBroken": { "properties": { "event_type": { "const": "InvestmentFundingRelationBroken" }, "aggregate_type": { "const": "InvestmentFundingRelation" }, "payload": { "$ref": "#/$defs/FundingPayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ImportedPeriodBalanceReconciled": {
+      "properties": {
+        "event_type": { "const": "ImportedPeriodBalanceReconciled" }, "aggregate_type": { "const": "ImportedPeriodBalance" },
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["reconciliation_id", "account_id", "period_start", "period_end", "opening_balance", "calculated_closing_balance", "reported_closing_balance", "balance_difference", "relevant_transaction_count", "status", "reconciled_at"],
+          "properties": {
+            "reconciliation_id": { "type": "string" }, "account_id": { "type": "string" }, "period_start": { "type": "string", "format": "date" }, "period_end": { "type": "string", "format": "date" },
+            "opening_balance": { "type": ["string", "null"] }, "calculated_closing_balance": { "type": ["string", "null"] }, "reported_closing_balance": { "type": ["string", "null"] },
+            "balance_difference": { "type": ["string", "null"] }, "relevant_transaction_count": { "type": "integer", "minimum": 0 },
+            "status": { "enum": ["MATCHED", "DIFFERENCE", "NO_REPORTED_CLOSING_BALANCE", "MISSING_OPENING_BALANCE", "INCOMPLETE_IMPORT", "REVIEW_REQUIRED"] },
+            "reconciled_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "required": ["event_type", "aggregate_type", "payload"]
+    }
+  }
+}

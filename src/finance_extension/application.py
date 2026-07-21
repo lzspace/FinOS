@@ -57,6 +57,27 @@ from .forecasting import (
     update_recurring_pattern,
 )
 from .importer import import_csv, normalize_batch
+from .multi_account_import import (
+    analyze_import_file,
+    break_investment_funding_relation,
+    confirm_investment_funding_relation,
+    detect_investment_funding_relations,
+    get_import_analysis,
+    get_import_section_preview,
+    import_mapped_sections,
+    imported_period_reconciliations,
+    initial_balance_requirements,
+    investment_funding_relations,
+    list_import_sections,
+    map_import_sections,
+    reconcile_imported_period_balance,
+    record_closing_balance,
+    record_opening_balance,
+    record_opening_security_position,
+    reject_investment_funding_relation,
+    security_positions,
+    security_transactions,
+)
 from .reconciliation import (
     break_transfer,
     confirm_duplicate,
@@ -101,6 +122,47 @@ class ApplicationContractError(ValueError):
 
 COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "ImportTransactions": ("source_file_path", "account_id"),
+    "AnalyzeImportFile": ("source_file_path", "requested_profile"),
+    "MapImportSections": ("analysis_id", "section_mappings"),
+    "ImportMappedSections": (
+        "analysis_id",
+        "parser_profile",
+        "parser_version",
+        "import_mode",
+    ),
+    "RecordOpeningBalance": (
+        "account_id",
+        "balance_date",
+        "booked_balance",
+        "currency",
+        "source",
+        "confirmation",
+    ),
+    "RecordClosingBalance": (
+        "account_id",
+        "balance_date",
+        "booked_balance",
+        "currency",
+        "source",
+        "confirmation",
+    ),
+    "RecordOpeningSecurityPosition": (
+        "account_id",
+        "valuation_date",
+        "security_identifier_type",
+        "security_identifier",
+        "security_name",
+        "quantity",
+        "valuation_price",
+        "price_currency",
+        "market_value",
+        "valuation_source",
+        "confirmation",
+    ),
+    "ReconcileImportedPeriodBalance": ("account_id", "period_start", "period_end"),
+    "ConfirmInvestmentFundingRelation": ("relation_id",),
+    "RejectInvestmentFundingRelation": ("relation_id",),
+    "BreakInvestmentFundingRelation": ("relation_id",),
     "ConfirmClassification": ("transaction_id", "category_code"),
     "RejectClassification": ("transaction_id",),
     "CreateClassificationRule": ("field", "operator", "value", "category_code", "priority"),
@@ -229,6 +291,14 @@ class FinanceApplicationService:
             "GetForecastEvaluation": self._forecast_evaluation,
             "ListImportBatches": self._import_batches,
             "GetImportBatch": self._import_batch,
+            "GetImportAnalysis": self._import_analysis,
+            "ListImportSections": self._import_sections,
+            "GetImportSectionPreview": self._import_section_preview,
+            "GetInitialBalanceRequirements": self._initial_balance_requirements,
+            "GetImportedPeriodReconciliation": self._imported_period_reconciliation,
+            "ListInvestmentFundingRelations": self._investment_funding_relations,
+            "GetSecurityTransaction": self._security_transaction,
+            "ListSecurityPositions": self._security_positions,
             "ListBackups": self._backups,
             "GetStoreIntegrity": self._store_integrity,
             "GetKeyStatus": self._key_status,
@@ -295,6 +365,8 @@ class FinanceApplicationService:
                 "schema_version": "1.0.0",
                 "capabilities": {
                     "imports": True,
+                    "multi_account_import": True,
+                    "security_transactions": True,
                     "classification": True,
                     "reconciliation": True,
                     "recurring_patterns": True,
@@ -677,6 +749,77 @@ class FinanceApplicationService:
         ).fetchone()
         return self._envelope(dict(row) if row else None, status="READY" if row else "EMPTY")
 
+    def _import_analysis(self, payload: dict[str, Any]) -> dict[str, Any]:
+        row = get_import_analysis(
+            self._store, _require_identifier(payload, "analysis_id")
+        )
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
+    def _import_sections(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rows = list_import_sections(
+            self._store, _require_identifier(payload, "analysis_id")
+        )
+        return self._envelope(
+            {"sections": rows}, status="READY" if rows else "EMPTY"
+        )
+
+    def _import_section_preview(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._envelope(
+            get_import_section_preview(
+                self._store,
+                _require_identifier(payload, "analysis_id"),
+                _require_identifier(payload, "section_id"),
+            )
+        )
+
+    def _initial_balance_requirements(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rows = initial_balance_requirements(
+            self._store, _require_identifier(payload, "analysis_id")
+        )
+        return self._envelope(
+            {"requirements": rows}, status="READY" if rows else "EMPTY"
+        )
+
+    def _imported_period_reconciliation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        rows = [
+            item
+            for item in imported_period_reconciliations(self._store).values()
+            if item["account_id"] == account_id
+            and (not payload.get("period_start") or item["period_start"] == payload["period_start"])
+            and (not payload.get("period_end") or item["period_end"] == payload["period_end"])
+        ]
+        row = rows[-1] if rows else None
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
+    def _investment_funding_relations(self, payload: dict[str, Any]) -> dict[str, Any]:
+        status = payload.get("status")
+        rows = [
+            item
+            for item in investment_funding_relations(self._store).values()
+            if not status or item["status"] == status
+        ]
+        return self._envelope(
+            {"relations": rows}, status="READY" if rows else "EMPTY"
+        )
+
+    def _security_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
+        row = security_transactions(self._store).get(
+            _require_identifier(payload, "transaction_id")
+        )
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
+    def _security_positions(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = payload.get("account_id")
+        rows = [
+            item
+            for item in security_positions(self._store).values()
+            if not account_id or item["account_id"] == account_id
+        ]
+        return self._envelope(
+            {"positions": rows}, status="READY" if rows else "EMPTY"
+        )
+
     def _backups(self, _: dict[str, Any]) -> dict[str, Any]:
         rows = list_backups(
             self._store, self._archive_key_provider, self._backup_directory
@@ -711,6 +854,46 @@ class FinanceApplicationService:
                 "import_batch_id": batch,
                 "normalized_count": normalize_batch(self._store, batch),
             }
+        elif command_name == "AnalyzeImportFile":
+            result = analyze_import_file(
+                self._store,
+                payload["source_file_path"],
+                payload["requested_profile"],
+            )
+        elif command_name == "MapImportSections":
+            result = map_import_sections(
+                self._store, payload["analysis_id"], payload["section_mappings"]
+            )
+        elif command_name == "ImportMappedSections":
+            result = import_mapped_sections(
+                self._store,
+                payload["analysis_id"],
+                parser_profile=payload["parser_profile"],
+                parser_version=payload["parser_version"],
+                import_mode=payload["import_mode"],
+            )
+        elif command_name == "RecordOpeningBalance":
+            result = record_opening_balance(self._store, **payload)
+        elif command_name == "RecordClosingBalance":
+            result = record_closing_balance(self._store, **payload)
+        elif command_name == "RecordOpeningSecurityPosition":
+            result = record_opening_security_position(self._store, **payload)
+        elif command_name == "ReconcileImportedPeriodBalance":
+            result = reconcile_imported_period_balance(self._store, **payload)
+        elif command_name == "DetectInvestmentFundingRelations":
+            result = detect_investment_funding_relations(self._store)
+        elif command_name == "ConfirmInvestmentFundingRelation":
+            result = confirm_investment_funding_relation(
+                self._store, payload["relation_id"]
+            )
+        elif command_name == "RejectInvestmentFundingRelation":
+            result = reject_investment_funding_relation(
+                self._store, payload["relation_id"]
+            )
+        elif command_name == "BreakInvestmentFundingRelation":
+            result = break_investment_funding_relation(
+                self._store, payload["relation_id"]
+            )
         elif command_name == "ClassifyTransactions":
             result = classify_transactions(self._store, payload.get("month"))
         elif command_name == "ConfirmClassification":
@@ -874,6 +1057,7 @@ class FinanceApplicationService:
             "RotateEncryptionKey",
             "RepairLocalStore",
             "ValidateStoreIntegrity",
+            "DetectInvestmentFundingRelations",
         } else "UnsupportedCommand"
         try:
             result = self._execute_command(command_name, payload)

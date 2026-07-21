@@ -297,7 +297,13 @@ class LocalFinanceStore:
         return int(row[0]) + 1
 
     def store_import_file(
-        self, import_id: str, source_path: Path, content: bytes, parser_version: str
+        self,
+        import_id: str,
+        source_path: Path,
+        content: bytes,
+        parser_version: str,
+        *,
+        status: str = "IMPORTED",
     ) -> None:
         root = self._guard()
         imports = root / "imports"
@@ -314,10 +320,21 @@ class LocalFinanceStore:
                     content_hash,
                     reference,
                     parser_version,
-                    "IMPORTED",
+                    status,
                     datetime.now(UTC).isoformat(),
                 ),
             )
+
+    def update_import_status(self, content_hash: str, status: str) -> None:
+        if status not in {"ANALYZED", "IMPORTED"}:
+            raise StoreInvariantError("FINANCE_IMPORT_STATUS_INVALID")
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE import_files SET status=? WHERE content_hash=?",
+                (status, content_hash),
+            )
+            if cursor.rowcount != 1:
+                raise StoreInvariantError("FINANCE_IMPORT_SOURCE_NOT_FOUND")
 
     def has_import_content_hash(self, content: bytes) -> bool:
         digest = hashlib.sha256(content).hexdigest()
@@ -327,3 +344,23 @@ class LocalFinanceStore:
             ).fetchone()
             is not None
         )
+
+    def load_import_content(self, content_hash: str) -> bytes:
+        """Return an authenticated imported source without exposing its original path."""
+        row = self.connection.execute(
+            "SELECT stored_file_reference FROM import_files WHERE content_hash=?",
+            (content_hash,),
+        ).fetchone()
+        if row is None:
+            raise StoreInvariantError("FINANCE_IMPORT_SOURCE_NOT_FOUND")
+        reference = str(row[0])
+        if not reference.startswith("imports/") or ".." in Path(reference).parts:
+            raise StoreInvariantError("FINANCE_IMPORT_REFERENCE_INVALID")
+        encrypted = self._guard() / reference
+        try:
+            content = cipher_for(self.key_provider).decrypt(encrypted.read_bytes())
+        except Exception as exc:
+            raise StoreInvariantError("FINANCE_IMPORT_DECRYPTION_FAILED") from exc
+        if hashlib.sha256(content).hexdigest() != content_hash:
+            raise StoreInvariantError("FINANCE_IMPORT_CONTENT_HASH_MISMATCH")
+        return content

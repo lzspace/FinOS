@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/multi_account_import.response.schema.json",
+  "title": "German multi-account import query response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "state", "projection_sequence", "event_store_sequence", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "state": { "enum": ["READY", "EMPTY", "PARTIAL", "ERROR"] },
+    "projection_sequence": { "type": "integer", "minimum": 0 },
+    "event_store_sequence": { "type": "integer", "minimum": 0 },
+    "data": { "type": ["object", "null"] }
+  }
+}

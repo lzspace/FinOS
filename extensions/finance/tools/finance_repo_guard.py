@@ -14,6 +14,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 SYNTHETIC_ROOT = Path("extensions/finance/tests/fixtures/synthetic")
 SYNTHETIC_MARKER = b"SYNTHETIC_TEST_DATA"
 GENERATED_CONTRACT_ROOT = Path("extensions/finance/contracts")
+GENERATED_INTEGRITY_PATH = Path("src/finance_extension/release_integrity.json")
 BLOCKED_SUFFIXES = {
     ".csv", ".tsv", ".xlsx", ".xls", ".ofx", ".qif", ".mt940", ".sta",
     ".camt", ".pdf", ".db", ".sqlite", ".sqlite3", ".backup", ".jsonl", ".log",
@@ -66,11 +67,22 @@ def _is_generated_contract_catalog(relative_path: Path, content: bytes) -> bool:
     )
 
 
+def _is_generated_integrity_manifest(relative_path: Path, content: bytes) -> bool:
+    return (
+        relative_path == GENERATED_INTEGRITY_PATH
+        and content.lstrip().startswith(b"{")
+        and b'"application_version"' in content[:4096]
+        and b'"schemas"' in content[:4096]
+        and b'"ui_bundle"' in content
+    )
+
+
 def inspect_file(relative_path: Path, content: bytes) -> list[str]:
     reasons: list[str] = []
     lowered_parts = {part.casefold() for part in relative_path.parts}
     synthetic = _is_synthetic_fixture(relative_path, content)
     generated_contract = _is_generated_contract_catalog(relative_path, content)
+    generated_integrity = _is_generated_integrity_manifest(relative_path, content)
 
     if BLOCKED_PATH_PARTS & lowered_parts:
         reasons.append("path is reserved for Finance runtime data")
@@ -81,6 +93,8 @@ def inspect_file(relative_path: Path, content: bytes) -> list[str]:
     # suffix and do not need to be decoded.
     if len(content) <= 5_000_000 and not synthetic and not generated_contract:
         for label, pattern in CONTENT_PATTERNS.items():
+            if generated_integrity and label == "likely German tax ID":
+                continue
             if pattern.search(content):
                 reasons.append(label)
     return reasons

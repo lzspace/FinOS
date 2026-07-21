@@ -40,6 +40,19 @@ from .forecasting import (
     update_recurring_pattern,
 )
 from .importer import import_csv, normalize_batch
+from .multi_account_import import (
+    PROFILE_ID,
+    analyze_import_file,
+    break_investment_funding_relation,
+    confirm_investment_funding_relation,
+    detect_investment_funding_relations,
+    import_mapped_sections,
+    investment_funding_relations,
+    map_import_sections,
+    reconcile_imported_period_balance,
+    record_opening_balance,
+    reject_investment_funding_relation,
+)
 from .reconciliation import (
     break_transfer,
     confirm_duplicate,
@@ -76,8 +89,15 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="action", required=True)
 
     imp = sub.add_parser("import")
-    imp.add_argument("file")
-    imp.add_argument("--account", required=True)
+    imp.add_argument("import_action_or_file")
+    imp.add_argument("file", nargs="?")
+    imp.add_argument("--account")
+    imp.add_argument("--analysis")
+    imp.add_argument("--section", action="append", default=[])
+    imp.add_argument(
+        "--mode", choices=["VALIDATE_ONLY", "IMPORT_NEW", "FORCE_REIMPORT"], default="IMPORT_NEW"
+    )
+    imp.add_argument("--profile", default=PROFILE_ID)
 
     cash = sub.add_parser("cashflow")
     cash.add_argument("--month", required=True)
@@ -89,7 +109,14 @@ def _parser() -> argparse.ArgumentParser:
     review = sub.add_parser("review")
     review.add_argument(
         "target",
-        choices=["classifications", "duplicates", "transfers", "refunds", "recurring"],
+        choices=[
+            "classifications",
+            "duplicates",
+            "transfers",
+            "refunds",
+            "recurring",
+            "investment-relations",
+        ],
     )
 
     classification = sub.add_parser("classification")
@@ -113,7 +140,11 @@ def _parser() -> argparse.ArgumentParser:
     breakdown.add_argument("--reconciled", action="store_true")
 
     reconcile_parser = sub.add_parser("reconcile")
+    reconcile_parser.add_argument("reconcile_target", nargs="?", choices=["balance"])
     reconcile_parser.add_argument("--month")
+    reconcile_parser.add_argument("--account")
+    reconcile_parser.add_argument("--from", dest="period_start")
+    reconcile_parser.add_argument("--to", dest="period_end")
 
     duplicate = sub.add_parser("duplicate")
     duplicate_sub = duplicate.add_subparsers(dest="duplicate_action", required=True)
@@ -137,6 +168,14 @@ def _parser() -> argparse.ArgumentParser:
     refund_reject = refund_sub.add_parser("reject")
     refund_reject.add_argument("--refund", required=True)
     refund_reject.add_argument("--original", required=True)
+
+    investment = sub.add_parser("investment-relation")
+    investment_sub = investment.add_subparsers(
+        dest="investment_action", required=True
+    )
+    for action in ("confirm", "reject", "break"):
+        command = investment_sub.add_parser(action)
+        command.add_argument("--relation", required=True)
 
     recurring = sub.add_parser("recurring")
     recurring_sub = recurring.add_subparsers(dest="recurring_action", required=True)
@@ -206,6 +245,19 @@ def _parser() -> argparse.ArgumentParser:
     balance_reconcile.add_argument("--account", required=True)
     balance_history = balance_sub.add_parser("history")
     balance_history.add_argument("--account", required=True)
+    balance_opening = balance_sub.add_parser("opening")
+    balance_opening.add_argument("balance_detail_action", choices=["record"])
+    balance_opening.add_argument("--account", required=True)
+    balance_opening.add_argument("--date", required=True)
+    balance_opening.add_argument("--amount", required=True)
+    balance_opening.add_argument("--available")
+    balance_opening.add_argument("--currency", default="EUR")
+    balance_opening.add_argument(
+        "--source",
+        choices=["bank-statement", "bank-export", "manual", "previous-system"],
+        default="manual",
+    )
+    balance_opening.add_argument("--comment")
 
     sub.add_parser("liquidity")
     sub.add_parser("net-worth")
@@ -388,6 +440,25 @@ def main() -> int:
             elif args.balance_action == "reconcile":
                 reconcile_account_balance(store, args.account)
                 print("Saldenabgleich abgeschlossen.")
+            elif args.balance_action == "opening":
+                source = {
+                    "bank-statement": "BANK_STATEMENT",
+                    "bank-export": "BANK_EXPORT",
+                    "manual": "MANUAL_ENTRY",
+                    "previous-system": "PREVIOUS_SYSTEM",
+                }[args.source]
+                balance_id = record_opening_balance(
+                    store,
+                    account_id=args.account,
+                    balance_date=args.date,
+                    booked_balance=args.amount,
+                    available_balance=args.available,
+                    currency=args.currency,
+                    source=source,
+                    confirmation=True,
+                    comment=args.comment,
+                )
+                print(f"Anfangssaldo erfasst: {balance_id}")
             else:
                 for item in account_balance_history(store, args.account):
                     print(
@@ -409,9 +480,48 @@ def main() -> int:
                 f"{Decimal(result['liabilities']):.2f}"
             )
         elif args.action == "import":
-            batch = import_csv(store, args.file, args.account)
-            normalize_batch(store, batch)
-            print("Import abgeschlossen: lokal und verschlüsselt")
+            if args.import_action_or_file == "analyze":
+                if not args.file:
+                    raise SystemExit("IMPORT_SOURCE_FILE_REQUIRED")
+                result = analyze_import_file(store, args.file, args.profile)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            elif args.import_action_or_file == "map-sections":
+                if not args.analysis or not args.section:
+                    raise SystemExit("IMPORT_SECTION_MAPPING_MISSING")
+                mappings = []
+                for value in args.section:
+                    if "=" not in value:
+                        raise SystemExit("IMPORT_SECTION_MAPPING_INVALID")
+                    section_id, account_id = value.split("=", 1)
+                    mappings.append(
+                        {
+                            "section_id": section_id,
+                            "account_id": None if account_id == "SKIP" else account_id,
+                            "action": (
+                                "SKIP_SECTION"
+                                if account_id == "SKIP"
+                                else "USE_EXISTING_ACCOUNT"
+                            ),
+                        }
+                    )
+                result = map_import_sections(store, args.analysis, mappings)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            elif args.import_action_or_file == "execute":
+                if not args.analysis:
+                    raise SystemExit("IMPORT_ANALYSIS_NOT_FOUND")
+                result = import_mapped_sections(
+                    store,
+                    args.analysis,
+                    parser_profile=args.profile,
+                    import_mode=args.mode,
+                )
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                if not args.account:
+                    raise SystemExit("FINANCE_ACCOUNT_ID_REQUIRED")
+                batch = import_csv(store, args.import_action_or_file, args.account)
+                normalize_batch(store, batch)
+                print("Import abgeschlossen: lokal und verschlüsselt")
         elif args.action == "cashflow":
             if args.reconciled:
                 _print_reconciled_cashflow(reconciled_monthly_cashflow(store, args.month))
@@ -452,6 +562,19 @@ def main() -> int:
                         f"{pattern['pattern_id']} | {pattern['merchant_key']} | "
                         f"{pattern['frequency']} | {pattern['expected_amount']} EUR | "
                         f"{pattern['confidence']}"
+                    )
+            elif args.target == "investment-relations":
+                rows = [
+                    relation
+                    for relation in investment_funding_relations(store).values()
+                    if relation["status"] == "PROPOSED"
+                ]
+                if not rows:
+                    print("Keine offenen Investment-Verknüpfungen.")
+                for relation in rows:
+                    print(
+                        f"{relation['relation_id']} | {relation['amount']} "
+                        f"{relation['currency']} | {relation['status']}"
                     )
             else:
                 relations = relation_review(store, args.target)
@@ -503,11 +626,24 @@ def main() -> int:
             if not args.reconciled:
                 print(f"Transaktionen: {breakdown['transaction_count']}")
         elif args.action == "reconcile":
-            counts = reconcile(store, args.month)
-            print(
-                f"Abgleich abgeschlossen: {counts['duplicates']} Dubletten-, "
-                f"{counts['transfers']} Transfer- und {counts['refunds']} Erstattungs-Event(s)"
-            )
+            if args.reconcile_target == "balance":
+                if not args.account or not args.period_start or not args.period_end:
+                    raise SystemExit("FINANCE_BALANCE_RECONCILIATION_INVALID")
+                result = reconcile_imported_period_balance(
+                    store,
+                    account_id=args.account,
+                    period_start=args.period_start,
+                    period_end=args.period_end,
+                )
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                counts = reconcile(store, args.month)
+                funding = detect_investment_funding_relations(store)
+                print(
+                    f"Abgleich abgeschlossen: {counts['duplicates']} Dubletten-, "
+                    f"{counts['transfers']} Transfer-, {counts['refunds']} Erstattungs- "
+                    f"und {funding} Investment-Event(s)"
+                )
         elif args.action == "duplicate":
             if args.duplicate_action == "confirm":
                 confirm_duplicate(store, args.relation)
@@ -528,6 +664,14 @@ def main() -> int:
             else:
                 reject_refund(store, args.refund, args.original)
             print("Rückerstattungsentscheidung gespeichert.")
+        elif args.action == "investment-relation":
+            if args.investment_action == "confirm":
+                confirm_investment_funding_relation(store, args.relation)
+            elif args.investment_action == "reject":
+                reject_investment_funding_relation(store, args.relation)
+            else:
+                break_investment_funding_relation(store, args.relation)
+            print("Investment-Verknüpfung gespeichert.")
         elif args.action == "recurring":
             if args.recurring_action == "detect":
                 count = detect_recurring_patterns(store, args.from_month, args.to_month)

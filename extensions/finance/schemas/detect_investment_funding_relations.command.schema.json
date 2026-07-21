@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://agent-os.local/finance/schemas/detect_investment_funding_relations.command.schema.json","$ref":"multi_account_import_commands.schema.json"}

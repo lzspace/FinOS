@@ -38,7 +38,7 @@ SCHEMA_ROOT = ROOT / "extensions" / "finance" / "schemas"
 UI_ROOT = ROOT / "ui" / "dist"
 EMBEDDED_INTEGRITY = Path(__file__).with_name("release_integrity.json")
 SOURCE_DATE_EPOCH = "1767225600"  # 2026-01-01T00:00:00Z
-CONTRACT_VERSION = "1.1.0"
+CONTRACT_VERSION = "1.2.0"
 PREVIOUS_CONTRACT_VERSION = "1.1.0"
 PREVIOUS_CONTRACT_CATALOG = ROOT / "extensions" / "finance" / "contracts" / "catalog-0.9.0.json"
 
@@ -122,7 +122,7 @@ def _write_sboms(output: Path) -> tuple[Path, Path]:
             "SPDXID": "SPDXRef-DOCUMENT",
             "name": f"agent-os-finance-{__version__}",
             "documentNamespace": f"https://agent-os.local/spdx/agent-os-finance-{__version__}",
-            "creationInfo": {"created": "2026-01-01T00:00:00Z", "creators": ["Tool: finance-release-1.0.0"]},
+            "creationInfo": {"created": "2026-01-01T00:00:00Z", "creators": ["Tool: finance-release-1.1.0"]},
             "packages": [
                 {
                     "SPDXID": f"SPDXRef-Package-{item['name']}",
@@ -212,8 +212,8 @@ def create_release(
             "platforms": ["macOS-arm64", "macOS-x86_64", "Linux-x86_64"],
             "python": ["3.11", "3.12", "3.13", "3.14"],
             "keychains": ["macOS-Keychain", "SecretService-compatible"],
-            "import_profiles": ["GenericFinanceCsvV1"],
-            "migration_sources": ["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0"],
+            "import_profiles": ["GenericFinanceCsvV1", "GermanMultiAccountCsvV1"],
+            "migration_sources": ["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0", "1.0.0"],
             "maximum_configured_archive_bytes": 536870912,
             "maximum_tested_archive_bytes": 524288,
             "maximum_tested_csv_rows": 10000,

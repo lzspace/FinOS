@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/multi_account_import_commands.schema.json",
+  "title": "German multi-account import commands 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "command_id", "command_type", "idempotency_key", "payload"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "command_id": { "type": "string", "minLength": 1 },
+    "command_type": {
+      "enum": ["AnalyzeImportFile", "MapImportSections", "ImportMappedSections", "RecordOpeningBalance", "RecordClosingBalance", "RecordOpeningSecurityPosition", "ReconcileImportedPeriodBalance", "DetectInvestmentFundingRelations", "ConfirmInvestmentFundingRelation", "RejectInvestmentFundingRelation", "BreakInvestmentFundingRelation"]
+    },
+    "idempotency_key": { "type": "string", "minLength": 8 },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "command_type": { "const": "AnalyzeImportFile" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/Analyze" } } } },
+    { "if": { "properties": { "command_type": { "const": "MapImportSections" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/Map" } } } },
+    { "if": { "properties": { "command_type": { "const": "ImportMappedSections" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/Import" } } } },
+    { "if": { "properties": { "command_type": { "enum": ["RecordOpeningBalance", "RecordClosingBalance"] } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/Balance" } } } },
+    { "if": { "properties": { "command_type": { "const": "RecordOpeningSecurityPosition" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/Position" } } } },
+    { "if": { "properties": { "command_type": { "const": "ReconcileImportedPeriodBalance" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/Reconcile" } } } },
+    { "if": { "properties": { "command_type": { "const": "DetectInvestmentFundingRelations" } } }, "then": { "properties": { "payload": { "type": "object", "maxProperties": 0 } } } }
+    ,{ "if": { "properties": { "command_type": { "enum": ["ConfirmInvestmentFundingRelation", "RejectInvestmentFundingRelation", "BreakInvestmentFundingRelation"] } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/RelationDecision" } } } }
+  ],
+  "$defs": {
+    "Analyze": { "type": "object", "additionalProperties": false, "required": ["source_file_path", "requested_profile"], "properties": { "source_file_path": { "type": "string", "minLength": 1 }, "requested_profile": { "const": "GermanMultiAccountCsvV1" } } },
+    "Mapping": { "type": "object", "additionalProperties": false, "required": ["section_id", "action"], "properties": { "section_id": { "type": "string" }, "account_id": { "type": "string" }, "action": { "enum": ["USE_EXISTING_ACCOUNT", "CREATE_ACCOUNT", "SKIP_SECTION"] }, "display_name": { "type": "string" }, "institution": { "type": "string" }, "opened_at": { "type": "string", "format": "date" } } },
+    "Map": { "type": "object", "additionalProperties": false, "required": ["analysis_id", "section_mappings"], "properties": { "analysis_id": { "type": "string" }, "section_mappings": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Mapping" } } } },
+    "Import": { "type": "object", "additionalProperties": false, "required": ["analysis_id", "parser_profile", "parser_version", "import_mode"], "properties": { "analysis_id": { "type": "string" }, "parser_profile": { "const": "GermanMultiAccountCsvV1" }, "parser_version": { "const": "1.0.0" }, "import_mode": { "enum": ["VALIDATE_ONLY", "IMPORT_NEW", "FORCE_REIMPORT"] } } },
+    "Balance": { "type": "object", "additionalProperties": false, "required": ["account_id", "balance_date", "booked_balance", "currency", "source", "confirmation"], "properties": { "account_id": { "type": "string" }, "balance_date": { "type": "string", "format": "date" }, "booked_balance": { "type": "string" }, "available_balance": { "type": ["string", "null"] }, "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }, "source": { "enum": ["BANK_STATEMENT", "BANK_EXPORT", "MANUAL_ENTRY", "PREVIOUS_SYSTEM", "CALCULATED"] }, "confirmation": { "type": "boolean" }, "comment": { "type": ["string", "null"] } } },
+    "Position": { "type": "object", "additionalProperties": false, "required": ["account_id", "valuation_date", "security_identifier_type", "security_identifier", "security_name", "quantity", "valuation_price", "price_currency", "market_value", "valuation_source", "confirmation"], "properties": { "account_id": { "type": "string" }, "valuation_date": { "type": "string", "format": "date" }, "security_identifier_type": { "enum": ["WKN", "ISIN", "OTHER"] }, "security_identifier": { "type": "string" }, "security_name": { "type": "string" }, "quantity": { "type": "string" }, "valuation_price": { "type": "string" }, "price_currency": { "type": "string" }, "market_value": { "type": "string" }, "valuation_source": { "type": "string" }, "confirmation": { "const": true } } },
+    "Reconcile": { "type": "object", "additionalProperties": false, "required": ["account_id", "period_start", "period_end"], "properties": { "account_id": { "type": "string" }, "period_start": { "type": "string", "format": "date" }, "period_end": { "type": "string", "format": "date" } } },
+    "RelationDecision": { "type": "object", "additionalProperties": false, "required": ["relation_id"], "properties": { "relation_id": { "type": "string", "minLength": 1 } } }
+  }
+}

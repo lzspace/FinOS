@@ -23,7 +23,7 @@ attach real finance data, keys, decrypted archives or full diagnostic stores.
 Include only the stable error code, application version and explicitly exported
 allowlisted diagnostic metadata.
 
-Supported security updates cover the current `1.0.x` release line. Older
+Supported security updates cover the current `1.1.x` release line. Older
 versions should be upgraded through the documented migration and recovery
 procedure rather than opened after a newer store has been written.
 
