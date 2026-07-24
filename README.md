@@ -67,13 +67,18 @@ finance --data-dir /absolute/local/finance-data import /absolute/input.csv --acc
 finance --data-dir /absolute/local/finance-data cashflow --month 2026-07
 ```
 
-Version 1.1.0 additionally supports the explicit German multi-account profile
-`GermanMultiAccountCsvV1` with CP1252/UTF-8, semicolon delimiters, German dates
-and decimal values, checking/savings/brokerage sections and opening-balance
-reconciliation:
+Version 1.1.0 additionally supports the file-centric German multi-account
+profile `GermanMultiAccountCsvV1`. One monthly file belongs to exactly one
+bank and contains ordered `CHECKING`, `SAVINGS` and `BROKERAGE` sections.
+Sections are mapped, normalized, deduplicated and reconciled independently;
+the file receives an aggregate status. Confirmed bank/title/type/account
+bindings are proposed again on later monthly imports but remain visible for
+review. CP1252/UTF-8, semicolon delimiters, German dates and decimal values are
+supported:
 
 ```bash
-finance --data-dir /absolute/local/finance-data import analyze /absolute/export.csv
+finance --data-dir /absolute/local/finance-data import analyze /absolute/export.csv \
+  --bank BANK_A
 finance --data-dir /absolute/local/finance-data import map-sections \
   --analysis analysis_HASH \
   --section section_CHECKING=acc_checking \
@@ -88,7 +93,12 @@ finance --data-dir /absolute/local/finance-data reconcile balance \
 ```
 
 Unknown sections must be explicitly skipped with `section_ID=SKIP`; they are
-never interpreted heuristically. Checked-in parser fixtures are synthetic.
+never interpreted heuristically. A section duplicate is detected from account,
+full reporting month, section type and content hash even when the filename
+changes. Same-type sections require a stable account reference. Cash balances
+and brokerage positions are reconciled per section, and cross-account funding
+relations are detected only after section import. Checked-in parser fixtures
+are synthetic.
 
 The test-only `FINANCE_TEST_KEY` environment variable is intentionally limited
 to synthetic test data. Cashflow treats every positive amount as income and
@@ -220,7 +230,7 @@ trust root.
 ```bash
 finance-release --output /absolute/release \
   --signing-key /secure/offline/release-ed25519.pem \
-  --python-tests 80 --frontend-tests 5 --schemas 36 \
+  --python-tests 90 --frontend-tests 5 --schemas 80 \
   --acceptance-report /absolute/acceptance-report.json \
   --critical-findings 0 --high-findings 0 \
   --offline-verified

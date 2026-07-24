@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from calendar import monthrange
 import hashlib
 import re
 import uuid
@@ -20,10 +21,11 @@ PROFILE_ID = "GermanMultiAccountCsvV1"
 PROFILE_VERSION = "1.0.0"
 PARSER_VERSION = "GermanMultiAccountCsvV1@1.0.0"
 SECTION_TITLES = {
-    "Umsätze Girokonto": ("CHECKING_TRANSACTIONS", "CHECKING"),
-    "Umsätze Tagesgeld PLUS-Konto": ("SAVINGS_TRANSACTIONS", "SAVINGS"),
-    "Umsätze Depot": ("BROKERAGE_TRANSACTIONS", "BROKERAGE"),
+    "Umsätze Girokonto": "CHECKING",
+    "Umsätze Tagesgeld PLUS-Konto": "SAVINGS",
+    "Umsätze Depot": "BROKERAGE",
 }
+SECTION_ORDER = ("CHECKING", "SAVINGS", "BROKERAGE")
 ACCOUNT_COLUMNS = (
     "Buchungstag",
     "Wertstellung (Valuta)",
@@ -118,7 +120,7 @@ def _decode(raw: bytes) -> tuple[str, str]:
             raise MultiAccountImportError("IMPORT_ENCODING_INVALID") from exc
 
 
-def parse_german_decimal(value: str) -> Decimal:
+def _parse_german_number(value: str, quantum: Decimal) -> Decimal:
     compact = value.strip().replace(" ", "")
     if not re.fullmatch(r"[+-]?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,8})?", compact):
         raise MultiAccountImportError("IMPORT_DECIMAL_FORMAT_INVALID")
@@ -128,7 +130,15 @@ def parse_german_decimal(value: str) -> Decimal:
         raise MultiAccountImportError("IMPORT_DECIMAL_FORMAT_INVALID") from exc
     if not parsed.is_finite():
         raise MultiAccountImportError("IMPORT_DECIMAL_FORMAT_INVALID")
-    return parsed.quantize(Decimal("0.01"))
+    return parsed.quantize(quantum)
+
+
+def parse_german_decimal(value: str) -> Decimal:
+    return _parse_german_number(value, Decimal("0.01"))
+
+
+def parse_german_quantity(value: str) -> Decimal:
+    return _parse_german_number(value, Decimal("0.00000001"))
 
 
 def _parse_date(value: str) -> str:
@@ -160,23 +170,108 @@ def _section_period(rows: Iterable[list[str]]) -> tuple[str | None, str | None]:
     )
 
 
+def _bank_identifier(text: str) -> str | None:
+    values: set[str] = set()
+    for row in _rows(text):
+        if len(row) >= 2 and row[0].casefold() in {
+            "bank",
+            "bankkennung",
+            "institut",
+            "bank identifier",
+        }:
+            value = row[1].strip()
+            if value:
+                values.add(value)
+    if len(values) > 1:
+        raise MultiAccountImportError("IMPORT_MULTIPLE_BANKS_NOT_SUPPORTED")
+    return next(iter(values), None)
+
+
+def _account_reference(rows: list[list[str]]) -> str | None:
+    for row in rows:
+        if len(row) >= 2 and row[0].casefold() in {
+            "kontoreferenz",
+            "kontonummer",
+            "iban",
+            "depotnummer",
+        }:
+            value = row[1].strip()
+            if value:
+                return value
+    return None
+
+
+def _declared_month(text: str) -> str | None:
+    candidates: set[str] = set()
+    month_pattern = re.compile(r"(?<!\d)(0[1-9]|1[0-2])[./-](20\d{2})(?!\d)")
+    iso_month_pattern = re.compile(r"(?<!\d)(20\d{2})-(0[1-9]|1[0-2])(?!-?\d)")
+    date_pattern = re.compile(
+        r"(?<!\d)(\d{2})[.](\d{2})[.](\d{2}|20\d{2})(?!\d)"
+    )
+    for row in _rows(text):
+        if not row or row[0].casefold() not in {
+            "berichtsmonat",
+            "monat",
+            "reporting month",
+            "zeitraum",
+            "berichtszeitraum",
+            "period",
+        }:
+            continue
+        value = " ".join(row[1:])
+        for month, year in month_pattern.findall(value):
+            candidates.add(f"{year}-{month}")
+        for year, month in iso_month_pattern.findall(value):
+            candidates.add(f"{year}-{month}")
+        for _, month, year in date_pattern.findall(value):
+            full_year = f"20{year}" if len(year) == 2 else year
+            candidates.add(f"{full_year}-{month}")
+    if len(candidates) > 1:
+        raise MultiAccountImportError("IMPORT_PERIOD_MISMATCH")
+    return next(iter(candidates), None)
+
+
+def _monthly_period(
+    sections: list[dict[str, Any]], text: str
+) -> tuple[str, str]:
+    months: set[str] = set()
+    for section in sections:
+        for record in section["records"]:
+            booking = _parse_date(record["Buchungstag"])
+            months.add(booking[:7])
+    declared = _declared_month(text)
+    if declared:
+        months.add(declared)
+    if not months:
+        raise MultiAccountImportError("IMPORT_PERIOD_REQUIRED")
+    if len(months) != 1:
+        raise MultiAccountImportError("IMPORT_PERIOD_MISMATCH")
+    year, month = (int(part) for part in next(iter(months)).split("-"))
+    return date(year, month, 1).isoformat(), date(
+        year, month, monthrange(year, month)[1]
+    ).isoformat()
+
+
 def _parse_sections(text: str, analysis_id: str) -> list[dict[str, Any]]:
     rows = _rows(text)
     starts: list[tuple[int, str, str, str | None]] = []
     for index, row in enumerate(rows):
         first = row[0].strip() if row else ""
         if first in SECTION_TITLES:
-            section_type, account_type = SECTION_TITLES[first]
-            starts.append((index, first, section_type, account_type))
+            section_type = SECTION_TITLES[first]
+            starts.append((index, first, section_type, section_type))
         elif first.startswith("Umsätze "):
             starts.append((index, first, "UNKNOWN", None))
     if not starts:
         raise MultiAccountImportError("IMPORT_PROFILE_MISMATCH")
+    recognized_order = [SECTION_ORDER.index(item[2]) for item in starts if item[2] != "UNKNOWN"]
+    if recognized_order != sorted(recognized_order):
+        raise MultiAccountImportError("IMPORT_SECTION_ORDER_INVALID")
     sections: list[dict[str, Any]] = []
     for position, (start, title, section_type, account_type) in enumerate(starts):
         end = starts[position + 1][0] if position + 1 < len(starts) else len(rows)
         content = rows[start + 1 : end]
-        expected = BROKERAGE_COLUMNS if section_type == "BROKERAGE_TRANSACTIONS" else ACCOUNT_COLUMNS
+        expected = BROKERAGE_COLUMNS if section_type == "BROKERAGE" else ACCOUNT_COLUMNS
         header_index = next(
             (i for i, row in enumerate(content) if tuple(row[: len(expected)]) == expected),
             None,
@@ -199,12 +294,16 @@ def _parse_sections(text: str, analysis_id: str) -> list[dict[str, Any]]:
         if section_type == "UNKNOWN":
             warnings.append("IMPORT_UNKNOWN_SECTION")
         period_start, period_end = _section_period(content)
+        account_reference = _account_reference(content[: header_index or len(content)])
+        canonical_content = repr(content).encode("utf-8")
+        content_hash = hashlib.sha256(canonical_content).hexdigest()
         section_hash = hashlib.sha256(f"{analysis_id}:{position}:{title}".encode()).hexdigest()[:16]
         sections.append(
             {
                 "section_id": f"section_{section_hash}",
                 "section_type": section_type,
                 "original_title": title,
+                "account_reference": account_reference,
                 "period_start": period_start,
                 "period_end": period_end,
                 "record_count": len(records),
@@ -213,9 +312,26 @@ def _parse_sections(text: str, analysis_id: str) -> list[dict[str, Any]]:
                 "proposed_account_type": account_type,
                 "import_supported": section_type != "UNKNOWN" and (empty or header_index is not None),
                 "warnings": sorted(set(warnings)),
+                "content_hash": content_hash,
+                "mapped_account_id": None,
+                "import_status": "ANALYZED",
+                "section_index": position,
                 "records": records,
             }
         )
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for section in sections:
+        if section["section_type"] != "UNKNOWN":
+            by_type.setdefault(section["section_type"], []).append(section)
+    if any(
+        len(group) > 1
+        and (
+            any(not item["account_reference"] for item in group)
+            or len({item["account_reference"] for item in group}) != len(group)
+        )
+        for group in by_type.values()
+    ):
+        raise MultiAccountImportError("IMPORT_SECTION_AMBIGUOUS")
     return sections
 
 
@@ -226,10 +342,30 @@ def analyses(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
     }
 
 
+def _binding_identity(
+    bank_identifier: str,
+    section_type: str,
+    original_title: str,
+    account_reference: str | None,
+) -> str:
+    raw = "\x1f".join(
+        (bank_identifier, section_type, original_title, account_reference or "")
+    )
+    return "binding_" + hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def section_bindings(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for event in store.events("ImportSectionBindingConfirmed"):
+        result[event["aggregate_id"]] = event["payload"]
+    return result
+
+
 def analyze_import_file(
     store: LocalFinanceStore,
     source_file_path: str | Path,
     requested_profile: str = PROFILE_ID,
+    confirmed_bank_identifier: str | None = None,
 ) -> dict[str, Any]:
     if requested_profile != PROFILE_ID:
         raise MultiAccountImportError("IMPORT_PROFILE_MISMATCH")
@@ -243,27 +379,57 @@ def analyze_import_file(
     except OSError as exc:
         raise MultiAccountImportError("FINANCE_IMPORT_UNREADABLE") from exc
     file_hash = hashlib.sha256(raw).hexdigest()
-    analysis_id = f"analysis_{file_hash}"
-    existing = analyses(store).get(analysis_id)
+    export_id = f"export_{file_hash}"
+    existing = analyses(store).get(export_id)
     if existing:
-        return existing
+        return get_import_analysis(store, export_id) or existing
     text, encoding = _decode(raw)
-    parsed = _parse_sections(text, analysis_id)
-    supported = [item for item in parsed if item["section_type"] != "UNKNOWN"]
-    starts = [item["period_start"] for item in supported if item["period_start"]]
-    ends = [item["period_end"] for item in supported if item["period_end"]]
+    detected_bank = _bank_identifier(text)
+    if detected_bank and confirmed_bank_identifier and detected_bank != confirmed_bank_identifier:
+        raise MultiAccountImportError("IMPORT_BANK_IDENTIFIER_MISMATCH")
+    bank_identifier = detected_bank or (confirmed_bank_identifier or "").strip()
+    if not bank_identifier or len(bank_identifier) > 128:
+        raise MultiAccountImportError("IMPORT_BANK_IDENTIFIER_REQUIRED")
+    parsed = _parse_sections(text, export_id)
+    period_start, period_end = _monthly_period(parsed, text)
+    bindings = section_bindings(store)
+    active_accounts = accounts(store)
+    for section in parsed:
+        section["period_start"] = period_start
+        section["period_end"] = period_end
+        if section["section_type"] == "UNKNOWN":
+            continue
+        binding_id = _binding_identity(
+            bank_identifier,
+            section["section_type"],
+            section["original_title"],
+            section["account_reference"],
+        )
+        binding = bindings.get(binding_id)
+        bound_account = active_accounts.get(binding["account_id"], {}) if binding else {}
+        if (
+            binding
+            and bound_account.get("status") == "ACTIVE"
+            and bound_account.get("account_type") == section["proposed_account_type"]
+        ):
+            section["mapped_account_id"] = binding["account_id"]
     public_sections = [{key: value for key, value in item.items() if key != "records"} for item in parsed]
     payload = {
-        "analysis_id": analysis_id,
+        "export_id": export_id,
+        "analysis_id": export_id,
+        "bank_identifier": bank_identifier,
         "detected_profile": PROFILE_ID,
+        "import_profile": PROFILE_ID,
         "profile_version": PROFILE_VERSION,
         "encoding": encoding,
         "delimiter": ";",
-        "period_start": min(starts) if starts else None,
-        "period_end": max(ends) if ends else None,
+        "period_start": period_start,
+        "period_end": period_end,
+        "report_month": period_start[:7],
         "sections": public_sections,
         "warnings": sorted({warning for item in parsed for warning in item["warnings"]}),
         "file_hash": file_hash,
+        "source_file_hash": file_hash,
         "file_size": len(raw),
         "status": "ANALYZED",
     }
@@ -272,17 +438,55 @@ def analyze_import_file(
         store,
         "AnalyzeImportFile",
         file_hash,
-        [_event("ImportFileAnalyzed", "ImportAnalysis", analysis_id, 1, command_id, payload)],
+        [_event("ImportFileAnalyzed", "BankMonthlyExport", export_id, 1, command_id, payload)],
     )
     if not store.has_import_content_hash(raw):
         store.store_import_file(
-            analysis_id, path, raw, PARSER_VERSION, status="ANALYZED"
+            export_id, path, raw, PARSER_VERSION, status="ANALYZED"
         )
     return payload
 
 
 def get_import_analysis(store: LocalFinanceStore, analysis_id: str) -> dict[str, Any] | None:
-    return analyses(store).get(analysis_id)
+    base = analyses(store).get(analysis_id)
+    if not base:
+        return None
+    mappings = section_mappings(store, analysis_id)
+    runs = {
+        item["section_id"]: item
+        for item in imported_section_runs(store).values()
+        if item["export_id"] == analysis_id
+    }
+    sections = []
+    for section in base["sections"]:
+        mapping = mappings.get(section["section_id"])
+        run = runs.get(section["section_id"])
+        sections.append(
+            {
+                **section,
+                "mapped_account_id": (
+                    mapping["account_id"] if mapping else section["mapped_account_id"]
+                ),
+                "import_status": run["status"] if run else section["import_status"],
+                "section_result": run,
+            }
+        )
+    batch_status = next(
+        (
+            event["payload"].get("status")
+            for event in reversed(store.events("ImportBatchCompleted"))
+            if any(
+                run["import_batch_id"] == event["payload"]["import_batch_id"]
+                for run in runs.values()
+            )
+        ),
+        None,
+    )
+    return {**base, "sections": sections, "status": batch_status or base["status"]}
+
+
+def get_bank_monthly_export(store: LocalFinanceStore, export_id: str) -> dict[str, Any] | None:
+    return get_import_analysis(store, export_id)
 
 
 def list_import_sections(store: LocalFinanceStore, analysis_id: str) -> list[dict[str, Any]]:
@@ -356,12 +560,18 @@ def map_import_sections(
             account = accounts(store).get(str(account_id))
             if not account:
                 raise MultiAccountImportError("FINANCE_ACCOUNT_NOT_FOUND")
+            if account["status"] != "ACTIVE":
+                raise MultiAccountImportError("FINANCE_IMPORT_ACCOUNT_CLOSED")
             if account["account_type"] != section["proposed_account_type"]:
                 raise MultiAccountImportError("IMPORT_ACCOUNT_TYPE_MISMATCH")
         payload = {
             "analysis_id": analysis_id,
+            "export_id": analysis_id,
+            "bank_identifier": analysis["bank_identifier"],
             "section_id": section_id,
             "section_type": section["section_type"],
+            "original_title": section["original_title"],
+            "account_reference": section["account_reference"],
             "account_id": account_id,
             "action": action,
             "status": "SKIPPED" if action == "SKIP_SECTION" else "MAPPED",
@@ -386,6 +596,37 @@ def map_import_sections(
         )
         for payload in prepared
     ]
+    known_bindings = section_bindings(store)
+    for payload in prepared:
+        if not payload["account_id"]:
+            continue
+        binding_id = _binding_identity(
+            payload["bank_identifier"],
+            payload["section_type"],
+            payload["original_title"],
+            payload["account_reference"],
+        )
+        current_binding = known_bindings.get(binding_id)
+        if current_binding and current_binding["account_id"] == payload["account_id"]:
+            continue
+        events.append(
+            _event(
+                "ImportSectionBindingConfirmed",
+                "ImportSectionBinding",
+                binding_id,
+                store.next_aggregate_version("ImportSectionBinding", binding_id),
+                command_id,
+                {
+                    "binding_id": binding_id,
+                    "bank_identifier": payload["bank_identifier"],
+                    "section_type": payload["section_type"],
+                    "original_title": payload["original_title"],
+                    "account_reference": payload["account_reference"],
+                    "account_id": payload["account_id"],
+                    "confirmed_at": _now(),
+                },
+            )
+        )
     digest = hashlib.sha256(repr(sorted((x["section_id"], x["action"], x["account_id"]) for x in prepared)).encode()).hexdigest()
     _append(store, "MapImportSections", f"{analysis_id}:{digest}", events)
     return prepared
@@ -522,10 +763,113 @@ def record_opening_security_position(
     return position_id
 
 
-def security_positions(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
+def opening_security_positions(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for event in store.events("OpeningSecurityPositionRecorded"):
         result[event["aggregate_id"]] = event["payload"]
+    return result
+
+
+def confirm_empty_opening_security_positions(
+    store: LocalFinanceStore, *, account_id: str, valuation_date: str
+) -> int:
+    account = accounts(store).get(account_id)
+    if not account or account["account_type"] != "BROKERAGE":
+        raise StoreInvariantError("IMPORT_ACCOUNT_TYPE_MISMATCH")
+    date.fromisoformat(valuation_date)
+    aggregate_id = f"empty_opening_positions_{account_id}"
+    command_id = _id("cmd")
+    payload = {
+        "account_id": account_id,
+        "valuation_date": valuation_date,
+        "confirmation": True,
+        "confirmed_at": _now(),
+    }
+    return _append(
+        store,
+        "ConfirmEmptyOpeningSecurityPositions",
+        f"{account_id}:{valuation_date}",
+        [
+            _event(
+                "EmptyOpeningSecurityPositionsConfirmed",
+                "SecurityPositionOpening",
+                aggregate_id,
+                store.next_aggregate_version("SecurityPositionOpening", aggregate_id),
+                command_id,
+                payload,
+            )
+        ],
+    )
+
+
+def empty_opening_security_position_confirmations(
+    store: LocalFinanceStore,
+) -> dict[str, dict[str, Any]]:
+    return {
+        event["payload"]["account_id"]: event["payload"]
+        for event in store.events("EmptyOpeningSecurityPositionsConfirmed")
+    }
+
+
+def record_closing_security_position(
+    store: LocalFinanceStore,
+    *,
+    account_id: str,
+    valuation_date: str,
+    security_identifier_type: str,
+    security_identifier: str,
+    security_name: str,
+    quantity: str,
+    confirmation: bool,
+) -> str:
+    account = accounts(store).get(account_id)
+    if not account or account["account_type"] != "BROKERAGE":
+        raise StoreInvariantError("IMPORT_ACCOUNT_TYPE_MISMATCH")
+    date.fromisoformat(valuation_date)
+    parsed_quantity = _decimal(quantity, "FINANCE_SECURITY_POSITION_INVALID")
+    if parsed_quantity < 0 or not confirmation:
+        raise StoreInvariantError("FINANCE_SECURITY_POSITION_INVALID")
+    position_id = "closing_position_" + hashlib.sha256(
+        f"{account_id}:{security_identifier}".encode()
+    ).hexdigest()[:24]
+    command_id = _id("cmd")
+    payload = {
+        "position_id": position_id,
+        "account_id": account_id,
+        "valuation_date": valuation_date,
+        "security_identifier_type": security_identifier_type,
+        "security_identifier": security_identifier,
+        "security_name": security_name,
+        "quantity": str(parsed_quantity),
+        "confirmation": True,
+    }
+    _append(
+        store,
+        "RecordClosingSecurityPosition",
+        hashlib.sha256(repr(sorted(payload.items())).encode()).hexdigest(),
+        [
+            _event(
+                "ClosingSecurityPositionRecorded",
+                "ClosingSecurityPosition",
+                position_id,
+                store.next_aggregate_version("ClosingSecurityPosition", position_id),
+                command_id,
+                payload,
+            )
+        ],
+    )
+    return position_id
+
+
+def closing_security_positions(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for event in store.events("ClosingSecurityPositionRecorded"):
+        result[event["aggregate_id"]] = event["payload"]
+    return result
+
+
+def security_positions(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
+    result = opening_security_positions(store)
     for transaction in security_transactions(store).values():
         position_id = "position_" + hashlib.sha256(
             f"{transaction['account_id']}:{transaction['security_identifier']}".encode()
@@ -586,7 +930,7 @@ def _account_record(record: dict[str, str]) -> dict[str, str]:
 
 
 def _security_record(record: dict[str, str]) -> dict[str, str]:
-    quantity = parse_german_decimal(record["Stück / Nom."])
+    quantity = parse_german_quantity(record["Stück / Nom."])
     execution = parse_german_decimal(record["Ausführungskurs"])
     settlement = parse_german_decimal(record["Umsatz in EUR"])
     transaction_type = "INVESTMENT_PURCHASE" if settlement < 0 else "INVESTMENT_SALE" if settlement > 0 else "UNKNOWN_SECURITY_TRANSACTION"
@@ -605,17 +949,53 @@ def _security_record(record: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _possible_investment_funding_matches(
+    account_rows: list[tuple[dict[str, Any], dict[str, str], str]],
+    security_rows: list[tuple[dict[str, Any], dict[str, str], str]],
+) -> int:
+    count = 0
+    for _, cash, _ in account_rows:
+        if cash["transaction_type"] != "INVESTMENT_PURCHASE_FUNDING":
+            continue
+        for _, security, _ in security_rows:
+            if security["transaction_type"] != "INVESTMENT_PURCHASE":
+                continue
+            if abs(Decimal(cash["amount"])) != abs(
+                Decimal(security["settlement_amount"])
+            ):
+                continue
+            if abs(
+                (
+                    date.fromisoformat(cash["booking_date"])
+                    - date.fromisoformat(security["trade_date"])
+                ).days
+            ) > FUNDING_WINDOW_DAYS:
+                continue
+            if (
+                security["security_identifier"].casefold()
+                not in cash["description"].casefold()
+            ):
+                continue
+            if cash["currency"] != security["settlement_currency"]:
+                continue
+            count += 1
+    return count
+
+
 def get_import_section_preview(
     store: LocalFinanceStore, analysis_id: str, section_id: str
 ) -> dict[str, Any]:
+    analysis = get_import_analysis(store, analysis_id)
     section = next((item for item in _load_parsed(store, analysis_id) if item["section_id"] == section_id), None)
     if not section:
         raise MultiAccountImportError("IMPORT_SECTION_NOT_FOUND")
     preview: list[dict[str, str]] = []
     for record in section["records"][:25]:
-        preview.append(_security_record(record) if section["section_type"] == "BROKERAGE_TRANSACTIONS" else _account_record(record))
+        preview.append(_security_record(record) if section["section_type"] == "BROKERAGE" else _account_record(record))
     return {
         **{key: value for key, value in section.items() if key != "records"},
+        "period_start": analysis["period_start"] if analysis else section["period_start"],
+        "period_end": analysis["period_end"] if analysis else section["period_end"],
         "preview": preview,
         "preview_truncated": len(section["records"]) > 25,
     }
@@ -627,7 +1007,8 @@ def initial_balance_requirements(store: LocalFinanceStore, analysis_id: str) -> 
         raise MultiAccountImportError("IMPORT_ANALYSIS_NOT_FOUND")
     mapped = section_mappings(store, analysis_id)
     openings = opening_balances(store)
-    positions = security_positions(store)
+    positions = opening_security_positions(store)
+    empty_position_confirmations = empty_opening_security_position_confirmations(store)
     normalized_accounts = {event["payload"]["account_id"] for event in store.events("TransactionNormalized")}
     requirements: list[dict[str, Any]] = []
     for section in analysis["sections"]:
@@ -636,13 +1017,33 @@ def initial_balance_requirements(store: LocalFinanceStore, analysis_id: str) -> 
             continue
         account_id = mapping["account_id"]
         first_import = account_id not in normalized_accounts
-        if section["section_type"] in {"CHECKING_TRANSACTIONS", "SAVINGS_TRANSACTIONS"}:
+        if section["section_type"] in {"CHECKING", "SAVINGS"}:
             opening = openings.get(account_id)
-            satisfied = not first_import or bool(opening and opening["confirmation"])
+            satisfied = not first_import or bool(
+                opening
+                and opening["confirmation"]
+                and opening["balance_date"] < analysis["period_start"]
+            )
             requirements.append({"account_id": account_id, "section_id": section["section_id"], "requirement_type": "OPENING_BALANCE", "required": first_import, "satisfied": satisfied, "record": opening})
-        elif section["section_type"] == "BROKERAGE_TRANSACTIONS":
+        elif section["section_type"] == "BROKERAGE":
             existing = [value for value in positions.values() if value["account_id"] == account_id]
-            requirements.append({"account_id": account_id, "section_id": section["section_id"], "requirement_type": "OPENING_SECURITY_POSITIONS", "required": False, "satisfied": True, "records": existing})
+            first_security_import = not any(
+                item["account_id"] == account_id
+                for item in security_transactions(store).values()
+            )
+            satisfied = (
+                not first_security_import
+                or any(
+                    item["valuation_date"] < analysis["period_start"]
+                    for item in existing
+                )
+                or bool(
+                    empty_position_confirmations.get(account_id)
+                    and empty_position_confirmations[account_id]["valuation_date"]
+                    < analysis["period_start"]
+                )
+            )
+            requirements.append({"account_id": account_id, "section_id": section["section_id"], "requirement_type": "OPENING_SECURITY_POSITIONS", "required": first_security_import, "satisfied": satisfied, "records": existing, "empty_confirmation": empty_position_confirmations.get(account_id)})
     return requirements
 
 
@@ -662,62 +1063,180 @@ def import_mapped_sections(
     if not analysis:
         raise MultiAccountImportError("IMPORT_ANALYSIS_NOT_FOUND")
     sections = _load_parsed(store, analysis_id)
+    for section in sections:
+        section["period_start"] = analysis["period_start"]
+        section["period_end"] = analysis["period_end"]
     mappings = section_mappings(store, analysis_id)
     if any(section["section_id"] not in mappings for section in sections):
         raise MultiAccountImportError("IMPORT_SECTION_MAPPING_MISSING")
-    if any(
-        section["section_type"] != "UNKNOWN"
-        and not section["import_supported"]
-        and mappings[section["section_id"]]["action"] != "SKIP_SECTION"
-        for section in sections
-    ):
-        raise MultiAccountImportError("IMPORT_PROFILE_MISMATCH")
-    for requirement in initial_balance_requirements(store, analysis_id):
-        if requirement["required"] and not requirement["satisfied"]:
-            raise MultiAccountImportError("IMPORT_OPENING_BALANCE_REQUIRED")
     if any(section["section_type"] == "UNKNOWN" and mappings[section["section_id"]]["action"] != "SKIP_SECTION" for section in sections):
         raise MultiAccountImportError("IMPORT_UNKNOWN_SECTION")
 
     account_rows: list[tuple[dict[str, Any], dict[str, str], str]] = []
     security_rows: list[tuple[dict[str, Any], dict[str, str], str]] = []
-    empty_sections: list[tuple[dict[str, Any], str]] = []
     section_results: list[dict[str, Any]] = []
+    requirements = {
+        item["section_id"]: item
+        for item in initial_balance_requirements(store, analysis_id)
+    }
+    prior_runs = list(imported_section_runs(store).values())
+    reused_section_ids: set[str] = set()
     for section in sections:
         mapping = mappings[section["section_id"]]
+        warnings = list(section["warnings"])
+        base_result = {
+            "section_id": section["section_id"],
+            "section_type": section["section_type"],
+            "account_id": mapping["account_id"],
+            "period_start": analysis["period_start"],
+            "period_end": analysis["period_end"],
+            "content_hash": section["content_hash"],
+            "record_count": 0,
+            "warnings": warnings,
+        }
         if mapping["action"] == "SKIP_SECTION":
-            section_results.append({"section_id": section["section_id"], "status": "SKIPPED", "record_count": 0})
+            section_results.append({**base_result, "status": "SKIPPED"})
             continue
         account_id = mapping["account_id"]
+        overlapping = [
+            run
+            for run in prior_runs
+            if run["account_id"] == account_id
+            and run["period_start"] == analysis["period_start"]
+            and run["period_end"] == analysis["period_end"]
+            and run["section_type"] == section["section_type"]
+            and run["status"] in {"IMPORTED", "EMPTY_COMPLETED"}
+        ]
+        if import_mode != "FORCE_REIMPORT" and overlapping:
+            same_export = next(
+                (run for run in overlapping if run["export_id"] == analysis_id),
+                None,
+            )
+            if same_export:
+                reused_section_ids.add(section["section_id"])
+                section_results.append(
+                    {
+                        **base_result,
+                        "status": same_export["status"],
+                        "record_count": same_export["record_count"],
+                        "warnings": list(same_export["warnings"]),
+                    }
+                )
+                continue
+            code = (
+                "IMPORT_SECTION_DUPLICATE"
+                if any(run["content_hash"] == section["content_hash"] for run in overlapping)
+                else "IMPORT_PERIOD_OVERLAP"
+            )
+            section_results.append(
+                {**base_result, "status": "REVIEW_REQUIRED", "warnings": warnings + [code]}
+            )
+            continue
+        requirement = requirements.get(section["section_id"])
+        if requirement and requirement["required"] and not requirement["satisfied"]:
+            section_results.append(
+                {
+                    **base_result,
+                    "status": "REVIEW_REQUIRED",
+                    "warnings": warnings + ["IMPORT_OPENING_BALANCE_REQUIRED"],
+                }
+            )
+            continue
+        if not section["import_supported"]:
+            section_results.append(
+                {
+                    **base_result,
+                    "status": "FAILED",
+                    "warnings": warnings + ["IMPORT_PROFILE_MISMATCH"],
+                }
+            )
+            continue
         if section["empty"]:
-            empty_sections.append((section, account_id))
-            section_results.append({"section_id": section["section_id"], "status": "EMPTY_COMPLETED", "record_count": 0})
-        elif section["section_type"] == "BROKERAGE_TRANSACTIONS":
+            section_results.append({**base_result, "status": "EMPTY_COMPLETED"})
+            continue
+        parsed_rows: list[dict[str, str]] = []
+        try:
             for record in section["records"]:
-                parsed = _security_record(record)
-                if not account_accepts_transaction(
-                    store, account_id, parsed["booking_date"]
-                ):
+                parsed = (
+                    _security_record(record)
+                    if section["section_type"] == "BROKERAGE"
+                    else _account_record(record)
+                )
+                if not account_accepts_transaction(store, account_id, parsed["booking_date"]):
                     raise MultiAccountImportError("FINANCE_IMPORT_ACCOUNT_CLOSED")
-                security_rows.append((section, parsed, account_id))
-            section_results.append({"section_id": section["section_id"], "status": "IMPORTED", "record_count": len(section["records"])})
-        else:
-            for record in section["records"]:
-                parsed = _account_record(record)
-                if not account_accepts_transaction(
-                    store, account_id, parsed["booking_date"]
-                ):
-                    raise MultiAccountImportError("FINANCE_IMPORT_ACCOUNT_CLOSED")
-                account_rows.append((section, parsed, account_id))
-            section_results.append({"section_id": section["section_id"], "status": "IMPORTED", "record_count": len(section["records"])})
+                if not analysis["period_start"] <= parsed["booking_date"] <= analysis["period_end"]:
+                    raise MultiAccountImportError("IMPORT_PERIOD_MISMATCH")
+                parsed_rows.append(parsed)
+        except MultiAccountImportError as exc:
+            section_results.append(
+                {
+                    **base_result,
+                    "status": "FAILED",
+                    "warnings": warnings + [str(exc)],
+                }
+            )
+            continue
+        target = security_rows if section["section_type"] == "BROKERAGE" else account_rows
+        target.extend((section, parsed, account_id) for parsed in parsed_rows)
+        section_results.append(
+            {
+                **base_result,
+                "status": "IMPORTED",
+                "record_count": len(parsed_rows),
+            }
+        )
+    newly_completed = bool(account_rows or security_rows) or any(
+        item["status"] == "EMPTY_COMPLETED"
+        and item["section_id"] not in reused_section_ids
+        for item in section_results
+    )
+    if reused_section_ids and not newly_completed and all(
+        item["status"] in {"IMPORTED", "EMPTY_COMPLETED", "SKIPPED"}
+        for item in section_results
+    ):
+        section_results = [
+            {
+                **item,
+                "status": (
+                    "REVIEW_REQUIRED"
+                    if item["section_id"] in reused_section_ids
+                    else item["status"]
+                ),
+                "warnings": (
+                    item["warnings"] + ["IMPORT_SECTION_DUPLICATE"]
+                    if item["section_id"] in reused_section_ids
+                    else item["warnings"]
+                ),
+            }
+            for item in section_results
+        ]
+    statuses = {item["status"] for item in section_results}
+    successful = bool(statuses & {"IMPORTED", "EMPTY_COMPLETED"})
+    if "REVIEW_REQUIRED" in statuses:
+        overall_status = "REVIEW_REQUIRED"
+    elif "FAILED" in statuses and successful:
+        overall_status = "PARTIALLY_COMPLETED"
+    elif "FAILED" in statuses:
+        overall_status = "FAILED"
+    else:
+        overall_status = "COMPLETED"
     preview = {
+        "export_id": analysis_id,
         "import_batch_id": None,
         "section_results": section_results,
         "raw_transaction_count": len(account_rows),
         "normalized_transaction_count": len(account_rows),
         "security_transaction_count": len(security_rows),
-        "empty_section_count": len(empty_sections),
-        "warnings": analysis["warnings"],
-        "status": "VALIDATED" if import_mode == "VALIDATE_ONLY" else "COMPLETED",
+        "possible_relation_match_count": _possible_investment_funding_matches(
+            account_rows, security_rows
+        ),
+        "empty_section_count": sum(item["status"] == "EMPTY_COMPLETED" for item in section_results),
+        "warnings": sorted(
+            set(analysis["warnings"]).union(
+                warning for result in section_results for warning in result["warnings"]
+            )
+        ),
+        "status": "VALIDATED" if import_mode == "VALIDATE_ONLY" else overall_status,
     }
     if import_mode == "VALIDATE_ONLY":
         return preview
@@ -726,7 +1245,10 @@ def import_mapped_sections(
     batch_id = f"imp_multi_{suffix}"
     existing = [event for event in store.events("ImportBatchStarted") if event["aggregate_id"] == batch_id]
     if existing:
-        return {**preview, "import_batch_id": batch_id, "status": "ALREADY_IMPORTED"}
+        if newly_completed:
+            batch_id = f"{batch_id}_retry_{uuid.uuid4().hex}"
+        else:
+            return {**preview, "import_batch_id": batch_id}
     command_id = _id("cmd")
     events: list[dict[str, Any]] = [
         _event("ImportBatchStarted", "ImportBatch", batch_id, 1, command_id, {"import_batch_id": batch_id, "file_hash": analysis["file_hash"], "parser_version": PROFILE_VERSION})
@@ -735,20 +1257,46 @@ def import_mapped_sections(
     for index, (section, row, account_id) in enumerate(account_rows, start=1):
         raw_fields = {key: row[key] for key in ("booking_date", "value_date", "amount", "currency", "counterparty", "description")}
         content_hash = "sha256:" + hashlib.sha256(repr(sorted(raw_fields.items())).encode()).hexdigest()
-        raw_event = _event("RawTransactionImported", "ImportBatch", batch_id, batch_version, command_id, {"import_batch_id": batch_id, "source_record_index": index, "account_id": account_id, "raw_fields": raw_fields, "content_hash": content_hash})
+        raw_event = _event("RawTransactionImported", "ImportBatch", batch_id, batch_version, command_id, {"import_batch_id": batch_id, "export_id": analysis_id, "section_id": section["section_id"], "section_content_hash": section["content_hash"], "source_record_index": index, "account_id": account_id, "raw_fields": raw_fields, "content_hash": content_hash})
         events.append(raw_event)
         batch_version += 1
         transaction_id = "txn_" + hashlib.sha256(f"{batch_id}:{section['section_id']}:{index}:{content_hash}".encode()).hexdigest()[:32]
-        events.append(_event("TransactionNormalized", "Transaction", transaction_id, 1, command_id, {"transaction_id": transaction_id, "raw_transaction_event_id": raw_event["event_id"], "account_id": account_id, "booking_date": row["booking_date"], "value_date": row["value_date"], "amount": row["amount"], "currency": row["currency"], "direction": "CREDIT" if Decimal(row["amount"]) >= 0 else "DEBIT", "counterparty": row["counterparty"], "normalized_description": row["description"], "raw_transaction_type": row["raw_transaction_type"], "transaction_type": row["transaction_type"], "normalization_policy_version": PROFILE_VERSION}))
-    for section, account_id in empty_sections:
-        events.append(_event("EmptyImportSectionProcessed", "ImportSection", f"{batch_id}_{section['section_id']}", 1, command_id, {"import_batch_id": batch_id, "analysis_id": analysis_id, "section_id": section["section_id"], "account_id": account_id, "status": "EMPTY_COMPLETED"}))
+        events.append(_event("TransactionNormalized", "Transaction", transaction_id, 1, command_id, {"transaction_id": transaction_id, "raw_transaction_event_id": raw_event["event_id"], "import_batch_id": batch_id, "export_id": analysis_id, "section_id": section["section_id"], "account_id": account_id, "booking_date": row["booking_date"], "value_date": row["value_date"], "amount": row["amount"], "currency": row["currency"], "direction": "CREDIT" if Decimal(row["amount"]) >= 0 else "DEBIT", "counterparty": row["counterparty"], "normalized_description": row["description"], "raw_transaction_type": row["raw_transaction_type"], "transaction_type": row["transaction_type"], "normalization_policy_version": PROFILE_VERSION}))
     for index, (section, row, account_id) in enumerate(security_rows, start=1):
         transaction_id = "sec_txn_" + hashlib.sha256(f"{batch_id}:{section['section_id']}:{index}:{repr(sorted(row.items()))}".encode()).hexdigest()[:32]
         events.append(_event("SecurityTransactionNormalized", "SecurityTransaction", transaction_id, 1, command_id, {"transaction_id": transaction_id, "import_batch_id": batch_id, "section_id": section["section_id"], "account_id": account_id, **row, "normalization_policy_version": PROFILE_VERSION}))
-    events.append(_event("ImportBatchCompleted", "ImportBatch", batch_id, batch_version, command_id, {"import_batch_id": batch_id, "record_count": len(account_rows)}))
+    for result in section_results:
+        if result["section_id"] in reused_section_ids:
+            continue
+        run_id = f"{batch_id}_{result['section_id']}"
+        events.append(
+            _event(
+                "ImportSectionCompleted",
+                "ImportSectionRun",
+                run_id,
+                1,
+                command_id,
+                {
+                    "section_run_id": run_id,
+                    "import_batch_id": batch_id,
+                    "export_id": analysis_id,
+                    **result,
+                },
+            )
+        )
+        if result["status"] == "EMPTY_COMPLETED":
+            events.append(_event("EmptyImportSectionProcessed", "ImportSection", run_id, 1, command_id, {"import_batch_id": batch_id, "analysis_id": analysis_id, "export_id": analysis_id, "section_id": result["section_id"], "account_id": result["account_id"], "status": "EMPTY_COMPLETED"}))
+    events.append(_event("ImportBatchCompleted", "ImportBatch", batch_id, batch_version, command_id, {"import_batch_id": batch_id, "record_count": len(account_rows), "status": overall_status, "section_count": len(section_results)}))
     _append(store, "ImportMappedSections", batch_id, events)
-    store.update_import_status(analysis["file_hash"], "IMPORTED")
+    store.update_import_status(analysis["file_hash"], overall_status)
     return {**preview, "import_batch_id": batch_id}
+
+
+def imported_section_runs(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
+    return {
+        event["aggregate_id"]: event["payload"]
+        for event in store.events("ImportSectionCompleted")
+    }
 
 
 def _latest_relations(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
@@ -822,12 +1370,27 @@ def reconcile_imported_period_balance(
     account_id: str,
     period_start: str,
     period_end: str,
+    section_id: str | None = None,
 ) -> dict[str, Any]:
     from .reconciliation import reconciled_transactions
 
     start, end = date.fromisoformat(period_start), date.fromisoformat(period_end)
     if start > end or account_id not in accounts(store):
         raise StoreInvariantError("FINANCE_BALANCE_RECONCILIATION_INVALID")
+    candidates = [
+        run
+        for run in imported_section_runs(store).values()
+        if run["account_id"] == account_id
+        and run["period_start"] == period_start
+        and run["period_end"] == period_end
+        and run["section_type"] in {"CHECKING", "SAVINGS"}
+        and run["status"] in {"IMPORTED", "EMPTY_COMPLETED"}
+        and (section_id is None or run["section_id"] == section_id)
+    ]
+    if len(candidates) != 1:
+        raise StoreInvariantError("FINANCE_IMPORT_SECTION_RECONCILIATION_AMBIGUOUS")
+    section_run = candidates[0]
+    section_id = section_run["section_id"]
     opening = opening_balances(store).get(account_id)
     closing = closing_balances(store).get(account_id)
     status = "MATCHED"
@@ -844,17 +1407,19 @@ def reconcile_imported_period_balance(
             booked = date.fromisoformat(item["booking_date"])
             if item["account_id"] != account_id or not start <= booked <= end:
                 continue
+            if item.get("section_id") != section_id:
+                continue
             if reconciliation[item["transaction_id"]]["duplicate_status"] == "CONFIRMED":
                 continue
             calculated += Decimal(item["amount"])
             relevant_count += 1
-        if not closing or not closing["confirmation"] or date.fromisoformat(closing["balance_date"]) > end:
+        if not closing or not closing["confirmation"] or date.fromisoformat(closing["balance_date"]) != end:
             status = "NO_REPORTED_CLOSING_BALANCE"
         else:
             difference = Decimal(closing["booked_balance"]) - calculated
             status = "MATCHED" if difference == 0 else "DIFFERENCE"
-    reconciliation_id = "import_balance_" + hashlib.sha256(f"{account_id}:{period_start}:{period_end}".encode()).hexdigest()[:24]
-    payload = {"reconciliation_id": reconciliation_id, "account_id": account_id, "period_start": period_start, "period_end": period_end, "opening_balance": opening["booked_balance"] if opening else None, "calculated_closing_balance": str(calculated) if calculated is not None else None, "reported_closing_balance": closing["booked_balance"] if closing else None, "balance_difference": str(difference) if difference is not None else None, "relevant_transaction_count": relevant_count, "status": status, "reconciled_at": _now()}
+    reconciliation_id = "import_balance_" + hashlib.sha256(f"{account_id}:{section_id}:{period_start}:{period_end}".encode()).hexdigest()[:24]
+    payload = {"reconciliation_id": reconciliation_id, "export_id": section_run["export_id"], "section_id": section_id, "section_type": section_run["section_type"], "account_id": account_id, "period_start": period_start, "period_end": period_end, "opening_balance": opening["booked_balance"] if opening else None, "calculated_closing_balance": str(calculated) if calculated is not None else None, "reported_closing_balance": closing["booked_balance"] if closing else None, "balance_difference": str(difference) if difference is not None else None, "relevant_transaction_count": relevant_count, "status": status, "reconciled_at": _now()}
     command_id = _id("cmd")
     marker = store.events()[-1]["sequence_number"] if store.events() else 0
     _append(store, "ReconcileImportedPeriodBalance", f"{reconciliation_id}:{marker}", [_event("ImportedPeriodBalanceReconciled", "ImportedPeriodBalance", reconciliation_id, store.next_aggregate_version("ImportedPeriodBalance", reconciliation_id), command_id, payload)])
@@ -868,6 +1433,141 @@ def imported_period_reconciliations(store: LocalFinanceStore) -> dict[str, dict[
     return result
 
 
+def reconcile_imported_security_positions(
+    store: LocalFinanceStore,
+    *,
+    account_id: str,
+    period_start: str,
+    period_end: str,
+    section_id: str | None = None,
+) -> dict[str, Any]:
+    start, end = date.fromisoformat(period_start), date.fromisoformat(period_end)
+    candidates = [
+        run
+        for run in imported_section_runs(store).values()
+        if run["account_id"] == account_id
+        and run["period_start"] == period_start
+        and run["period_end"] == period_end
+        and run["section_type"] == "BROKERAGE"
+        and run["status"] in {"IMPORTED", "EMPTY_COMPLETED"}
+        and (section_id is None or run["section_id"] == section_id)
+    ]
+    if start > end or len(candidates) != 1:
+        raise StoreInvariantError("FINANCE_IMPORT_SECTION_RECONCILIATION_AMBIGUOUS")
+    section_run = candidates[0]
+    section_id = section_run["section_id"]
+    opening = {
+        item["security_identifier"]: Decimal(item["quantity"])
+        for item in opening_security_positions(store).values()
+        if item["account_id"] == account_id
+        and date.fromisoformat(item["valuation_date"]) < start
+    }
+    empty_confirmation = empty_opening_security_position_confirmations(store).get(
+        account_id
+    )
+    status = "MATCHED"
+    calculated = dict(opening)
+    unknown_transactions = 0
+    if not opening and not (
+        empty_confirmation
+        and date.fromisoformat(empty_confirmation["valuation_date"]) < start
+    ):
+        status = "MISSING_OPENING_POSITIONS"
+    else:
+        for item in security_transactions(store).values():
+            if (
+                item["account_id"] != account_id
+                or item["section_id"] != section_id
+                or not start <= date.fromisoformat(item["booking_date"]) <= end
+            ):
+                continue
+            identifier = item["security_identifier"]
+            quantity = abs(Decimal(item["quantity"]))
+            if item["transaction_type"] == "INVESTMENT_PURCHASE":
+                calculated[identifier] = calculated.get(identifier, Decimal("0")) + quantity
+            elif item["transaction_type"] == "INVESTMENT_SALE":
+                calculated[identifier] = calculated.get(identifier, Decimal("0")) - quantity
+            else:
+                unknown_transactions += 1
+        reported = {
+            item["security_identifier"]: Decimal(item["quantity"])
+            for item in closing_security_positions(store).values()
+            if item["account_id"] == account_id
+            and date.fromisoformat(item["valuation_date"]) == end
+        }
+        if unknown_transactions:
+            status = "REVIEW_REQUIRED"
+        elif not reported:
+            status = "NO_REPORTED_CLOSING_POSITIONS"
+        elif reported != calculated:
+            status = "DIFFERENCE"
+        else:
+            status = "MATCHED"
+    reported_values = {
+        item["security_identifier"]: item["quantity"]
+        for item in closing_security_positions(store).values()
+        if item["account_id"] == account_id
+        and date.fromisoformat(item["valuation_date"]) == end
+    }
+    identifiers = sorted(set(calculated) | set(reported_values))
+    differences = {
+        identifier: str(
+            Decimal(reported_values.get(identifier, "0"))
+            - calculated.get(identifier, Decimal("0"))
+        )
+        for identifier in identifiers
+    }
+    reconciliation_id = "security_balance_" + hashlib.sha256(
+        f"{account_id}:{section_id}:{period_start}:{period_end}".encode()
+    ).hexdigest()[:24]
+    payload = {
+        "reconciliation_id": reconciliation_id,
+        "export_id": section_run["export_id"],
+        "section_id": section_id,
+        "section_type": "BROKERAGE",
+        "account_id": account_id,
+        "period_start": period_start,
+        "period_end": period_end,
+        "calculated_positions": {
+            key: str(value) for key, value in sorted(calculated.items())
+        },
+        "reported_positions": dict(sorted(reported_values.items())),
+        "position_differences": differences,
+        "unknown_transaction_count": unknown_transactions,
+        "status": status,
+        "reconciled_at": _now(),
+    }
+    command_id = _id("cmd")
+    marker = store.events()[-1]["sequence_number"] if store.events() else 0
+    _append(
+        store,
+        "ReconcileImportedSecurityPositions",
+        f"{reconciliation_id}:{marker}",
+        [
+            _event(
+                "ImportedSecurityPositionsReconciled",
+                "ImportedSecurityPositions",
+                reconciliation_id,
+                store.next_aggregate_version(
+                    "ImportedSecurityPositions", reconciliation_id
+                ),
+                command_id,
+                payload,
+            )
+        ],
+    )
+    return payload
+
+
+def imported_security_position_reconciliations(
+    store: LocalFinanceStore,
+) -> dict[str, dict[str, Any]]:
+    return {
+        event["aggregate_id"]: event["payload"]
+        for event in store.events("ImportedSecurityPositionsReconciled")
+    }
+
+
 __all__ = [
     "PROFILE_ID",
     "PROFILE_VERSION",
@@ -875,23 +1575,33 @@ __all__ = [
     "analyze_import_file",
     "break_investment_funding_relation",
     "closing_balances",
+    "closing_security_positions",
+    "confirm_empty_opening_security_positions",
     "confirm_investment_funding_relation",
     "detect_investment_funding_relations",
     "get_import_analysis",
+    "get_bank_monthly_export",
     "get_import_section_preview",
     "import_mapped_sections",
     "imported_period_reconciliations",
+    "imported_section_runs",
+    "imported_security_position_reconciliations",
     "initial_balance_requirements",
     "investment_funding_relations",
     "list_import_sections",
     "map_import_sections",
     "opening_balances",
+    "opening_security_positions",
     "parse_german_decimal",
+    "parse_german_quantity",
     "reconcile_imported_period_balance",
+    "reconcile_imported_security_positions",
     "record_closing_balance",
+    "record_closing_security_position",
     "record_opening_balance",
     "record_opening_security_position",
     "reject_investment_funding_relation",
     "security_positions",
     "security_transactions",
+    "section_bindings",
 ]

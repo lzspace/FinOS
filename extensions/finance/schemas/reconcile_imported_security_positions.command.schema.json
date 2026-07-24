@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://agent-os.local/finance/schemas/reconcile_imported_security_positions.command.schema.json","$ref":"multi_account_import_commands.schema.json"}

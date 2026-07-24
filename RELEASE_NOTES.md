@@ -1,16 +1,25 @@
 # Agent OS Finance 1.1.0
 
-Version 1.1.0 adds the explicit `GermanMultiAccountCsvV1` profile for local
-German bank exports. It analyzes CP1252 or UTF-8 semicolon files before import,
-detects checking, savings and brokerage sections, requires explicit account
-mapping and confirmed opening balances, handles empty sections, and normalizes
-cash and security transactions as separate event streams.
+Version 1.1.0 adds the explicit, file-centric `GermanMultiAccountCsvV1` profile
+for local German bank exports. Each export represents exactly one bank and one
+calendar month with ordered checking, savings and brokerage sections. It
+analyzes CP1252 or UTF-8 semicolon files before import, requires visible account
+mapping and confirmed opening values, persists reusable bank/section/account
+bindings, handles empty sections and isolates section failures. Cash and
+security transactions remain separate event streams.
 
 Opening and reported closing balances remain independent snapshots. Period
 reconciliation reports calculated and reported balances plus any difference
 without correcting it. Matching checking debits and brokerage purchases can be
 confirmed as `INVESTMENT_FUNDING`, which keeps both account-level records while
 excluding the pure asset transfer from consumption cashflow.
+
+Duplicate and overlap protection is evaluated for every account section from
+account, complete reporting month, section type and content hash. A renamed
+file therefore cannot silently re-import the same section. Overall imports use
+`COMPLETED`, `PARTIALLY_COMPLETED`, `REVIEW_REQUIRED` or `FAILED`; each section
+uses `IMPORTED`, `EMPTY_COMPLETED`, `SKIPPED`, `REVIEW_REQUIRED` or `FAILED`.
+Brokerage closing positions are reconciled independently from cash balances.
 
 The store stays at schema 3. Contract package 1.2.0 is additive and remains
 compatible with existing 1.0.0 workspaces. No real bank file is included in

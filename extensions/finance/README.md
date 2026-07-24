@@ -52,6 +52,14 @@ runner, complete signed release-set verification, measured capacity boundaries
 and final support/release documentation. Store schema 3, event schema 1.0.0 and
 contract package 1.1.0 remain independently versioned.
 
+Version 1.1.0 defines `GermanMultiAccountCsvV1` as one monthly export from one
+bank containing ordered `CHECKING`, `SAVINGS` and `BROKERAGE` sections. The
+`BankMonthlyExport` aggregate owns the source hash and aggregate result, while
+every `BankAccountSection` carries its own type, account mapping, content hash,
+status and cash-balance or security-position reconciliation. Confirmed local
+bindings are reused as visible proposals; renamed files do not bypass
+section-level duplicate and overlap checks.
+
 ## Binding security invariants
 
 - `storage_scope` is `LOCAL_DEVICE_ONLY`.

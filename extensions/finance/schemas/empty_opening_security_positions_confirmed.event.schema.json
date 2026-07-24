@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://agent-os.local/finance/schemas/empty_opening_security_positions_confirmed.event.schema.json","$ref":"multi_account_import_events.schema.json"}

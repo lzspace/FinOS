@@ -1,1 +1,62 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://agent-os.local/finance/schemas/vertical_slice_events.schema.json","oneOf":[{"$ref":"#/$defs/ImportBatchStarted"},{"$ref":"#/$defs/RawTransactionImported"},{"$ref":"#/$defs/ImportBatchCompleted"},{"$ref":"#/$defs/TransactionNormalized"}],"$defs":{"Base":{"type":"object","additionalProperties":false,"required":["schema_version","event_id","event_type","aggregate_type","aggregate_id","aggregate_version","occurred_at","correlation_id","causation_id","payload"],"properties":{"schema_version":{"const":"1.0.0"},"event_id":{"type":"string","pattern":"^evt_[a-f0-9]{32}$"},"event_type":{"type":"string"},"aggregate_type":{"type":"string"},"aggregate_id":{"type":"string"},"aggregate_version":{"type":"integer","minimum":1},"occurred_at":{"type":"string","format":"date-time"},"correlation_id":{"type":"string"},"causation_id":{"type":"string"},"payload":{"type":"object"}}},"ImportBatchStarted":{"allOf":[{"$ref":"#/$defs/Base"},{"properties":{"event_type":{"const":"ImportBatchStarted"},"aggregate_type":{"const":"ImportBatch"},"payload":{"type":"object","additionalProperties":false,"required":["import_batch_id","file_hash","parser_version"],"properties":{"import_batch_id":{"type":"string"},"file_hash":{"type":"string","pattern":"^[a-f0-9]{64}$"},"parser_version":{"enum":["1.0.0","GermanMultiAccountCsvV1@1.0.0"]}}}}}]},"RawTransactionImported":{"allOf":[{"$ref":"#/$defs/Base"},{"properties":{"event_type":{"const":"RawTransactionImported"},"payload":{"type":"object","additionalProperties":false,"required":["import_batch_id","source_record_index","account_id","raw_fields","content_hash"],"properties":{"import_batch_id":{"type":"string"},"source_record_index":{"type":"integer","minimum":1},"account_id":{"type":"string"},"raw_fields":{"type":"object","additionalProperties":false,"required":["booking_date","value_date","amount","currency","counterparty","description"],"properties":{"booking_date":{"type":"string"},"value_date":{"type":"string"},"amount":{"type":"string"},"currency":{"type":"string"},"counterparty":{"type":"string"},"description":{"type":"string"}}},"content_hash":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"}}}}}]},"ImportBatchCompleted":{"allOf":[{"$ref":"#/$defs/Base"},{"properties":{"event_type":{"const":"ImportBatchCompleted"},"payload":{"type":"object","additionalProperties":false,"required":["import_batch_id","record_count"],"properties":{"import_batch_id":{"type":"string"},"record_count":{"type":"integer","minimum":0}}}}}]},"TransactionNormalized":{"allOf":[{"$ref":"#/$defs/Base"},{"properties":{"event_type":{"const":"TransactionNormalized"},"aggregate_type":{"const":"Transaction"},"payload":{"type":"object","additionalProperties":false,"required":["transaction_id","raw_transaction_event_id","account_id","booking_date","value_date","amount","currency","direction","counterparty","normalized_description","transaction_type","normalization_policy_version"],"properties":{"transaction_id":{"type":"string"},"raw_transaction_event_id":{"type":"string"},"account_id":{"type":"string"},"booking_date":{"type":"string","format":"date"},"value_date":{"type":"string","format":"date"},"amount":{"type":"string","pattern":"^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,8})?$"},"currency":{"type":"string","pattern":"^[A-Z]{3}$"},"direction":{"enum":["DEBIT","CREDIT"]},"counterparty":{"type":"string"},"normalized_description":{"type":"string"},"raw_transaction_type":{"type":"string"},"transaction_type":{"enum":["INCOME","EXPENSE","FEE","INVESTMENT_PURCHASE_FUNDING","TRANSFER_OR_PAYMENT_REVIEW"]},"normalization_policy_version":{"const":"1.0.0"}}}}}]}}}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/vertical_slice_events.schema.json",
+  "allOf": [
+    { "$ref": "#/$defs/Base" },
+    { "oneOf": [
+      { "$ref": "#/$defs/ImportBatchStarted" },
+      { "$ref": "#/$defs/RawTransactionImported" },
+      { "$ref": "#/$defs/ImportBatchCompleted" },
+      { "$ref": "#/$defs/TransactionNormalized" }
+    ] }
+  ],
+  "$defs": {
+    "Base": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "event_id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "occurred_at", "correlation_id", "causation_id", "payload"],
+      "properties": {
+        "schema_version": { "const": "1.0.0" }, "event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "event_type": { "type": "string" }, "aggregate_type": { "type": "string" }, "aggregate_id": { "type": "string" },
+        "aggregate_version": { "type": "integer", "minimum": 1 }, "occurred_at": { "type": "string", "format": "date-time" },
+        "correlation_id": { "type": "string" }, "causation_id": { "type": "string" }, "payload": { "type": "object" }
+      }
+    },
+    "ImportBatchStarted": {
+      "properties": { "event_type": { "const": "ImportBatchStarted" }, "aggregate_type": { "const": "ImportBatch" }, "payload": {
+        "type": "object", "additionalProperties": false, "required": ["import_batch_id", "file_hash", "parser_version"],
+        "properties": { "import_batch_id": { "type": "string" }, "file_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "parser_version": { "enum": ["1.0.0", "GermanMultiAccountCsvV1@1.0.0"] } }
+      } }, "required": ["event_type", "aggregate_type", "payload"]
+    },
+    "RawTransactionImported": {
+      "properties": { "event_type": { "const": "RawTransactionImported" }, "payload": {
+        "type": "object", "additionalProperties": false, "required": ["import_batch_id", "source_record_index", "account_id", "raw_fields", "content_hash"],
+        "properties": {
+          "import_batch_id": { "type": "string" }, "export_id": { "type": "string" }, "section_id": { "type": "string" }, "section_content_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "source_record_index": { "type": "integer", "minimum": 1 }, "account_id": { "type": "string" },
+          "raw_fields": { "type": "object", "additionalProperties": false, "required": ["booking_date", "value_date", "amount", "currency", "counterparty", "description"],
+            "properties": { "booking_date": { "type": "string" }, "value_date": { "type": "string" }, "amount": { "type": "string" }, "currency": { "type": "string" }, "counterparty": { "type": "string" }, "description": { "type": "string" } } },
+          "content_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+        }
+      } }, "required": ["event_type", "payload"]
+    },
+    "ImportBatchCompleted": {
+      "properties": { "event_type": { "const": "ImportBatchCompleted" }, "payload": {
+        "type": "object", "additionalProperties": false, "required": ["import_batch_id", "record_count"],
+        "properties": { "import_batch_id": { "type": "string" }, "record_count": { "type": "integer", "minimum": 0 }, "status": { "enum": ["COMPLETED", "PARTIALLY_COMPLETED", "REVIEW_REQUIRED", "FAILED"] }, "section_count": { "type": "integer", "minimum": 0 } }
+      } }, "required": ["event_type", "payload"]
+    },
+    "TransactionNormalized": {
+      "properties": { "event_type": { "const": "TransactionNormalized" }, "aggregate_type": { "const": "Transaction" }, "payload": {
+        "type": "object", "additionalProperties": false,
+        "required": ["transaction_id", "raw_transaction_event_id", "account_id", "booking_date", "value_date", "amount", "currency", "direction", "counterparty", "normalized_description", "transaction_type", "normalization_policy_version"],
+        "properties": {
+          "transaction_id": { "type": "string" }, "raw_transaction_event_id": { "type": "string" }, "import_batch_id": { "type": "string" }, "export_id": { "type": "string" }, "section_id": { "type": "string" },
+          "account_id": { "type": "string" }, "booking_date": { "type": "string", "format": "date" }, "value_date": { "type": "string", "format": "date" },
+          "amount": { "type": "string" }, "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }, "direction": { "enum": ["DEBIT", "CREDIT"] },
+          "counterparty": { "type": "string" }, "normalized_description": { "type": "string" }, "raw_transaction_type": { "type": "string" },
+          "transaction_type": { "enum": ["INCOME", "EXPENSE", "FEE", "INVESTMENT_PURCHASE_FUNDING", "TRANSFER_OR_PAYMENT_REVIEW"] }, "normalization_policy_version": { "const": "1.0.0" }
+        }
+      } }, "required": ["event_type", "aggregate_type", "payload"]
+    }
+  }
+}

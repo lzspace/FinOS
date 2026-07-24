@@ -45,17 +45,23 @@ from .multi_account_import import (
     analyze_import_file,
     closing_balances,
     confirm_investment_funding_relation,
+    confirm_empty_opening_security_positions,
     detect_investment_funding_relations,
     import_mapped_sections,
     imported_period_reconciliations,
+    imported_section_runs,
+    imported_security_position_reconciliations,
     investment_funding_relations,
     map_import_sections,
     opening_balances,
     reconcile_imported_period_balance,
+    reconcile_imported_security_positions,
     record_closing_balance,
+    record_closing_security_position,
     record_opening_balance,
     security_positions,
     security_transactions,
+    section_bindings,
 )
 from .reconciliation import (
     confirm_duplicate,
@@ -164,12 +170,15 @@ def _projection_snapshot(store: LocalFinanceStore) -> dict[str, Any]:
         "import_analyses": [
             event["payload"] for event in store.events("ImportFileAnalyzed")
         ],
+        "import_section_bindings": section_bindings(store),
+        "import_section_runs": imported_section_runs(store),
         "opening_balances": opening_balances(store),
         "closing_balances": closing_balances(store),
         "security_transactions": security_transactions(store),
         "security_positions": security_positions(store),
         "investment_funding_relations": investment_funding_relations(store),
         "imported_period_reconciliations": imported_period_reconciliations(store),
+        "imported_security_position_reconciliations": imported_security_position_reconciliations(store),
     }
     return _json_safe(snapshot)
 
@@ -313,6 +322,7 @@ def run_acceptance(
         german_source = root / "synthetic-german-multi-account.csv"
         german_source.write_bytes(
             (
+                "Bank;SYNTHETIC_BANK\n"
                 "Umsätze Girokonto\n"
                 "Buchungstag;Wertstellung (Valuta);Vorgang;Buchungstext;Umsatz in EUR\n"
                 "01.12.24;02.12.24;Lastschrift/Belastung;Synthetischer Einkauf;-36,85\n"
@@ -325,9 +335,9 @@ def run_acceptance(
         )
         analysis = analyze_import_file(store, german_source)
         account_by_section = {
-            "CHECKING_TRANSACTIONS": "acc_import_checking",
-            "SAVINGS_TRANSACTIONS": "acc_import_savings",
-            "BROKERAGE_TRANSACTIONS": "acc_import_brokerage",
+            "CHECKING": "acc_import_checking",
+            "SAVINGS": "acc_import_savings",
+            "BROKERAGE": "acc_import_brokerage",
         }
         map_import_sections(
             store,
@@ -356,6 +366,11 @@ def run_acceptance(
                 confirmation=True,
                 comment="Synthetic acceptance balance",
             )
+        confirm_empty_opening_security_positions(
+            store,
+            account_id="acc_import_brokerage",
+            valuation_date="2024-11-30",
+        )
         multi_result = import_mapped_sections(store, analysis["analysis_id"])
         if multi_result["normalized_transaction_count"] != 2:
             raise AssertionError("FINANCE_ACCEPTANCE_MULTI_IMPORT_FAILED")
@@ -381,6 +396,24 @@ def run_acceptance(
         )
         if imported_balance["status"] != "MATCHED":
             raise AssertionError("FINANCE_ACCEPTANCE_IMPORTED_BALANCE_FAILED")
+        record_closing_security_position(
+            store,
+            account_id="acc_import_brokerage",
+            valuation_date="2024-12-31",
+            security_identifier_type="WKN",
+            security_identifier="ABC123",
+            security_name="Synthetischer Fonds",
+            quantity="10",
+            confirmation=True,
+        )
+        imported_positions = reconcile_imported_security_positions(
+            store,
+            account_id="acc_import_brokerage",
+            period_start="2024-12-01",
+            period_end="2024-12-31",
+        )
+        if imported_positions["status"] != "MATCHED":
+            raise AssertionError("FINANCE_ACCEPTANCE_IMPORTED_POSITIONS_FAILED")
 
         for value, category in (
             ("Employer Synthetic", "INCOME_SALARY"),

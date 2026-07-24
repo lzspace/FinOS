@@ -16,7 +16,9 @@ declare global {
 const supportedCommands = new Set([
   "ImportTransactions", "AnalyzeImportFile", "MapImportSections",
   "ImportMappedSections", "RecordOpeningBalance", "RecordClosingBalance",
-  "RecordOpeningSecurityPosition", "ReconcileImportedPeriodBalance",
+  "RecordOpeningSecurityPosition", "ConfirmEmptyOpeningSecurityPositions",
+  "RecordClosingSecurityPosition", "ReconcileImportedPeriodBalance",
+  "ReconcileImportedSecurityPositions",
   "DetectInvestmentFundingRelations", "ConfirmInvestmentFundingRelation",
   "RejectInvestmentFundingRelation", "BreakInvestmentFundingRelation",
   "ClassifyTransactions", "ConfirmClassification",

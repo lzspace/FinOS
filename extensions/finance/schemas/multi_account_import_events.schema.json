@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-os.local/finance/schemas/multi_account_import_events.schema.json",
-  "title": "German multi-account import events 1.0.0",
+  "title": "File-centric German multi-account import events 1.1.0",
   "allOf": [
     { "$ref": "#/$defs/EventBase" },
     {
@@ -9,16 +9,21 @@
         { "$ref": "#/$defs/ImportFileAnalyzed" },
         { "$ref": "#/$defs/ImportSectionMapped" },
         { "$ref": "#/$defs/ImportSectionSkipped" },
+        { "$ref": "#/$defs/ImportSectionBindingConfirmed" },
+        { "$ref": "#/$defs/ImportSectionCompleted" },
         { "$ref": "#/$defs/EmptyImportSectionProcessed" },
         { "$ref": "#/$defs/OpeningBalanceRecorded" },
         { "$ref": "#/$defs/ClosingBalanceRecorded" },
         { "$ref": "#/$defs/SecurityTransactionNormalized" },
         { "$ref": "#/$defs/OpeningSecurityPositionRecorded" },
+        { "$ref": "#/$defs/EmptyOpeningSecurityPositionsConfirmed" },
+        { "$ref": "#/$defs/ClosingSecurityPositionRecorded" },
         { "$ref": "#/$defs/InvestmentFundingRelationProposed" },
         { "$ref": "#/$defs/InvestmentFundingRelationConfirmed" },
         { "$ref": "#/$defs/InvestmentFundingRelationRejected" },
         { "$ref": "#/$defs/InvestmentFundingRelationBroken" },
-        { "$ref": "#/$defs/ImportedPeriodBalanceReconciled" }
+        { "$ref": "#/$defs/ImportedPeriodBalanceReconciled" },
+        { "$ref": "#/$defs/ImportedSecurityPositionsReconciled" }
       ]
     }
   ],
@@ -40,43 +45,55 @@
         "payload": { "type": "object" }
       }
     },
+    "SectionType": { "enum": ["CHECKING", "SAVINGS", "BROKERAGE", "UNKNOWN"] },
+    "SectionStatus": { "enum": ["ANALYZED", "IMPORTED", "EMPTY_COMPLETED", "SKIPPED", "REVIEW_REQUIRED", "FAILED"] },
     "ImportSection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["section_id", "section_type", "original_title", "period_start", "period_end", "record_count", "empty", "detected_columns", "proposed_account_type", "import_supported", "warnings"],
+      "required": ["section_id", "section_type", "original_title", "account_reference", "period_start", "period_end", "record_count", "empty", "detected_columns", "proposed_account_type", "import_supported", "warnings", "content_hash", "mapped_account_id", "import_status", "section_index"],
       "properties": {
-        "section_id": { "type": "string" },
-        "section_type": { "enum": ["CHECKING_TRANSACTIONS", "SAVINGS_TRANSACTIONS", "BROKERAGE_TRANSACTIONS", "UNKNOWN"] },
-        "original_title": { "type": "string" },
-        "period_start": { "type": ["string", "null"], "format": "date" },
-        "period_end": { "type": ["string", "null"], "format": "date" },
+        "section_id": { "type": "string", "minLength": 1 },
+        "section_type": { "$ref": "#/$defs/SectionType" },
+        "original_title": { "type": "string", "minLength": 1 },
+        "account_reference": { "type": ["string", "null"] },
+        "period_start": { "type": "string", "format": "date" },
+        "period_end": { "type": "string", "format": "date" },
         "record_count": { "type": "integer", "minimum": 0 },
         "empty": { "type": "boolean" },
         "detected_columns": { "type": "array", "items": { "type": "string" } },
         "proposed_account_type": { "type": ["string", "null"] },
         "import_supported": { "type": "boolean" },
-        "warnings": { "type": "array", "items": { "type": "string" } }
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "content_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "mapped_account_id": { "type": ["string", "null"] },
+        "import_status": { "$ref": "#/$defs/SectionStatus" },
+        "section_index": { "type": "integer", "minimum": 0 }
       }
     },
     "ImportFileAnalyzed": {
       "properties": {
         "event_type": { "const": "ImportFileAnalyzed" },
-        "aggregate_type": { "const": "ImportAnalysis" },
+        "aggregate_type": { "const": "BankMonthlyExport" },
         "payload": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["analysis_id", "detected_profile", "profile_version", "encoding", "delimiter", "period_start", "period_end", "sections", "warnings", "file_hash", "file_size", "status"],
+          "required": ["export_id", "analysis_id", "bank_identifier", "detected_profile", "import_profile", "profile_version", "encoding", "delimiter", "period_start", "period_end", "report_month", "sections", "warnings", "file_hash", "source_file_hash", "file_size", "status"],
           "properties": {
-            "analysis_id": { "type": "string" },
+            "export_id": { "type": "string", "minLength": 1 },
+            "analysis_id": { "type": "string", "minLength": 1 },
+            "bank_identifier": { "type": "string", "minLength": 1, "maxLength": 128 },
             "detected_profile": { "const": "GermanMultiAccountCsvV1" },
+            "import_profile": { "const": "GermanMultiAccountCsvV1" },
             "profile_version": { "const": "1.0.0" },
             "encoding": { "enum": ["cp1252", "utf-8"] },
             "delimiter": { "const": ";" },
-            "period_start": { "type": ["string", "null"], "format": "date" },
-            "period_end": { "type": ["string", "null"], "format": "date" },
+            "period_start": { "type": "string", "format": "date" },
+            "period_end": { "type": "string", "format": "date" },
+            "report_month": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}$" },
             "sections": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ImportSection" } },
             "warnings": { "type": "array", "items": { "type": "string" } },
             "file_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "source_file_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
             "file_size": { "type": "integer", "minimum": 1 },
             "status": { "const": "ANALYZED" }
           }
@@ -87,11 +104,15 @@
     "MappingPayload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["analysis_id", "section_id", "section_type", "account_id", "action", "status", "mapped_at"],
+      "required": ["analysis_id", "export_id", "bank_identifier", "section_id", "section_type", "original_title", "account_reference", "account_id", "action", "status", "mapped_at"],
       "properties": {
         "analysis_id": { "type": "string" },
+        "export_id": { "type": "string" },
+        "bank_identifier": { "type": "string", "minLength": 1 },
         "section_id": { "type": "string" },
-        "section_type": { "enum": ["CHECKING_TRANSACTIONS", "SAVINGS_TRANSACTIONS", "BROKERAGE_TRANSACTIONS", "UNKNOWN"] },
+        "section_type": { "$ref": "#/$defs/SectionType" },
+        "original_title": { "type": "string" },
+        "account_reference": { "type": ["string", "null"] },
         "account_id": { "type": ["string", "null"] },
         "action": { "enum": ["USE_EXISTING_ACCOUNT", "CREATE_ACCOUNT", "SKIP_SECTION"] },
         "status": { "enum": ["MAPPED", "SKIPPED"] },
@@ -100,14 +121,47 @@
     },
     "ImportSectionMapped": { "properties": { "event_type": { "const": "ImportSectionMapped" }, "aggregate_type": { "const": "ImportSectionMapping" }, "payload": { "$ref": "#/$defs/MappingPayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
     "ImportSectionSkipped": { "properties": { "event_type": { "const": "ImportSectionSkipped" }, "aggregate_type": { "const": "ImportSectionMapping" }, "payload": { "$ref": "#/$defs/MappingPayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
-    "EmptyImportSectionProcessed": {
+    "ImportSectionBindingConfirmed": {
       "properties": {
-        "event_type": { "const": "EmptyImportSectionProcessed" },
-        "aggregate_type": { "const": "ImportSection" },
+        "event_type": { "const": "ImportSectionBindingConfirmed" },
+        "aggregate_type": { "const": "ImportSectionBinding" },
         "payload": {
           "type": "object", "additionalProperties": false,
-          "required": ["import_batch_id", "analysis_id", "section_id", "account_id", "status"],
-          "properties": { "import_batch_id": { "type": "string" }, "analysis_id": { "type": "string" }, "section_id": { "type": "string" }, "account_id": { "type": "string" }, "status": { "const": "EMPTY_COMPLETED" } }
+          "required": ["binding_id", "bank_identifier", "section_type", "original_title", "account_reference", "account_id", "confirmed_at"],
+          "properties": {
+            "binding_id": { "type": "string" }, "bank_identifier": { "type": "string" }, "section_type": { "$ref": "#/$defs/SectionType" },
+            "original_title": { "type": "string" }, "account_reference": { "type": ["string", "null"] }, "account_id": { "type": "string" },
+            "confirmed_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "required": ["event_type", "aggregate_type", "payload"]
+    },
+    "ImportSectionCompleted": {
+      "properties": {
+        "event_type": { "const": "ImportSectionCompleted" },
+        "aggregate_type": { "const": "ImportSectionRun" },
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["section_run_id", "import_batch_id", "export_id", "section_id", "section_type", "account_id", "period_start", "period_end", "content_hash", "record_count", "warnings", "status"],
+          "properties": {
+            "section_run_id": { "type": "string" }, "import_batch_id": { "type": "string" }, "export_id": { "type": "string" },
+            "section_id": { "type": "string" }, "section_type": { "$ref": "#/$defs/SectionType" }, "account_id": { "type": ["string", "null"] },
+            "period_start": { "type": "string", "format": "date" }, "period_end": { "type": "string", "format": "date" },
+            "content_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "record_count": { "type": "integer", "minimum": 0 },
+            "warnings": { "type": "array", "items": { "type": "string" } }, "status": { "$ref": "#/$defs/SectionStatus" }
+          }
+        }
+      },
+      "required": ["event_type", "aggregate_type", "payload"]
+    },
+    "EmptyImportSectionProcessed": {
+      "properties": {
+        "event_type": { "const": "EmptyImportSectionProcessed" }, "aggregate_type": { "const": "ImportSection" },
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["import_batch_id", "analysis_id", "export_id", "section_id", "account_id", "status"],
+          "properties": { "import_batch_id": { "type": "string" }, "analysis_id": { "type": "string" }, "export_id": { "type": "string" }, "section_id": { "type": "string" }, "account_id": { "type": "string" }, "status": { "const": "EMPTY_COMPLETED" } }
         }
       },
       "required": ["event_type", "aggregate_type", "payload"]
@@ -124,6 +178,25 @@
     },
     "OpeningBalanceRecorded": { "properties": { "event_type": { "const": "OpeningBalanceRecorded" }, "aggregate_type": { "const": "OpeningBalance" }, "payload": { "$ref": "#/$defs/BalancePayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
     "ClosingBalanceRecorded": { "properties": { "event_type": { "const": "ClosingBalanceRecorded" }, "aggregate_type": { "const": "ClosingBalance" }, "payload": { "$ref": "#/$defs/BalancePayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "SecurityPositionPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["position_id", "account_id", "valuation_date", "security_identifier_type", "security_identifier", "security_name", "quantity", "confirmation"],
+      "properties": {
+        "position_id": { "type": "string" }, "account_id": { "type": "string" }, "valuation_date": { "type": "string", "format": "date" },
+        "security_identifier_type": { "enum": ["WKN", "ISIN", "OTHER"] }, "security_identifier": { "type": "string", "minLength": 1 }, "security_name": { "type": "string" },
+        "quantity": { "type": "string" }, "valuation_price": { "type": "string" }, "price_currency": { "type": "string" }, "market_value": { "type": "string" },
+        "valuation_source": { "type": "string" }, "confirmation": { "const": true }
+      }
+    },
+    "OpeningSecurityPositionRecorded": { "properties": { "event_type": { "const": "OpeningSecurityPositionRecorded" }, "aggregate_type": { "const": "SecurityPosition" }, "payload": { "$ref": "#/$defs/SecurityPositionPayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ClosingSecurityPositionRecorded": { "properties": { "event_type": { "const": "ClosingSecurityPositionRecorded" }, "aggregate_type": { "const": "ClosingSecurityPosition" }, "payload": { "$ref": "#/$defs/SecurityPositionPayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "EmptyOpeningSecurityPositionsConfirmed": {
+      "properties": {
+        "event_type": { "const": "EmptyOpeningSecurityPositionsConfirmed" }, "aggregate_type": { "const": "SecurityPositionOpening" },
+        "payload": { "type": "object", "additionalProperties": false, "required": ["account_id", "valuation_date", "confirmation", "confirmed_at"], "properties": { "account_id": { "type": "string" }, "valuation_date": { "type": "string", "format": "date" }, "confirmation": { "const": true }, "confirmed_at": { "type": "string", "format": "date-time" } } }
+      },
+      "required": ["event_type", "aggregate_type", "payload"]
+    },
     "SecurityTransactionNormalized": {
       "properties": {
         "event_type": { "const": "SecurityTransactionNormalized" }, "aggregate_type": { "const": "SecurityTransaction" },
@@ -137,22 +210,6 @@
             "execution_price": { "type": "string" }, "price_currency": { "type": "string", "pattern": "^[A-Z]{3}$" }, "settlement_amount": { "type": "string" },
             "settlement_currency": { "type": "string", "pattern": "^[A-Z]{3}$" }, "transaction_type": { "enum": ["INVESTMENT_PURCHASE", "INVESTMENT_SALE", "UNKNOWN_SECURITY_TRANSACTION"] },
             "normalization_policy_version": { "const": "1.0.0" }
-          }
-        }
-      },
-      "required": ["event_type", "aggregate_type", "payload"]
-    },
-    "OpeningSecurityPositionRecorded": {
-      "properties": {
-        "event_type": { "const": "OpeningSecurityPositionRecorded" }, "aggregate_type": { "const": "SecurityPosition" },
-        "payload": {
-          "type": "object", "additionalProperties": false,
-          "required": ["position_id", "account_id", "valuation_date", "security_identifier_type", "security_identifier", "security_name", "quantity", "valuation_price", "price_currency", "market_value", "valuation_source", "confirmation"],
-          "properties": {
-            "position_id": { "type": "string" }, "account_id": { "type": "string" }, "valuation_date": { "type": "string", "format": "date" },
-            "security_identifier_type": { "enum": ["WKN", "ISIN", "OTHER"] }, "security_identifier": { "type": "string" }, "security_name": { "type": "string" },
-            "quantity": { "type": "string" }, "valuation_price": { "type": "string" }, "price_currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
-            "market_value": { "type": "string" }, "valuation_source": { "type": "string" }, "confirmation": { "const": true }
           }
         }
       },
@@ -176,12 +233,31 @@
         "event_type": { "const": "ImportedPeriodBalanceReconciled" }, "aggregate_type": { "const": "ImportedPeriodBalance" },
         "payload": {
           "type": "object", "additionalProperties": false,
-          "required": ["reconciliation_id", "account_id", "period_start", "period_end", "opening_balance", "calculated_closing_balance", "reported_closing_balance", "balance_difference", "relevant_transaction_count", "status", "reconciled_at"],
+          "required": ["reconciliation_id", "export_id", "section_id", "section_type", "account_id", "period_start", "period_end", "opening_balance", "calculated_closing_balance", "reported_closing_balance", "balance_difference", "relevant_transaction_count", "status", "reconciled_at"],
           "properties": {
-            "reconciliation_id": { "type": "string" }, "account_id": { "type": "string" }, "period_start": { "type": "string", "format": "date" }, "period_end": { "type": "string", "format": "date" },
+            "reconciliation_id": { "type": "string" }, "export_id": { "type": "string" }, "section_id": { "type": "string" }, "section_type": { "$ref": "#/$defs/SectionType" },
+            "account_id": { "type": "string" }, "period_start": { "type": "string", "format": "date" }, "period_end": { "type": "string", "format": "date" },
             "opening_balance": { "type": ["string", "null"] }, "calculated_closing_balance": { "type": ["string", "null"] }, "reported_closing_balance": { "type": ["string", "null"] },
             "balance_difference": { "type": ["string", "null"] }, "relevant_transaction_count": { "type": "integer", "minimum": 0 },
             "status": { "enum": ["MATCHED", "DIFFERENCE", "NO_REPORTED_CLOSING_BALANCE", "MISSING_OPENING_BALANCE", "INCOMPLETE_IMPORT", "REVIEW_REQUIRED"] },
+            "reconciled_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "required": ["event_type", "aggregate_type", "payload"]
+    },
+    "ImportedSecurityPositionsReconciled": {
+      "properties": {
+        "event_type": { "const": "ImportedSecurityPositionsReconciled" }, "aggregate_type": { "const": "ImportedSecurityPositions" },
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["reconciliation_id", "export_id", "section_id", "section_type", "account_id", "period_start", "period_end", "calculated_positions", "reported_positions", "position_differences", "unknown_transaction_count", "status", "reconciled_at"],
+          "properties": {
+            "reconciliation_id": { "type": "string" }, "export_id": { "type": "string" }, "section_id": { "type": "string" }, "section_type": { "const": "BROKERAGE" },
+            "account_id": { "type": "string" }, "period_start": { "type": "string", "format": "date" }, "period_end": { "type": "string", "format": "date" },
+            "calculated_positions": { "type": "object", "additionalProperties": { "type": "string" } }, "reported_positions": { "type": "object", "additionalProperties": { "type": "string" } },
+            "position_differences": { "type": "object", "additionalProperties": { "type": "string" } }, "unknown_transaction_count": { "type": "integer", "minimum": 0 },
+            "status": { "enum": ["MATCHED", "DIFFERENCE", "NO_REPORTED_CLOSING_POSITIONS", "MISSING_OPENING_POSITIONS", "REVIEW_REQUIRED"] },
             "reconciled_at": { "type": "string", "format": "date-time" }
           }
         }

@@ -326,7 +326,14 @@ class LocalFinanceStore:
             )
 
     def update_import_status(self, content_hash: str, status: str) -> None:
-        if status not in {"ANALYZED", "IMPORTED"}:
+        if status not in {
+            "ANALYZED",
+            "IMPORTED",
+            "COMPLETED",
+            "PARTIALLY_COMPLETED",
+            "REVIEW_REQUIRED",
+            "FAILED",
+        }:
             raise StoreInvariantError("FINANCE_IMPORT_STATUS_INVALID")
         with self.transaction() as conn:
             cursor = conn.execute(

@@ -56,16 +56,21 @@ SCHEMA_BY_EVENT = {
     "ImportFileAnalyzed": "multi_account_import_events.schema.json",
     "ImportSectionMapped": "multi_account_import_events.schema.json",
     "ImportSectionSkipped": "multi_account_import_events.schema.json",
+    "ImportSectionBindingConfirmed": "multi_account_import_events.schema.json",
+    "ImportSectionCompleted": "multi_account_import_events.schema.json",
     "EmptyImportSectionProcessed": "multi_account_import_events.schema.json",
     "OpeningBalanceRecorded": "multi_account_import_events.schema.json",
     "ClosingBalanceRecorded": "multi_account_import_events.schema.json",
     "SecurityTransactionNormalized": "multi_account_import_events.schema.json",
     "OpeningSecurityPositionRecorded": "multi_account_import_events.schema.json",
+    "EmptyOpeningSecurityPositionsConfirmed": "multi_account_import_events.schema.json",
+    "ClosingSecurityPositionRecorded": "multi_account_import_events.schema.json",
     "InvestmentFundingRelationProposed": "multi_account_import_events.schema.json",
     "InvestmentFundingRelationConfirmed": "multi_account_import_events.schema.json",
     "InvestmentFundingRelationRejected": "multi_account_import_events.schema.json",
     "InvestmentFundingRelationBroken": "multi_account_import_events.schema.json",
     "ImportedPeriodBalanceReconciled": "multi_account_import_events.schema.json",
+    "ImportedSecurityPositionsReconciled": "multi_account_import_events.schema.json",
 }
 
 

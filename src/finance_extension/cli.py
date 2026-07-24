@@ -98,6 +98,7 @@ def _parser() -> argparse.ArgumentParser:
         "--mode", choices=["VALIDATE_ONLY", "IMPORT_NEW", "FORCE_REIMPORT"], default="IMPORT_NEW"
     )
     imp.add_argument("--profile", default=PROFILE_ID)
+    imp.add_argument("--bank")
 
     cash = sub.add_parser("cashflow")
     cash.add_argument("--month", required=True)
@@ -483,7 +484,9 @@ def main() -> int:
             if args.import_action_or_file == "analyze":
                 if not args.file:
                     raise SystemExit("IMPORT_SOURCE_FILE_REQUIRED")
-                result = analyze_import_file(store, args.file, args.profile)
+                result = analyze_import_file(
+                    store, args.file, args.profile, args.bank
+                )
                 print(json.dumps(result, ensure_ascii=False, indent=2))
             elif args.import_action_or_file == "map-sections":
                 if not args.analysis or not args.section:

@@ -61,22 +61,28 @@ from .multi_account_import import (
     analyze_import_file,
     break_investment_funding_relation,
     confirm_investment_funding_relation,
+    confirm_empty_opening_security_positions,
     detect_investment_funding_relations,
     get_import_analysis,
+    get_bank_monthly_export,
     get_import_section_preview,
     import_mapped_sections,
     imported_period_reconciliations,
+    imported_security_position_reconciliations,
     initial_balance_requirements,
     investment_funding_relations,
     list_import_sections,
     map_import_sections,
     reconcile_imported_period_balance,
+    reconcile_imported_security_positions,
     record_closing_balance,
     record_opening_balance,
     record_opening_security_position,
+    record_closing_security_position,
     reject_investment_funding_relation,
     security_positions,
     security_transactions,
+    section_bindings,
 )
 from .reconciliation import (
     break_transfer,
@@ -159,7 +165,22 @@ COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
         "valuation_source",
         "confirmation",
     ),
+    "ConfirmEmptyOpeningSecurityPositions": ("account_id", "valuation_date"),
+    "RecordClosingSecurityPosition": (
+        "account_id",
+        "valuation_date",
+        "security_identifier_type",
+        "security_identifier",
+        "security_name",
+        "quantity",
+        "confirmation",
+    ),
     "ReconcileImportedPeriodBalance": ("account_id", "period_start", "period_end"),
+    "ReconcileImportedSecurityPositions": (
+        "account_id",
+        "period_start",
+        "period_end",
+    ),
     "ConfirmInvestmentFundingRelation": ("relation_id",),
     "RejectInvestmentFundingRelation": ("relation_id",),
     "BreakInvestmentFundingRelation": ("relation_id",),
@@ -292,10 +313,13 @@ class FinanceApplicationService:
             "ListImportBatches": self._import_batches,
             "GetImportBatch": self._import_batch,
             "GetImportAnalysis": self._import_analysis,
+            "GetBankMonthlyExport": self._bank_monthly_export,
             "ListImportSections": self._import_sections,
+            "ListImportSectionBindings": self._import_section_bindings,
             "GetImportSectionPreview": self._import_section_preview,
             "GetInitialBalanceRequirements": self._initial_balance_requirements,
             "GetImportedPeriodReconciliation": self._imported_period_reconciliation,
+            "GetImportedSecurityPositionReconciliation": self._imported_security_position_reconciliation,
             "ListInvestmentFundingRelations": self._investment_funding_relations,
             "GetSecurityTransaction": self._security_transaction,
             "ListSecurityPositions": self._security_positions,
@@ -755,12 +779,29 @@ class FinanceApplicationService:
         )
         return self._envelope(row, status="READY" if row else "EMPTY")
 
+    def _bank_monthly_export(self, payload: dict[str, Any]) -> dict[str, Any]:
+        row = get_bank_monthly_export(
+            self._store, _require_identifier(payload, "export_id")
+        )
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
     def _import_sections(self, payload: dict[str, Any]) -> dict[str, Any]:
         rows = list_import_sections(
             self._store, _require_identifier(payload, "analysis_id")
         )
         return self._envelope(
             {"sections": rows}, status="READY" if rows else "EMPTY"
+        )
+
+    def _import_section_bindings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        bank_identifier = payload.get("bank_identifier")
+        rows = [
+            item
+            for item in section_bindings(self._store).values()
+            if not bank_identifier or item["bank_identifier"] == bank_identifier
+        ]
+        return self._envelope(
+            {"bindings": rows}, status="READY" if rows else "EMPTY"
         )
 
     def _import_section_preview(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -788,6 +829,28 @@ class FinanceApplicationService:
             if item["account_id"] == account_id
             and (not payload.get("period_start") or item["period_start"] == payload["period_start"])
             and (not payload.get("period_end") or item["period_end"] == payload["period_end"])
+        ]
+        row = rows[-1] if rows else None
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
+    def _imported_security_position_reconciliation(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        rows = [
+            item
+            for item in imported_security_position_reconciliations(
+                self._store
+            ).values()
+            if item["account_id"] == account_id
+            and (
+                not payload.get("period_start")
+                or item["period_start"] == payload["period_start"]
+            )
+            and (
+                not payload.get("period_end")
+                or item["period_end"] == payload["period_end"]
+            )
         ]
         row = rows[-1] if rows else None
         return self._envelope(row, status="READY" if row else "EMPTY")
@@ -859,6 +922,7 @@ class FinanceApplicationService:
                 self._store,
                 payload["source_file_path"],
                 payload["requested_profile"],
+                payload.get("confirmed_bank_identifier"),
             )
         elif command_name == "MapImportSections":
             result = map_import_sections(
@@ -878,8 +942,14 @@ class FinanceApplicationService:
             result = record_closing_balance(self._store, **payload)
         elif command_name == "RecordOpeningSecurityPosition":
             result = record_opening_security_position(self._store, **payload)
+        elif command_name == "ConfirmEmptyOpeningSecurityPositions":
+            result = confirm_empty_opening_security_positions(self._store, **payload)
+        elif command_name == "RecordClosingSecurityPosition":
+            result = record_closing_security_position(self._store, **payload)
         elif command_name == "ReconcileImportedPeriodBalance":
             result = reconcile_imported_period_balance(self._store, **payload)
+        elif command_name == "ReconcileImportedSecurityPositions":
+            result = reconcile_imported_security_positions(self._store, **payload)
         elif command_name == "DetectInvestmentFundingRelations":
             result = detect_investment_funding_relations(self._store)
         elif command_name == "ConfirmInvestmentFundingRelation":

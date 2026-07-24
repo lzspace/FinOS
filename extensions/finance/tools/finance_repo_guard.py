@@ -117,7 +117,9 @@ def _all_paths() -> list[Path]:
         if not absolute.is_file():
             continue
         relative = absolute.relative_to(REPOSITORY_ROOT)
-        if IGNORED_PATH_PARTS & set(relative.parts):
+        if IGNORED_PATH_PARTS & set(relative.parts) or any(
+            part.startswith(".venv-") for part in relative.parts
+        ):
             continue
         paths.append(relative)
     return paths

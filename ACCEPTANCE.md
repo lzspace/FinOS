@@ -22,8 +22,10 @@ The canonical comparison includes:
 - recurring patterns and forecast history;
 - accounts and active balance snapshots;
 - liquidity, net worth and asset allocation.
-- multi-account analyses, opening/closing balances, security transactions,
-  security positions, investment-funding relations and period reconciliation.
+- bank-month exports, section mappings and persistent bindings, section runs,
+  opening/closing balances, security transactions and positions,
+  investment-funding relations, cash reconciliation and brokerage-position
+  reconciliation.
 
 Only the destination encryption key, archive identifiers, backup timestamps and
 temporary workspace paths may differ. None are part of the canonical projection
