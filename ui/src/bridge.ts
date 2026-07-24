@@ -4,7 +4,12 @@ import { mockQuery } from "./mockData";
 export interface DesktopFinanceIPC {
   query(name: string, payload: Record<string, unknown>): Promise<unknown>;
   command(name: string, payload: Record<string, unknown>): Promise<unknown>;
-  selectImportFile?(): Promise<string | null>;
+  selectImportFile?(): Promise<SelectedImportFile | null>;
+}
+
+export interface SelectedImportFile {
+  file_reference: string;
+  display_name: string;
 }
 
 declare global {
@@ -18,7 +23,8 @@ const supportedCommands = new Set([
   "ImportMappedSections", "RecordOpeningBalance", "RecordClosingBalance",
   "RecordOpeningSecurityPosition", "ConfirmEmptyOpeningSecurityPositions",
   "RecordClosingSecurityPosition", "ReconcileImportedPeriodBalance",
-  "ReconcileImportedSecurityPositions",
+  "ReconcileImportedSecurityPositions", "ReconcileImportedPeriodPositions",
+  "CorrectSecurityPositionSnapshot", "DocumentBalanceDifference",
   "DetectInvestmentFundingRelations", "ConfirmInvestmentFundingRelation",
   "RejectInvestmentFundingRelation", "BreakInvestmentFundingRelation",
   "ClassifyTransactions", "ConfirmClassification",
@@ -59,7 +65,7 @@ export class FinanceBridge {
     return { schema_version: "1.0.0", status: "COMPLETED", result: 1 };
   }
 
-  async selectImportFile(): Promise<string | null> {
+  async selectImportFile(): Promise<SelectedImportFile | null> {
     return window.__FINANCE_IPC__?.selectImportFile?.() ?? null;
   }
 }

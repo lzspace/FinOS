@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -39,6 +40,7 @@ from finance_extension.multi_account_import import (
     section_bindings,
 )
 from finance_extension.recovery import create_backup, restore_backup
+from finance_extension.schema_validation import validate_event
 from finance_extension.store import LocalFinanceStore, StoreInvariantError
 
 
@@ -122,6 +124,89 @@ class GermanMultiAccountImportTests(unittest.TestCase):
             )
         map_import_sections(self.store, analysis["analysis_id"], mappings)
         return analysis
+
+    def test_uses_period_in_section_heading_when_transactions_cover_one_day(self) -> None:
+        source = self.root / "august-section-heading.csv"
+        source.write_text(
+            "Bank;SYNTHETIC_BANK\n"
+            "Umsätze Girokonto;Zeitraum: 01.08.2024 - 31.08.2024\n"
+            "Buchungstag;Wertstellung (Valuta);Vorgang;Buchungstext;Umsatz in EUR\n"
+            "23.08.24;23.08.24;Lastschrift/Belastung;Synthetischer Einkauf;-36,85\n",
+            encoding="cp1252",
+        )
+
+        analysis = analyze_import_file(self.store, source)
+
+        self.assertEqual(analysis["period_start"], "2024-08-01")
+        self.assertEqual(analysis["period_end"], "2024-08-31")
+
+    def test_accepts_four_digit_booking_years(self) -> None:
+        source = self.root / "four-digit-booking-year.csv"
+        source.write_text(
+            "Bank;SYNTHETIC_BANK\n"
+            "Umsätze Girokonto;Zeitraum: 01.08.2024 - 31.08.2024\n"
+            "Buchungstag;Wertstellung (Valuta);Vorgang;Buchungstext;Umsatz in EUR\n"
+            "23.08.2024;23.08.2024;Lastschrift/Belastung;Synthetischer Einkauf;-36,85\n",
+            encoding="cp1252",
+        )
+
+        analysis = analyze_import_file(self.store, source)
+
+        self.assertEqual(analysis["period_start"], "2024-08-01")
+        self.assertEqual(analysis["period_end"], "2024-08-31")
+
+    def test_reanalysis_uses_parser_version_in_its_idempotency_key(self) -> None:
+        source = self.root / "reanalysis.csv"
+        source.write_text(
+            "Bank;SYNTHETIC_BANK\n"
+            "Umsätze Girokonto;Zeitraum: 01.08.2024 - 31.08.2024\n"
+            "Buchungstag;Wertstellung (Valuta);Vorgang;Buchungstext;Umsatz in EUR\n"
+            "23.08.2024;23.08.2024;Lastschrift/Belastung;Synthetischer Einkauf;-36,85\n",
+            encoding="cp1252",
+        )
+        file_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+        # Simulate the command-log entry written by parser 1.0.0. The old
+        # idempotency key must not suppress this corrected parser analysis.
+        self.store.connection.execute(
+            "INSERT INTO command_log VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "cmd_old_analysis",
+                "AnalyzeImportFile",
+                "AnalyzeImportFile:" + file_hash,
+                "COMPLETED",
+                "2024-08-23T00:00:00+00:00",
+                "2024-08-23T00:00:00+00:00",
+                "[]",
+                None,
+            ),
+        )
+        self.store.connection.commit()
+        analysis = analyze_import_file(self.store, source)
+
+        self.assertEqual(analysis["period_start"], "2024-08-01")
+        self.assertEqual(analysis["period_end"], "2024-08-31")
+        self.assertIsNotNone(get_import_analysis(self.store, analysis["analysis_id"]))
+
+    def test_accepts_legacy_import_analysis_for_recovery_validation(self) -> None:
+        validate_event(
+            {
+                "event_type": "ImportFileAnalyzed",
+                "payload": {
+                    "analysis_id": "analysis_" + "a" * 64,
+                    "detected_profile": "GermanMultiAccountCsvV1",
+                    "encoding": "cp1252",
+                    "delimiter": ";",
+                    "file_hash": "a" * 64,
+                    "file_size": 1,
+                    "period_start": "2024-08-23",
+                    "period_end": "2024-08-23",
+                    "profile_version": "1.0.0",
+                    "sections": [{}],
+                    "status": "ANALYZED",
+                    "warnings": [],
+                },
+            }
+        )
 
     def test_full_cp1252_workflow_rebuild_and_idempotency(self) -> None:
         analysis = self._analyze_and_map()
@@ -643,7 +728,7 @@ class GermanMultiAccountImportTests(unittest.TestCase):
             },
         )["result"]
         self.assertEqual(result["normalized_transaction_count"], 4)
-        application.command(
+        closing_position_id = application.command(
             "RecordClosingSecurityPosition",
             {
                 "account_id": "acc_brokerage",
@@ -654,7 +739,7 @@ class GermanMultiAccountImportTests(unittest.TestCase):
                 "quantity": "10",
                 "confirmation": True,
             },
-        )
+        )["result"]
         security_reconciliation = application.command(
             "ReconcileImportedSecurityPositions",
             {
@@ -735,6 +820,106 @@ class GermanMultiAccountImportTests(unittest.TestCase):
             )["data"]["status"],
             "MATCHED",
         )
+        manifest = application.query("GetCapabilityManifest")["data"]
+        self.assertEqual(manifest["contract_version"], "1.3.0")
+        self.assertTrue(manifest["capabilities"]["position_reconciliation_capability"])
+        wizard = application.query(
+            "GetImportWizardState", {"export_id": analyzed["export_id"]}
+        )["data"]
+        self.assertEqual(wizard["current_step"], 5)
+        self.assertEqual(wizard["analysis"]["status"], "COMPLETED")
+        self.assertEqual(
+            application.query("GetImportHistory")["data"]["imports"][0][
+                "export_id"
+            ],
+            analyzed["export_id"],
+        )
+        execution = application.query(
+            "GetImportExecutionResult", {"export_id": analyzed["export_id"]}
+        )["data"]
+        self.assertEqual(execution["normalized_transaction_count"], 4)
+        self.assertEqual(len(execution["section_results"]), 3)
+
+        application.command(
+            "DocumentBalanceDifference",
+            {
+                "reconciliation_id": difference["reconciliation_id"],
+                "explanation": "Bankseitige Abschlussbuchung wird im Folgemonat gezeigt.",
+            },
+        )
+        balance_context = application.query(
+            "GetImportedPeriodReconciliationContext",
+            {
+                "account_id": "acc_checking",
+                "section_id": difference["section_id"],
+                "period_start": "2024-12-01",
+                "period_end": "2024-12-31",
+            },
+        )["data"]
+        self.assertEqual(len(balance_context["difference_explanations"]), 1)
+        self.assertEqual(balance_context["reconciliation"]["status"], "DIFFERENCE")
+
+        application.command(
+            "CorrectSecurityPositionSnapshot",
+            {
+                "snapshot_id": closing_position_id,
+                "quantity": "9",
+                "reason": "Korrigierter Bankbestand",
+            },
+        )
+        corrected = application.command(
+            "ReconcileImportedPeriodPositions",
+            {
+                "account_id": "acc_brokerage",
+                "period_start": "2024-12-01",
+                "period_end": "2024-12-31",
+            },
+        )["result"]
+        self.assertEqual(corrected["status"], "DIFFERENCE")
+        position_context = application.query(
+            "GetPositionReconciliation",
+            {
+                "account_id": "acc_brokerage",
+                "section_id": corrected["section_id"],
+                "period_start": "2024-12-01",
+                "period_end": "2024-12-31",
+            },
+        )["data"]
+        self.assertEqual(position_context["positions"][0]["quantity_difference"], "-1.00000000")
+        self.assertTrue(
+            any(
+                item["event_type"] == "SecurityPositionSnapshotCorrected"
+                for item in self.store.events()
+            )
+        )
+
+        detail = application.query(
+            "GetImportHistoryDetail", {"export_id": analyzed["export_id"]}
+        )["data"]
+        self.assertTrue(
+            any(
+                event["event_type"] == "BalanceDifferenceDocumented"
+                for event in detail["audit_history"]
+            )
+        )
+
+    def test_application_resolves_opaque_import_file_reference(self) -> None:
+        application = FinanceApplicationService(
+            self.store,
+            import_file_resolver=lambda reference: (
+                self.source
+                if reference == "file_token_01"
+                else self.root / "missing.csv"
+            ),
+        )
+        analyzed = application.command(
+            "AnalyzeImportFile",
+            {
+                "source_file_reference": "file_token_01",
+                "requested_profile": "GermanMultiAccountCsvV1",
+            },
+        )["result"]
+        self.assertEqual(analyzed["bank_identifier"], "SYNTHETIC_BANK")
 
     def test_wrong_investment_match_is_ignored_and_user_can_reject(self) -> None:
         for account_id in ("acc_checking", "acc_savings"):

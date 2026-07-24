@@ -1,4 +1,4 @@
-# Finance Extension contracts v1.1.0
+# Finance Extension contracts v1.3.0
 
 This directory turns the agreed finance domain model into executable interface
 contracts. It deliberately contains no production finance data and has no
@@ -59,6 +59,14 @@ every `BankAccountSection` carries its own type, account mapping, content hash,
 status and cash-balance or security-position reconciliation. Confirmed local
 bindings are reused as visible proposals; renamed files do not bypass
 section-level duplicate and overlap checks.
+
+Version 1.2.0 exposes the complete import lifecycle through projection-only UI
+queries and named commands. The five-step assistant is restart-safe, validates
+capabilities and schema versions, records security-position corrections and
+balance-difference explanations as new events, and provides durable execution,
+history, relation and reconciliation projections. The desktop host owns file
+selection and resolves opaque file references; React never receives a local
+path or protected storage handle.
 
 ## Binding security invariants
 

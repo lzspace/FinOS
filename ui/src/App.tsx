@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { financeBridge, SchemaCompatibilityError } from "./bridge";
+import { Imports } from "./Imports";
 import type {
   CapabilityManifest,
   Account,
@@ -138,7 +139,7 @@ export function App() {
         {page === "forecast" && <Forecast month={month} />}
         {page === "wealth" && <Wealth />}
         {page === "reviews" && <Reviews />}
-        {page === "imports" && <Imports />}
+        {page === "imports" && <Imports uiMonth={month} manifest={manifest.envelope.data} />}
         {page === "settings" && <Settings manifest={manifest.envelope.data} />}
       </main>
     </div>
@@ -168,6 +169,9 @@ function FullState({ state, message }: { state: ViewState; message?: string }) {
     READY: ["Bereit", ""], EMPTY: ["Keine Daten", "Es liegen noch keine Daten vor."],
     PARTIAL: ["Daten unvollständig", "Ein Teil der Projektion ist verfügbar."],
     STALE: ["Aktualisierung erforderlich", "Die Projektion liegt hinter dem Event Store."],
+    VALIDATING: ["Import wird geprüft", "Die lokale Vorschau wird validiert."],
+    EXECUTING: ["Import läuft", "Die bestätigten Abschnitte werden lokal verarbeitet."],
+    REQUIRES_CONFIRMATION: ["Bestätigung erforderlich", "Prüfe die Vorschau vor dem Import."],
     ERROR: ["Lokale Verbindung fehlgeschlagen", message ?? "Die Application API antwortet nicht."],
     INCOMPATIBLE_SCHEMA: ["Nicht kompatible Vertragsversion", message ?? "UI und Extension verwenden verschiedene Schemas."],
     LOCKED: ["Finanzdaten gesperrt", "Entsperre den lokalen Schlüsselspeicher."],
@@ -336,7 +340,7 @@ function Reviews() {
   return <><div className="review-tabs" role="tablist" aria-label="Prüfgruppen">{reviewTabs.map((item) => <button key={item} role="tab" aria-selected={tab === item} onClick={() => setTab(item)}>{item}<span>{item === tab ? items.length : ""}</span></button>)}</div>{message && <div className="toast" role="status">{message}</div>}<QueryBoundary result={{ ...result, state: result.state === "EMPTY" ? "READY" : result.state }}>{() => <section className="review-list"><div className="section-intro"><div><h2>{tab}</h2><p>Entscheidungen werden als neue Events dokumentiert und nie still überschrieben.</p></div>{type && <button className="secondary" onClick={() => financeBridge.command(type === "duplicates" ? "DetectDuplicates" : type === "transfers" ? "DetectTransfers" : "DetectRefunds", {})}>Prüfungen aktualisieren</button>}</div>{items.length === 0 ? <div className="panel page-state"><span className="empty-icon">✓</span><h3>Alles geprüft</h3><p>In dieser Gruppe sind keine offenen Entscheidungen.</p></div> : items.map((item, index) => { const shown = presentation(item); return <article className="panel review-card" key={String(item.transaction_id ?? item.relation_id ?? item.pattern_id ?? item.expected_transaction_id ?? index)}><span className="review-index">{String(index + 1).padStart(2, "0")}</span><div><span className="eyebrow">{tab.toUpperCase()}</span><h3>{shown.title}</h3><p>{shown.detail}</p></div><div className="review-actions">{passiveReview ? <span className="status-badge missed">OFFEN</span> : <><button className="primary small" onClick={() => reviewAction(item, true)}>Bestätigen</button><button className="secondary small" onClick={() => reviewAction(item, false)}>Ablehnen</button></>}</div></article>; })}</section>}</QueryBoundary></>;
 }
 
-function Imports() {
+function LegacyImports() {
   const result = useFinanceQuery<{ imports: Array<Record<string, string>> }>("ListImportBatches");
   const [message, setMessage] = useState("");
   const [bankIdentifier, setBankIdentifier] = useState("");
@@ -354,12 +358,13 @@ function Imports() {
     ? new Date(new Date(String(analysis.period_start)).getTime() - 86_400_000).toISOString().slice(0, 10)
     : "";
   const choose = async () => {
-    const path = await financeBridge.selectImportFile();
+    const selected = await financeBridge.selectImportFile();
+    const path = selected?.file_reference ?? null;
     setSourcePath(path);
     if (!path) { setMessage("Die lokale Dateiauswahl ist nur im Desktop-Wrapper verfügbar."); return; }
     setBusy(true); setMessage("");
     try {
-      const response = await financeBridge.command("AnalyzeImportFile", { source_file_path: path, requested_profile: "GermanMultiAccountCsvV1", ...(bankIdentifier.trim() ? { confirmed_bank_identifier: bankIdentifier.trim() } : {}) }) as { result?: Record<string, unknown> };
+      const response = await financeBridge.command("AnalyzeImportFile", { source_file_reference: path, requested_profile: "GermanMultiAccountCsvV1", ...(bankIdentifier.trim() ? { confirmed_bank_identifier: bankIdentifier.trim() } : {}) }) as { result?: Record<string, unknown> };
       const analyzed = response.result ?? null;
       setAnalysis(analyzed);
       setBankIdentifier(String(analyzed?.bank_identifier ?? bankIdentifier));

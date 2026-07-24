@@ -1,4 +1,4 @@
-# Release procedure 1.1.0
+# Release procedure 1.2.0
 
 1. Use the exact Python and npm dependency versions declared in
    `pyproject.toml`, `requirements-runtime.lock`, `package.json` and

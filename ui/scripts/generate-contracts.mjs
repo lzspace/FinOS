@@ -30,6 +30,12 @@ const required = [
   "store_integrity.response.schema.json",
   "key_status.response.schema.json",
   "migration_status.response.schema.json",
+  "import_wizard_state.response.schema.json",
+  "import_execution_result.response.schema.json",
+  "import_history.response.schema.json",
+  "import_history_detail.response.schema.json",
+  "imported_period_reconciliation_context.response.schema.json",
+  "position_reconciliation.response.schema.json",
 ];
 
 for (const name of required) {

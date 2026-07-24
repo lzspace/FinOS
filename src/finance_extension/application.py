@@ -62,7 +62,9 @@ from .multi_account_import import (
     break_investment_funding_relation,
     confirm_investment_funding_relation,
     confirm_empty_opening_security_positions,
+    correct_security_position_snapshot,
     detect_investment_funding_relations,
+    document_balance_difference,
     get_import_analysis,
     get_bank_monthly_export,
     get_import_section_preview,
@@ -70,10 +72,10 @@ from .multi_account_import import (
     imported_period_reconciliations,
     imported_security_position_reconciliations,
     initial_balance_requirements,
-    investment_funding_relations,
     list_import_sections,
     map_import_sections,
     reconcile_imported_period_balance,
+    reconcile_imported_period_positions,
     reconcile_imported_security_positions,
     record_closing_balance,
     record_opening_balance,
@@ -83,6 +85,15 @@ from .multi_account_import import (
     security_positions,
     security_transactions,
     section_bindings,
+)
+from .import_ui import (
+    balance_reconciliation_context,
+    import_execution_result,
+    import_history,
+    import_history_detail,
+    import_wizard_state,
+    investment_funding_relation_contexts,
+    position_reconciliation_context,
 )
 from .reconciliation import (
     break_transfer,
@@ -128,7 +139,7 @@ class ApplicationContractError(ValueError):
 
 COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "ImportTransactions": ("source_file_path", "account_id"),
-    "AnalyzeImportFile": ("source_file_path", "requested_profile"),
+    "AnalyzeImportFile": ("requested_profile",),
     "MapImportSections": ("analysis_id", "section_mappings"),
     "ImportMappedSections": (
         "analysis_id",
@@ -181,6 +192,13 @@ COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
         "period_start",
         "period_end",
     ),
+    "ReconcileImportedPeriodPositions": (
+        "account_id",
+        "period_start",
+        "period_end",
+    ),
+    "CorrectSecurityPositionSnapshot": ("snapshot_id", "quantity", "reason"),
+    "DocumentBalanceDifference": ("reconciliation_id", "explanation"),
     "ConfirmInvestmentFundingRelation": ("relation_id",),
     "RejectInvestmentFundingRelation": ("relation_id",),
     "BreakInvestmentFundingRelation": ("relation_id",),
@@ -257,6 +275,7 @@ class FinanceApplicationService:
         backup_directory: str | Path | None = None,
         export_directory: str | Path | None = None,
         diagnostic_recorder: LocalDiagnosticRecorder | None = None,
+        import_file_resolver: Callable[[str], str | Path] | None = None,
     ) -> None:
         self._store = store
         self._network_egress_disabled = network_egress_disabled
@@ -266,6 +285,7 @@ class FinanceApplicationService:
         self._backup_directory = backup_directory
         self._export_directory = export_directory
         self._diagnostic_recorder = diagnostic_recorder
+        self._import_file_resolver = import_file_resolver
 
     def _sequence(self) -> int:
         events = self._store.events()
@@ -313,13 +333,19 @@ class FinanceApplicationService:
             "ListImportBatches": self._import_batches,
             "GetImportBatch": self._import_batch,
             "GetImportAnalysis": self._import_analysis,
+            "GetImportWizardState": self._import_wizard_state,
+            "GetImportExecutionResult": self._import_execution_result,
+            "GetImportHistory": self._import_history,
+            "GetImportHistoryDetail": self._import_history_detail,
             "GetBankMonthlyExport": self._bank_monthly_export,
             "ListImportSections": self._import_sections,
             "ListImportSectionBindings": self._import_section_bindings,
             "GetImportSectionPreview": self._import_section_preview,
             "GetInitialBalanceRequirements": self._initial_balance_requirements,
             "GetImportedPeriodReconciliation": self._imported_period_reconciliation,
+            "GetImportedPeriodReconciliationContext": self._imported_period_reconciliation_context,
             "GetImportedSecurityPositionReconciliation": self._imported_security_position_reconciliation,
+            "GetPositionReconciliation": self._position_reconciliation,
             "ListInvestmentFundingRelations": self._investment_funding_relations,
             "GetSecurityTransaction": self._security_transaction,
             "ListSecurityPositions": self._security_positions,
@@ -386,10 +412,17 @@ class FinanceApplicationService:
         return self._envelope(
             {
                 "extension_version": __version__,
+                "contract_version": "1.3.0",
+                "store_schema_version": self._store.schema_version(),
                 "schema_version": "1.0.0",
                 "capabilities": {
                     "imports": True,
                     "multi_account_import": True,
+                    "import_capability": True,
+                    "multi_account_import_capability": True,
+                    "balance_reconciliation_capability": True,
+                    "position_reconciliation_capability": True,
+                    "investment_funding_capability": True,
                     "security_transactions": True,
                     "classification": True,
                     "reconciliation": True,
@@ -779,6 +812,28 @@ class FinanceApplicationService:
         )
         return self._envelope(row, status="READY" if row else "EMPTY")
 
+    def _import_wizard_state(self, payload: dict[str, Any]) -> dict[str, Any]:
+        row = import_wizard_state(self._store, payload.get("export_id"))
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
+    def _import_execution_result(self, payload: dict[str, Any]) -> dict[str, Any]:
+        row = import_execution_result(
+            self._store, _require_identifier(payload, "export_id")
+        )
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
+    def _import_history(self, _: dict[str, Any]) -> dict[str, Any]:
+        rows = import_history(self._store)
+        return self._envelope(
+            {"imports": rows}, status="READY" if rows else "EMPTY"
+        )
+
+    def _import_history_detail(self, payload: dict[str, Any]) -> dict[str, Any]:
+        row = import_history_detail(
+            self._store, _require_identifier(payload, "export_id")
+        )
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
     def _bank_monthly_export(self, payload: dict[str, Any]) -> dict[str, Any]:
         row = get_bank_monthly_export(
             self._store, _require_identifier(payload, "export_id")
@@ -833,6 +888,19 @@ class FinanceApplicationService:
         row = rows[-1] if rows else None
         return self._envelope(row, status="READY" if row else "EMPTY")
 
+    def _imported_period_reconciliation_context(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._envelope(
+            balance_reconciliation_context(
+                self._store,
+                account_id=_require_identifier(payload, "account_id"),
+                period_start=_require_identifier(payload, "period_start"),
+                period_end=_require_identifier(payload, "period_end"),
+                section_id=payload.get("section_id"),
+            )
+        )
+
     def _imported_security_position_reconciliation(
         self, payload: dict[str, Any]
     ) -> dict[str, Any]:
@@ -855,13 +923,24 @@ class FinanceApplicationService:
         row = rows[-1] if rows else None
         return self._envelope(row, status="READY" if row else "EMPTY")
 
+    def _position_reconciliation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._envelope(
+            position_reconciliation_context(
+                self._store,
+                account_id=_require_identifier(payload, "account_id"),
+                period_start=_require_identifier(payload, "period_start"),
+                period_end=_require_identifier(payload, "period_end"),
+                section_id=payload.get("section_id"),
+            )
+        )
+
     def _investment_funding_relations(self, payload: dict[str, Any]) -> dict[str, Any]:
         status = payload.get("status")
-        rows = [
-            item
-            for item in investment_funding_relations(self._store).values()
-            if not status or item["status"] == status
-        ]
+        rows = investment_funding_relation_contexts(
+            self._store,
+            export_id=payload.get("export_id"),
+            status=status,
+        )
         return self._envelope(
             {"relations": rows}, status="READY" if rows else "EMPTY"
         )
@@ -918,9 +997,15 @@ class FinanceApplicationService:
                 "normalized_count": normalize_batch(self._store, batch),
             }
         elif command_name == "AnalyzeImportFile":
+            source_path = payload.get("source_file_path")
+            source_reference = payload.get("source_file_reference")
+            if source_path is None and source_reference and self._import_file_resolver:
+                source_path = self._import_file_resolver(source_reference)
+            if source_path is None:
+                raise ApplicationContractError("FINANCE_IMPORT_FILE_REFERENCE_INVALID")
             result = analyze_import_file(
                 self._store,
-                payload["source_file_path"],
+                source_path,
                 payload["requested_profile"],
                 payload.get("confirmed_bank_identifier"),
             )
@@ -950,6 +1035,12 @@ class FinanceApplicationService:
             result = reconcile_imported_period_balance(self._store, **payload)
         elif command_name == "ReconcileImportedSecurityPositions":
             result = reconcile_imported_security_positions(self._store, **payload)
+        elif command_name == "ReconcileImportedPeriodPositions":
+            result = reconcile_imported_period_positions(self._store, **payload)
+        elif command_name == "CorrectSecurityPositionSnapshot":
+            result = correct_security_position_snapshot(self._store, **payload)
+        elif command_name == "DocumentBalanceDifference":
+            result = document_balance_difference(self._store, **payload)
         elif command_name == "DetectInvestmentFundingRelations":
             result = detect_investment_funding_relations(self._store)
         elif command_name == "ConfirmInvestmentFundingRelation":

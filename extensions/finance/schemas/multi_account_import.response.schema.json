@@ -7,7 +7,7 @@
   "required": ["schema_version", "state", "projection_sequence", "event_store_sequence", "data"],
   "properties": {
     "schema_version": { "const": "1.0.0" },
-    "state": { "enum": ["READY", "EMPTY", "PARTIAL", "ERROR"] },
+    "state": { "enum": ["LOADING", "READY", "EMPTY", "PARTIAL", "STALE", "LOCKED", "ERROR", "INCOMPATIBLE_SCHEMA", "VALIDATING", "EXECUTING", "REQUIRES_CONFIRMATION"] },
     "projection_sequence": { "type": "integer", "minimum": 0 },
     "event_store_sequence": { "type": "integer", "minimum": 0 },
     "data": { "type": ["object", "null"] }

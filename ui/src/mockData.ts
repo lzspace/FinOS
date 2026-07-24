@@ -12,10 +12,17 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
   const month = String(payload.month ?? "2026-07");
   const responses: Record<string, Envelope<unknown>> = {
     GetCapabilityManifest: envelope({
-      extension_version: "1.1.0",
+      extension_version: "1.2.0",
+      contract_version: "1.3.0",
+      store_schema_version: 3,
       schema_version: "1.0.0",
       capabilities: {
         imports: true,
+        import_capability: true,
+        multi_account_import_capability: true,
+        balance_reconciliation_capability: true,
+        position_reconciliation_capability: true,
+        investment_funding_capability: true,
         classification: true,
         reconciliation: true,
         recurring_patterns: true,
@@ -44,7 +51,7 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
       recovery_document: "RECOVERY.md",
     }),
     GetRuntimeSecurityStatus: envelope({
-      extension_version: "1.1.0",
+      extension_version: "1.2.0",
       schema_version: "1.0.0",
       last_event_sequence: 892,
       checks: {

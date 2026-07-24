@@ -19,7 +19,9 @@ from .store import LocalFinanceStore, StoreInvariantError
 
 PROFILE_ID = "GermanMultiAccountCsvV1"
 PROFILE_VERSION = "1.0.0"
-PARSER_VERSION = "GermanMultiAccountCsvV1@1.0.0"
+# Include parser behavior in the analysis identity. A corrected parser must be
+# allowed to create a fresh analysis for an already-seen source file.
+PARSER_VERSION = "GermanMultiAccountCsvV1@1.0.1"
 SECTION_TITLES = {
     "Umsätze Girokonto": "CHECKING",
     "Umsätze Tagesgeld PLUS-Konto": "SAVINGS",
@@ -142,10 +144,13 @@ def parse_german_quantity(value: str) -> Decimal:
 
 
 def _parse_date(value: str) -> str:
-    try:
-        return datetime.strptime(value.strip(), "%d.%m.%y").date().isoformat()
-    except ValueError as exc:
-        raise MultiAccountImportError("IMPORT_DATE_FORMAT_INVALID") from exc
+    normalized = value.strip()
+    for format_string in ("%d.%m.%y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(normalized, format_string).date().isoformat()
+        except ValueError:
+            continue
+    raise MultiAccountImportError("IMPORT_DATE_FORMAT_INVALID")
 
 
 def _rows(text: str) -> list[list[str]]:
@@ -208,17 +213,29 @@ def _declared_month(text: str) -> str | None:
     date_pattern = re.compile(
         r"(?<!\d)(\d{2})[.](\d{2})[.](\d{2}|20\d{2})(?!\d)"
     )
+    labels = {
+        "berichtsmonat",
+        "monat",
+        "reporting month",
+        "zeitraum",
+        "berichtszeitraum",
+        "period",
+    }
     for row in _rows(text):
-        if not row or row[0].casefold() not in {
-            "berichtsmonat",
-            "monat",
-            "reporting month",
-            "zeitraum",
-            "berichtszeitraum",
-            "period",
-        }:
+        # Some bank exports put the period in the second column of a section
+        # heading, e.g. "Umsätze Girokonto;Zeitraum: 01.08.2024 - 31.08.2024".
+        # Look for a period label in every cell, not just the first one.
+        label_index = next(
+            (
+                index
+                for index, cell in enumerate(row)
+                if cell.casefold().split(":", 1)[0].strip() in labels
+            ),
+            None,
+        )
+        if label_index is None:
             continue
-        value = " ".join(row[1:])
+        value = " ".join(row[label_index:])
         for month, year in month_pattern.findall(value):
             candidates.add(f"{year}-{month}")
         for year, month in iso_month_pattern.findall(value):
@@ -437,7 +454,7 @@ def analyze_import_file(
     _append(
         store,
         "AnalyzeImportFile",
-        file_hash,
+        f"{file_hash}:{PARSER_VERSION}",
         [_event("ImportFileAnalyzed", "BankMonthlyExport", export_id, 1, command_id, payload)],
     )
     if not store.has_import_content_hash(raw):
@@ -765,8 +782,16 @@ def record_opening_security_position(
 
 def opening_security_positions(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
-    for event in store.events("OpeningSecurityPositionRecorded"):
-        result[event["aggregate_id"]] = event["payload"]
+    for event in store.events():
+        if event["aggregate_type"] != "SecurityPosition":
+            continue
+        if event["event_type"] == "OpeningSecurityPositionRecorded":
+            result[event["aggregate_id"]] = event["payload"]
+        elif (
+            event["event_type"] == "SecurityPositionSnapshotCorrected"
+            and event["aggregate_id"] in result
+        ):
+            result[event["aggregate_id"]] = event["payload"]["position"]
     return result
 
 
@@ -863,9 +888,69 @@ def record_closing_security_position(
 
 def closing_security_positions(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
-    for event in store.events("ClosingSecurityPositionRecorded"):
-        result[event["aggregate_id"]] = event["payload"]
+    for event in store.events():
+        if event["aggregate_type"] != "ClosingSecurityPosition":
+            continue
+        if event["event_type"] == "ClosingSecurityPositionRecorded":
+            result[event["aggregate_id"]] = event["payload"]
+        elif (
+            event["event_type"] == "SecurityPositionSnapshotCorrected"
+            and event["aggregate_id"] in result
+        ):
+            result[event["aggregate_id"]] = event["payload"]["position"]
     return result
+
+
+def correct_security_position_snapshot(
+    store: LocalFinanceStore,
+    *,
+    snapshot_id: str,
+    quantity: str,
+    reason: str,
+) -> int:
+    """Correct a reported opening or closing quantity without rewriting history."""
+
+    parsed_quantity = _decimal(quantity, "FINANCE_SECURITY_POSITION_INVALID")
+    if parsed_quantity < 0 or not reason.strip():
+        raise StoreInvariantError("FINANCE_SECURITY_POSITION_INVALID")
+    aggregate_type: str | None = None
+    current: dict[str, Any] | None = None
+    for candidate_type, projection in (
+        ("SecurityPosition", opening_security_positions(store)),
+        ("ClosingSecurityPosition", closing_security_positions(store)),
+    ):
+        if snapshot_id in projection:
+            aggregate_type = candidate_type
+            current = projection[snapshot_id]
+            break
+    if not aggregate_type or not current:
+        raise StoreInvariantError("FINANCE_SECURITY_POSITION_NOT_FOUND")
+    position = {**current, "quantity": str(parsed_quantity)}
+    command_id = _id("cmd")
+    payload = {
+        "snapshot_id": snapshot_id,
+        "corrected_snapshot_id": snapshot_id,
+        "previous_quantity": current["quantity"],
+        "quantity": str(parsed_quantity),
+        "reason": reason.strip(),
+        "corrected_at": _now(),
+        "position": position,
+    }
+    return _append(
+        store,
+        "CorrectSecurityPositionSnapshot",
+        hashlib.sha256(repr(sorted(payload.items())).encode()).hexdigest(),
+        [
+            _event(
+                "SecurityPositionSnapshotCorrected",
+                aggregate_type,
+                snapshot_id,
+                store.next_aggregate_version(aggregate_type, snapshot_id),
+                command_id,
+                payload,
+            )
+        ],
+    )
 
 
 def security_positions(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
@@ -989,14 +1074,50 @@ def get_import_section_preview(
     section = next((item for item in _load_parsed(store, analysis_id) if item["section_id"] == section_id), None)
     if not section:
         raise MultiAccountImportError("IMPORT_SECTION_NOT_FOUND")
-    preview: list[dict[str, str]] = []
-    for record in section["records"][:25]:
-        preview.append(_security_record(record) if section["section_type"] == "BROKERAGE" else _account_record(record))
+    records = [
+        _security_record(record)
+        if section["section_type"] == "BROKERAGE"
+        else _account_record(record)
+        for record in section["records"]
+    ]
+    preview = records[:25]
+    booking_dates = sorted(
+        item.get("booking_date") or item.get("trade_date")
+        for item in records
+        if item.get("booking_date") or item.get("trade_date")
+    )
+    amount_key = (
+        "settlement_amount" if section["section_type"] == "BROKERAGE" else "amount"
+    )
+    amount_sum = sum(
+        (Decimal(item[amount_key]) for item in records), Decimal("0")
+    )
+    content_keys = [
+        tuple(sorted((key, str(value)) for key, value in item.items()))
+        for item in records
+    ]
+    duplicate_count = len(content_keys) - len(set(content_keys))
+    mappings = section_mappings(store, analysis_id)
     return {
         **{key: value for key, value in section.items() if key != "records"},
         "period_start": analysis["period_start"] if analysis else section["period_start"],
         "period_end": analysis["period_end"] if analysis else section["period_end"],
+        "mapped_account_id": mappings.get(section_id, {}).get("account_id"),
         "preview": preview,
+        "first_records": records[:5],
+        "last_records": records[-5:],
+        "first_booking_date": booking_dates[0] if booking_dates else None,
+        "last_booking_date": booking_dates[-1] if booking_dates else None,
+        "amount_sum": str(amount_sum),
+        "duplicate_candidate_count": duplicate_count,
+        "overlap_candidate_count": 0,
+        "initial_value": None,
+        "reported_end_value": None,
+        "security_count": len(
+            {item["security_identifier"] for item in records}
+        )
+        if section["section_type"] == "BROKERAGE"
+        else 0,
         "preview_truncated": len(section["records"]) > 25,
     }
 
@@ -1433,6 +1554,61 @@ def imported_period_reconciliations(store: LocalFinanceStore) -> dict[str, dict[
     return result
 
 
+def document_balance_difference(
+    store: LocalFinanceStore,
+    *,
+    reconciliation_id: str,
+    explanation: str,
+) -> int:
+    reconciliation = imported_period_reconciliations(store).get(reconciliation_id)
+    if (
+        not reconciliation
+        or reconciliation["status"] != "DIFFERENCE"
+        or not explanation.strip()
+    ):
+        raise StoreInvariantError("FINANCE_BALANCE_DIFFERENCE_INVALID")
+    command_id = _id("cmd")
+    payload = {
+        "documentation_id": _id("balance_difference"),
+        "reconciliation_id": reconciliation_id,
+        "export_id": reconciliation["export_id"],
+        "section_id": reconciliation["section_id"],
+        "account_id": reconciliation["account_id"],
+        "period_start": reconciliation["period_start"],
+        "period_end": reconciliation["period_end"],
+        "balance_difference": reconciliation["balance_difference"],
+        "explanation": explanation.strip(),
+        "documented_at": _now(),
+    }
+    aggregate_id = payload["documentation_id"]
+    return _append(
+        store,
+        "DocumentBalanceDifference",
+        hashlib.sha256(
+            f"{reconciliation_id}:{explanation.strip()}".encode()
+        ).hexdigest(),
+        [
+            _event(
+                "BalanceDifferenceDocumented",
+                "BalanceDifferenceDocumentation",
+                aggregate_id,
+                1,
+                command_id,
+                payload,
+            )
+        ],
+    )
+
+
+def balance_difference_documentations(
+    store: LocalFinanceStore,
+) -> dict[str, dict[str, Any]]:
+    return {
+        event["aggregate_id"]: event["payload"]
+        for event in store.events("BalanceDifferenceDocumented")
+    }
+
+
 def reconcile_imported_security_positions(
     store: LocalFinanceStore,
     *,
@@ -1568,17 +1744,28 @@ def imported_security_position_reconciliations(
     }
 
 
+def reconcile_imported_period_positions(
+    store: LocalFinanceStore, **payload: Any
+) -> dict[str, Any]:
+    """UI-facing command name retained as an explicit domain alias."""
+
+    return reconcile_imported_security_positions(store, **payload)
+
+
 __all__ = [
     "PROFILE_ID",
     "PROFILE_VERSION",
     "MultiAccountImportError",
     "analyze_import_file",
     "break_investment_funding_relation",
+    "balance_difference_documentations",
     "closing_balances",
     "closing_security_positions",
     "confirm_empty_opening_security_positions",
     "confirm_investment_funding_relation",
+    "correct_security_position_snapshot",
     "detect_investment_funding_relations",
+    "document_balance_difference",
     "get_import_analysis",
     "get_bank_monthly_export",
     "get_import_section_preview",
@@ -1595,6 +1782,7 @@ __all__ = [
     "parse_german_decimal",
     "parse_german_quantity",
     "reconcile_imported_period_balance",
+    "reconcile_imported_period_positions",
     "reconcile_imported_security_positions",
     "record_closing_balance",
     "record_closing_security_position",

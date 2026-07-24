@@ -24,7 +24,7 @@ without network access from a verified local artifact:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install --no-index /absolute/release/agent_os_finance-1.1.0-py3-none-any.whl
+.venv/bin/pip install --no-index /absolute/release/agent_os_finance-1.2.0-py3-none-any.whl
 ```
 
 Production keys live in the OS credential store. The database identity is
@@ -34,9 +34,9 @@ Production keys live in the OS credential store. The database identity is
 and are not production key recovery mechanisms. Losing both the store key and
 a usable archive key makes encrypted data unrecoverable.
 
-## Agent OS Finance 1.1.0
+## Agent OS Finance 1.2.0
 
-Agent OS Finance 1.1.0 ist eine vollständig lokal betriebene persönliche
+Agent OS Finance 1.2.0 ist eine vollständig lokal betriebene persönliche
 Finanzanwendung. Sie unterstützt das definierte CSV-Importformat,
 Transaktionsklassifikation, Dubletten-, Transfer- und Erstattungsbereinigung,
 wiederkehrende Zahlungen, Cashflow- und Monatsprognosen, Konten, Salden,
@@ -49,7 +49,7 @@ Supportgrenzen stehen in [`SUPPORT.md`](SUPPORT.md), der finale Abnahmelauf in
 [`ACCEPTANCE.md`](ACCEPTANCE.md) und die Änderungen in
 [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
-## Vertical Slices 0.2.0 through 1.1.0
+## Vertical Slices 0.2.0 through 1.2.0
 
 The first executable slice supports only `GenericFinanceCsvV1`:
 
@@ -67,7 +67,7 @@ finance --data-dir /absolute/local/finance-data import /absolute/input.csv --acc
 finance --data-dir /absolute/local/finance-data cashflow --month 2026-07
 ```
 
-Version 1.1.0 additionally supports the file-centric German multi-account
+Version 1.1.0 adds the file-centric German multi-account
 profile `GermanMultiAccountCsvV1`. One monthly file belongs to exactly one
 bank and contains ordered `CHECKING`, `SAVINGS` and `BROKERAGE` sections.
 Sections are mapped, normalized, deduplicated and reconciled independently;
@@ -99,6 +99,13 @@ changes. Same-type sections require a stable account reference. Cash balances
 and brokerage positions are reconciled per section, and cross-account funding
 relations are detected only after section import. Checked-in parser fixtures
 are synthetic.
+
+Version 1.2.0 binds this workflow completely to the local React UI. Its exact
+five-step assistant supports restart-safe continuation, explicit section and
+opening-value review, a complete pre-import preview, durable results and
+history, investment-funding decisions, balance/position reconciliation and
+auditable corrections. React receives only an opaque host file reference,
+never a local path, store handle or encryption key.
 
 The test-only `FINANCE_TEST_KEY` environment variable is intentionally limited
 to synthetic test data. Cashflow treats every positive amount as income and

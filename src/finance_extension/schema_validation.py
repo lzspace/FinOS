@@ -6,6 +6,8 @@ import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from datetime import date
+import re
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
@@ -71,11 +73,58 @@ SCHEMA_BY_EVENT = {
     "InvestmentFundingRelationBroken": "multi_account_import_events.schema.json",
     "ImportedPeriodBalanceReconciled": "multi_account_import_events.schema.json",
     "ImportedSecurityPositionsReconciled": "multi_account_import_events.schema.json",
+    "SecurityPositionSnapshotCorrected": "multi_account_import_events.schema.json",
+    "BalanceDifferenceDocumented": "multi_account_import_events.schema.json",
 }
 
 
 class EventValidationError(ValueError):
     pass
+
+
+def _validate_legacy_import_analysis(event: dict[str, Any]) -> None:
+    """Accept the pre-1.1.0 analysis event without weakening new writes.
+
+    Those events were valid when appended, but lack the account-binding and
+    source-identity fields introduced in 1.1.0. They remain immutable and
+    must be accepted for recovery validation of existing local workspaces.
+    """
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        raise EventValidationError("FINANCE_EVENT_SCHEMA_INVALID: $.payload")
+    required = {
+        "analysis_id": str,
+        "detected_profile": str,
+        "encoding": str,
+        "delimiter": str,
+        "file_hash": str,
+        "file_size": int,
+        "period_start": str,
+        "period_end": str,
+        "profile_version": str,
+        "sections": list,
+        "status": str,
+        "warnings": list,
+    }
+    if any(not isinstance(payload.get(name), value_type) for name, value_type in required.items()):
+        raise EventValidationError("FINANCE_EVENT_SCHEMA_INVALID: $.payload")
+    if (
+        payload["detected_profile"] != "GermanMultiAccountCsvV1"
+        or payload["encoding"] not in {"cp1252", "utf-8"}
+        or payload["delimiter"] != ";"
+        or payload["profile_version"] != "1.0.0"
+        or payload["status"] != "ANALYZED"
+        or not re.fullmatch(r"[a-f0-9]{64}", payload["file_hash"])
+        or payload["file_size"] < 1
+        or not payload["sections"]
+        or any(not isinstance(item, str) for item in payload["warnings"])
+    ):
+        raise EventValidationError("FINANCE_EVENT_SCHEMA_INVALID: $.payload")
+    try:
+        date.fromisoformat(payload["period_start"])
+        date.fromisoformat(payload["period_end"])
+    except ValueError as exc:
+        raise EventValidationError("FINANCE_EVENT_SCHEMA_INVALID: $.payload") from exc
 
 
 @lru_cache(maxsize=1)
@@ -91,6 +140,11 @@ def _schemas() -> tuple[dict[str, dict[str, Any]], Registry]:
 
 
 def validate_event(event: dict[str, Any]) -> None:
+    if event.get("event_type") == "ImportFileAnalyzed" and "export_id" not in event.get(
+        "payload", {}
+    ):
+        _validate_legacy_import_analysis(event)
+        return
     schema_name = SCHEMA_BY_EVENT.get(
         event.get("event_type", ""), "vertical_slice_events.schema.json"
     )

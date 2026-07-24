@@ -1,4 +1,4 @@
-"""Wheel-contained end-to-end acceptance scenario for the 1.1.0 release."""
+"""Wheel-contained end-to-end acceptance scenario for the 1.2.0 release."""
 
 from __future__ import annotations
 
@@ -41,6 +41,13 @@ from .forecasting import (
     recurring_patterns,
 )
 from .importer import import_csv, normalize_batch
+from .import_ui import (
+    import_execution_result,
+    import_history,
+    import_history_detail,
+    import_wizard_state,
+    investment_funding_relation_contexts,
+)
 from .multi_account_import import (
     analyze_import_file,
     closing_balances,
@@ -179,6 +186,27 @@ def _projection_snapshot(store: LocalFinanceStore) -> dict[str, Any]:
         "investment_funding_relations": investment_funding_relations(store),
         "imported_period_reconciliations": imported_period_reconciliations(store),
         "imported_security_position_reconciliations": imported_security_position_reconciliations(store),
+        "import_history": import_history(store),
+        "import_wizard_state": import_wizard_state(store),
+        "import_execution_result": (
+            import_execution_result(
+                store,
+                store.events("ImportFileAnalyzed")[-1]["aggregate_id"],
+            )
+            if store.events("ImportFileAnalyzed")
+            else None
+        ),
+        "import_history_detail": (
+            import_history_detail(
+                store,
+                store.events("ImportFileAnalyzed")[-1]["aggregate_id"],
+            )
+            if store.events("ImportFileAnalyzed")
+            else None
+        ),
+        "investment_funding_relation_contexts": investment_funding_relation_contexts(
+            store
+        ),
     }
     return _json_safe(snapshot)
 
@@ -194,7 +222,7 @@ def run_acceptance(
     require_installed_wheel: bool = False,
     wheel_sha256: str | None = None,
 ) -> dict[str, Any]:
-    if __version__ != "1.1.0":
+    if __version__ != "1.2.0":
         raise AssertionError("FINANCE_ACCEPTANCE_VERSION_MISMATCH")
     source_kind = "INSTALLED_WHEEL" if "site-packages" in Path(__file__).parts else "SOURCE_TREE"
     if require_installed_wheel and source_kind != "INSTALLED_WHEEL":

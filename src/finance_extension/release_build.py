@@ -38,9 +38,9 @@ SCHEMA_ROOT = ROOT / "extensions" / "finance" / "schemas"
 UI_ROOT = ROOT / "ui" / "dist"
 EMBEDDED_INTEGRITY = Path(__file__).with_name("release_integrity.json")
 SOURCE_DATE_EPOCH = "1767225600"  # 2026-01-01T00:00:00Z
-CONTRACT_VERSION = "1.2.0"
-PREVIOUS_CONTRACT_VERSION = "1.1.0"
-PREVIOUS_CONTRACT_CATALOG = ROOT / "extensions" / "finance" / "contracts" / "catalog-0.9.0.json"
+CONTRACT_VERSION = "1.3.0"
+PREVIOUS_CONTRACT_VERSION = "1.2.0"
+PREVIOUS_CONTRACT_CATALOG = ROOT / "extensions" / "finance" / "contracts" / "catalog-1.2.0.json"
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -122,7 +122,7 @@ def _write_sboms(output: Path) -> tuple[Path, Path]:
             "SPDXID": "SPDXRef-DOCUMENT",
             "name": f"agent-os-finance-{__version__}",
             "documentNamespace": f"https://agent-os.local/spdx/agent-os-finance-{__version__}",
-            "creationInfo": {"created": "2026-01-01T00:00:00Z", "creators": ["Tool: finance-release-1.1.0"]},
+            "creationInfo": {"created": "2026-01-01T00:00:00Z", "creators": ["Tool: finance-release-1.2.0"]},
             "packages": [
                 {
                     "SPDXID": f"SPDXRef-Package-{item['name']}",

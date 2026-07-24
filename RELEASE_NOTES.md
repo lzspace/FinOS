@@ -1,4 +1,23 @@
-# Agent OS Finance 1.1.0
+# Agent OS Finance 1.2.0
+
+Version 1.2.0 completes the local React integration for
+`GermanMultiAccountCsvV1`. The import area is now a projection-backed,
+restart-safe five-step assistant from opaque host file selection through
+analysis, account mapping, opening values, complete preview, explicit
+confirmation, execution, relation review and per-section reconciliation.
+
+New read models provide wizard state, durable execution results, import
+history/detail, balance context and position context. Security-position
+corrections and explanations for balance differences append new versioned
+events; historical events remain immutable. The UI exposes partial, stale,
+locked, incompatible, validating and executing states and has been verified at
+390 px without horizontal overflow.
+
+The store remains at schema 3; the additive contract package is 1.3.0. File paths,
+store handles and encryption keys do not cross into React. Runtime remains
+offline, and all fixtures are synthetic.
+
+## 1.1.0
 
 Version 1.1.0 adds the explicit, file-centric `GermanMultiAccountCsvV1` profile
 for local German bank exports. Each export represents exactly one bank and one
