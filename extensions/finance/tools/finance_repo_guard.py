@@ -32,6 +32,8 @@ IGNORED_PATH_PARTS = {
     ".ruff_cache",
     "node_modules",
     "build",
+    "target",
+    "binaries",
     "dist",
 }
 CONTENT_PATTERNS = {
@@ -83,6 +85,7 @@ def inspect_file(relative_path: Path, content: bytes) -> list[str]:
     synthetic = _is_synthetic_fixture(relative_path, content)
     generated_contract = _is_generated_contract_catalog(relative_path, content)
     generated_integrity = _is_generated_integrity_manifest(relative_path, content)
+    generated_dependency_lock = relative_path.name in {"Cargo.lock", "package-lock.json"}
 
     if BLOCKED_PATH_PARTS & lowered_parts:
         reasons.append("path is reserved for Finance runtime data")
@@ -93,7 +96,7 @@ def inspect_file(relative_path: Path, content: bytes) -> list[str]:
     # suffix and do not need to be decoded.
     if len(content) <= 5_000_000 and not synthetic and not generated_contract:
         for label, pattern in CONTENT_PATTERNS.items():
-            if generated_integrity and label == "likely German tax ID":
+            if (generated_integrity or generated_dependency_lock) and label == "likely German tax ID":
                 continue
             if pattern.search(content):
                 reasons.append(label)

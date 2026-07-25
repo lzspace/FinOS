@@ -135,6 +135,14 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
         UNCLASSIFIED: { category_code: "UNCLASSIFIED", gross_expense: "27.40", refund_amount: "0", effective_expense: "27.40", transaction_count: 2 },
       },
     }),
+    ListCategories: envelope({
+      categories: [
+        "INCOME_SALARY", "INCOME_OTHER", "HOUSING_RENT", "HOUSING_UTILITIES",
+        "FOOD_GROCERIES", "FOOD_RESTAURANTS", "MOBILITY_PUBLIC_TRANSPORT",
+        "MOBILITY_FUEL", "HEALTH", "INSURANCE", "LEISURE", "SUBSCRIPTIONS",
+        "EDUCATION", "FEES", "TAXES", "OTHER_EXPENSE", "UNCLASSIFIED",
+      ].map((category_code) => ({ category_code })),
+    }),
     ListClassificationReviews: envelope({ reviews: [
       { transaction_id: "txn_108", counterparty: "Café Morgen", amount: "-11.80", proposed_category: "FOOD_RESTAURANTS", confidence: "MEDIUM" },
       { transaction_id: "txn_109", counterparty: "Digital Services", amount: "-8.99", proposed_category: "SUBSCRIPTIONS", confidence: "LOW" },

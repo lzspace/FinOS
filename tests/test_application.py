@@ -104,6 +104,29 @@ class ApplicationServiceTests(unittest.TestCase):
         self.assertEqual(response["status"], "COMPLETED")
         self.assertGreater(response["event_store_sequence"], 0)
 
+    def test_custom_categories_are_persisted_and_listed(self) -> None:
+        transactions = self.application.query("ListTransactions", {"month": "2026-07"})
+        transaction_id = transactions["data"]["transactions"][0]["transaction_id"]
+
+        response = self.application.command(
+            "ConfirmClassification",
+            {
+                "transaction_id": transaction_id,
+                "category_code": "CUSTOM_HAUSTIERE",
+            },
+        )
+        categories = self.application.query("ListCategories")
+        details = self.application.query(
+            "GetTransactionDetails", {"transaction_id": transaction_id}
+        )
+
+        self.assertEqual(response["status"], "COMPLETED")
+        self.assertIn(
+            {"category_code": "CUSTOM_HAUSTIERE"},
+            categories["data"]["categories"],
+        )
+        self.assertEqual(details["data"]["category_code"], "CUSTOM_HAUSTIERE")
+
     def test_account_and_net_worth_queries_use_versioned_projection_contracts(self) -> None:
         create_account(
             self.store,

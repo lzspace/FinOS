@@ -156,24 +156,28 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
   };
 
   const chooseFile = async () => {
-    const selected = await financeBridge.selectImportFile();
-    if (!selected) {
-      setMessage("Keine Datei ausgewählt. Die Dateiauswahl bleibt vollständig im Desktop-Host.");
-      return;
+    try {
+      const selected = await financeBridge.selectImportFile();
+      if (!selected) {
+        setMessage("Keine Datei ausgewählt. Die Dateiauswahl bleibt vollständig im Desktop-Host.");
+        return;
+      }
+      setSelectedFile(selected);
+      await run("VALIDATING", async () => {
+        const response = await financeBridge.command("AnalyzeImportFile", {
+          source_file_reference: selected.file_ref,
+          requested_profile: "GermanMultiAccountCsvV1",
+          ...(bankIdentifier.trim() ? { confirmed_bank_identifier: bankIdentifier.trim() } : {}),
+        }) as { result?: Analysis };
+        const analyzed = response.result;
+        if (!analyzed) throw new Error("Die Importanalyse lieferte kein Ergebnis.");
+        await refresh(analyzed.export_id);
+        setStep(1);
+        setMessage("Datei wurde lokal analysiert. Bank und Berichtsmonat müssen vor der Zuordnung geprüft werden.");
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Die lokale Dateiauswahl ist fehlgeschlagen.");
     }
-    setSelectedFile(selected);
-    await run("VALIDATING", async () => {
-      const response = await financeBridge.command("AnalyzeImportFile", {
-        source_file_reference: selected.file_reference,
-        requested_profile: "GermanMultiAccountCsvV1",
-        ...(bankIdentifier.trim() ? { confirmed_bank_identifier: bankIdentifier.trim() } : {}),
-      }) as { result?: Analysis };
-      const analyzed = response.result;
-      if (!analyzed) throw new Error("Die Importanalyse lieferte kein Ergebnis.");
-      await refresh(analyzed.export_id);
-      setStep(1);
-      setMessage("Datei wurde lokal analysiert. Bank und Berichtsmonat müssen vor der Zuordnung geprüft werden.");
-    });
   };
 
   const confirmAnalysis = () => {
@@ -366,7 +370,7 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
       <button className="primary" disabled={busy} onClick={chooseFile}>{selectedFile ? "Andere CSV wählen" : "CSV auswählen"}</button>
     </section>
     <ol className="import-stepper" aria-label="Importfortschritt">
-      {steps.map((title, index) => <li key={title} className={step === index + 1 ? "active" : step > index + 1 ? "complete" : ""} aria-current={step === index + 1 ? "step" : undefined}><span>{step > index + 1 ? "✓" : index + 1}</span><strong>{title}</strong></li>)}
+      {steps.map((title, index) => <li key={title} className={step === index + 1 ? "active" : step > index + 1 ? "complete" : ""} aria-current={step === index + 1 ? "step" : undefined}><span>{step > index + 1 ? "✓" : index + 1}</span><strong>{title}</strong>{index < steps.length - 1 && <i aria-hidden="true" />}</li>)}
     </ol>
     {operation !== "READY" && <div className="status-banner" role="status"><strong>{operation === "VALIDATING" ? "Lokale Prüfung läuft" : "Import wird verarbeitet"}</strong><span>Bitte diesen Arbeitsbereich geöffnet lassen.</span></div>}
     {message && <div className="toast" role="status" aria-live="polite">{message}</div>}
@@ -387,11 +391,38 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
 }
 
 function AnalysisStep({ analysis, fileName, bankIdentifier, onBankIdentifier, onConfirm }: { analysis: Analysis; fileName?: string; bankIdentifier: string; onBankIdentifier: (value: string) => void; onConfirm: () => void }) {
-  return <section className="panel import-stage"><header><span className="eyebrow">SCHRITT 1</span><h2>Datei analysieren</h2><p>Prüfe Bank, Monat, Parserprofil und Abschnittsstruktur.</p></header><dl className="import-facts"><div><dt>Datei</dt><dd>{fileName ?? "Gespeicherte Dateireferenz"}</dd></div><div><dt>Bank</dt><dd><input value={bankIdentifier} onChange={(event) => onBankIdentifier(event.target.value)} aria-label="Bankkennung" /></dd></div><div><dt>Berichtsmonat</dt><dd>{analysis.report_month}</dd></div><div><dt>Zeitraum</dt><dd>{analysis.period_start} – {analysis.period_end}</dd></div><div><dt>Profil</dt><dd>{analysis.import_profile} · {analysis.profile_version}</dd></div><div><dt>Format</dt><dd>{analysis.encoding} · „{analysis.delimiter}“</dd></div><div><dt>Inhalt</dt><dd><code>{shortHash(analysis.source_file_hash)}</code> · {analysis.file_size} Bytes</dd></div></dl><div className="section-cards">{analysis.sections.map((section) => <article key={section.section_id}><strong>{section.original_title}</strong><span>{section.section_type}</span><p>{section.record_count} Datensätze · {section.empty ? "leer und gültig" : "Daten erkannt"}</p>{section.account_reference && <small>{section.account_reference}</small>}{section.warnings.map((warning) => <small className="warning" key={warning}>{warning}</small>)}</article>)}</div><footer><button className="primary" disabled={!bankIdentifier.trim()} onClick={onConfirm}>Bank und Monat bestätigen</button></footer></section>;
+  return <section className="panel import-stage">
+    <header><span className="eyebrow">SCHRITT 1</span><h2>Datei analysieren</h2><p>Prüfe Bank, Monat, Parserprofil und Abschnittsstruktur.</p></header>
+    <dl className="import-facts">
+      <div className="fact-file"><dt>Datei</dt><dd>{fileName ?? "Gespeicherte Dateireferenz"}</dd></div>
+      <div className="fact-bank"><dt>Bank</dt><dd><input value={bankIdentifier} onChange={(event) => onBankIdentifier(event.target.value)} aria-label="Bankkennung" /></dd></div>
+      <div className="fact-month"><dt>Berichtsmonat</dt><dd>{analysis.report_month}</dd></div>
+      <div className="fact-period"><dt>Zeitraum</dt><dd>{analysis.period_start} – {analysis.period_end}</dd></div>
+      <div className="fact-profile"><dt>Parserprofil</dt><dd>{analysis.import_profile}<small>Version {analysis.profile_version}</small></dd></div>
+      <div className="fact-format"><dt>Dateiformat</dt><dd>{analysis.encoding}<small>Trennzeichen „{analysis.delimiter}“</small></dd></div>
+      <div className="fact-content"><dt>Dateiinhalt</dt><dd><code>{shortHash(analysis.source_file_hash)}</code><small>{analysis.file_size.toLocaleString("de-DE")} Bytes</small></dd></div>
+    </dl>
+    <div className="section-overview"><div><h3>Erkannte Kontoabschnitte</h3><p>{analysis.sections.length} Abschnitt{analysis.sections.length === 1 ? "" : "e"} wurden getrennt geprüft.</p></div><div className="section-cards">{analysis.sections.map((section) => <article key={section.section_id}><div><strong>{section.original_title}</strong><span className="status-badge">{section.section_type}</span></div><p><b>{section.record_count}</b> Datensätze · {section.empty ? "leer und gültig" : "Daten erkannt"}</p>{section.account_reference && <small>{section.account_reference}</small>}{section.warnings.map((warning) => <small className="warning" key={warning}>{warning}</small>)}</article>)}</div></div>
+    <footer><button className="primary" disabled={!bankIdentifier.trim()} onClick={onConfirm}>Bank und Monat bestätigen</button></footer>
+  </section>;
 }
 
 function MappingStep({ analysis, accounts, mappings, skips, names, onMap, onSkip, onName, onCreate, onSave, busy }: { analysis: Analysis; accounts: Account[]; mappings: Record<string, string>; skips: Record<string, boolean>; names: Record<string, string>; onMap: (id: string, value: string) => void; onSkip: (id: string, value: boolean) => void; onName: (id: string, value: string) => void; onCreate: (section: Section) => void; onSave: () => void; busy: boolean }) {
-  return <section className="panel import-stage"><header><span className="eyebrow">SCHRITT 2</span><h2>Konten zuordnen</h2><p>Gespeicherte Bindungen sind vorausgefüllt, bleiben aber sichtbar und änderbar.</p></header><div className="mapping-list">{analysis.sections.map((section) => { const compatible = accounts.filter((account) => account.account_type === section.section_type); const skipping = mappings[section.section_id] === "__SKIP__" || section.section_type === "UNKNOWN"; return <article key={section.section_id}><div><strong>{section.original_title}</strong><small>{section.section_type} · {section.account_reference ?? "keine Kontoreferenz"}</small></div><label>Lokales Konto<select value={section.section_type === "UNKNOWN" ? "__SKIP__" : mappings[section.section_id] ?? ""} onChange={(event) => onMap(section.section_id, event.target.value)}><option value="">Bitte wählen</option>{compatible.map((account) => <option value={account.account_id} key={account.account_id}>{account.display_name} · {account.masked_reference ?? account.institution}</option>)}<option value="__SKIP__">Abschnitt bewusst überspringen</option></select></label>{skipping ? <label className="danger-confirm"><input type="checkbox" checked={Boolean(skips[section.section_id])} onChange={(event) => onSkip(section.section_id, event.target.checked)} /> Überspringen ausdrücklich bestätigen</label> : <div className="inline-create"><input placeholder="Neues Konto: Anzeigename" value={names[section.section_id] ?? ""} onChange={(event) => onName(section.section_id, event.target.value)} /><button className="secondary small" onClick={() => onCreate(section)}>Neu anlegen</button></div>}</article>; })}</div><footer><button className="primary" disabled={busy} onClick={onSave}>Zuordnungen speichern</button></footer></section>;
+  return <section className="panel import-stage">
+    <header><span className="eyebrow">SCHRITT 2</span><h2>Konten zuordnen</h2><p>Ordne jeden erkannten Abschnitt einem bestehenden Konto zu oder lege direkt ein neues an.</p></header>
+    <div className="mapping-list">{analysis.sections.map((section) => {
+      const compatible = accounts.filter((account) => account.account_type === section.section_type);
+      const skipping = mappings[section.section_id] === "__SKIP__" || section.section_type === "UNKNOWN";
+      return <article key={section.section_id}>
+        <div className="mapping-section"><span className="status-badge">{section.section_type}</span><strong>{section.original_title}</strong><small>{section.account_reference ?? "Keine Kontoreferenz im Export"}</small></div>
+        <div className="mapping-controls">
+          <label>Bestehendes Konto<select value={section.section_type === "UNKNOWN" ? "__SKIP__" : mappings[section.section_id] ?? ""} onChange={(event) => onMap(section.section_id, event.target.value)}><option value="">Konto auswählen …</option>{compatible.map((account) => <option value={account.account_id} key={account.account_id}>{account.display_name} · {account.masked_reference ?? account.institution}</option>)}<option value="__SKIP__">Abschnitt bewusst überspringen</option></select></label>
+          {skipping ? <label className="danger-confirm"><input type="checkbox" checked={Boolean(skips[section.section_id])} onChange={(event) => onSkip(section.section_id, event.target.checked)} /> Überspringen ausdrücklich bestätigen</label> : <div className="inline-create"><label>Oder neues Konto anlegen<input placeholder="Kontoname, z. B. Girokonto" value={names[section.section_id] ?? ""} onChange={(event) => onName(section.section_id, event.target.value)} /></label><button className="secondary small" disabled={!names[section.section_id]?.trim()} onClick={() => onCreate(section)}>Konto anlegen</button></div>}
+        </div>
+      </article>;
+    })}</div>
+    <footer><button className="primary" disabled={busy} onClick={onSave}>Zuordnungen speichern</button></footer>
+  </section>;
 }
 
 function ValuesStep({ analysis, mappings, opening, closing, emptyPositions, positions, onOpening, onClosing, onEmpty, onAddPosition, onPosition, onSave, busy }: { analysis: Analysis; mappings: Record<string, string>; opening: Record<string, string>; closing: Record<string, string>; emptyPositions: Record<string, boolean>; positions: Record<string, Json[]>; onOpening: (id: string, value: string) => void; onClosing: (id: string, value: string) => void; onEmpty: (id: string, value: boolean) => void; onAddPosition: (id: string) => void; onPosition: (id: string, index: number, field: string, value: string) => void; onSave: () => void; busy: boolean }) {
@@ -406,7 +437,24 @@ function PreviewStep({ analysis, previews, validation, confirmed, onConfirmed, o
 function ResultStep({ analysis, result, onReconcile, onRelation, busy }: { analysis: Analysis; result: Json | null; onReconcile: (section: Section) => void; onRelation: (id: string, action: "Confirm" | "Reject" | "Break") => void; busy: boolean }) {
   const sections = (result?.section_results as Json[] | undefined) ?? [];
   const relations = (result?.relations as Json[] | undefined) ?? [];
-  return <section className="panel import-stage"><header><span className="eyebrow">SCHRITT 5</span><h2>Importergebnis</h2><p>Ergebnisse, Relationen und Abgleiche bleiben nach einem Neustart vollständig rekonstruierbar.</p></header><div className="result-metrics"><div><span>Gesamtstatus</span><strong>{String(result?.status ?? analysis.status)}</strong></div><div><span>Kontobuchungen</span><strong>{String(result?.normalized_transaction_count ?? 0)}</strong></div><div><span>Depotbuchungen</span><strong>{String(result?.security_transaction_count ?? 0)}</strong></div><div><span>Relationsvorschläge</span><strong>{relations.length}</strong></div></div><div className="result-sections">{analysis.sections.map((section) => { const row = sections.find((item) => item.section_id === section.section_id); const reconciliation = row?.balance_reconciliation as Json | undefined ?? row?.position_reconciliation as Json | undefined; return <article key={section.section_id}><div><strong>{section.original_title}</strong><small>{String(row?.local_account_name ?? row?.account_id ?? section.mapped_account_id ?? "übersprungen")}</small></div><span className={`status-badge ${String(row?.status ?? section.import_status).toLowerCase()}`}>{String(row?.status ?? section.import_status)}</span>{row && <p>{String(row.normalized_transaction_count ?? row.security_transaction_count ?? row.record_count ?? 0)} verarbeitete Datensätze</p>}{reconciliation ? <p>Abgleich: <strong>{String(reconciliation.status)}</strong> · Abweichung {String(reconciliation.balance_difference ?? "positionsbezogen")}</p> : section.section_type !== "UNKNOWN" && <button className="secondary small" disabled={busy} onClick={() => onReconcile(section)}>Abgleich ausführen</button>}</article>; })}</div>{relations.length > 0 && <><h3 className="subheading">Wertpapier-Finanzierungen</h3><div className="relation-list">{relations.map((relation) => <article key={String(relation.relation_id)}><div><strong>{String(relation.amount)} {String(relation.currency)}</strong><small>{String(relation.booking_date ?? "–")} → {String(relation.security_identifier ?? "Wertpapier")}</small><p>{String(relation.match_reason ?? "Deterministischer Relationsmatch")}</p></div><span className="status-badge">{String(relation.status)}</span><div>{relation.status === "PROPOSED" && <><button className="primary small" onClick={() => onRelation(String(relation.relation_id), "Confirm")}>Bestätigen</button><button className="secondary small" onClick={() => onRelation(String(relation.relation_id), "Reject")}>Ablehnen</button></>}{relation.status === "CONFIRMED" && <button className="danger-link" onClick={() => onRelation(String(relation.relation_id), "Break")}>Verknüpfung lösen</button>}</div></article>)}</div></>}</section>;
+  const status = String(result?.status ?? analysis.status);
+  const completed = status === "COMPLETED";
+  return <section className="panel import-stage">
+    <header><span className="eyebrow">SCHRITT 5</span><h2>Importergebnis</h2><p>Ergebnisse, Relationen und Abgleiche bleiben nach einem Neustart vollständig rekonstruierbar.</p></header>
+    <div className={`result-status ${completed ? "success" : "review"}`}><span aria-hidden="true">{completed ? "✓" : "!"}</span><div><strong>{completed ? "Import erfolgreich abgeschlossen" : "Import benötigt weitere Prüfung"}</strong><small>Status: {status}</small></div></div>
+    <div className="result-metrics"><div><span>Kontobuchungen</span><strong>{String(result?.normalized_transaction_count ?? 0)}</strong><small>normalisiert importiert</small></div><div><span>Depotbuchungen</span><strong>{String(result?.security_transaction_count ?? 0)}</strong><small>Wertpapierbewegungen</small></div><div><span>Relationsvorschläge</span><strong>{relations.length}</strong><small>noch zu prüfen</small></div><div><span>Kontoabschnitte</span><strong>{analysis.sections.length}</strong><small>getrennt verarbeitet</small></div></div>
+    <div className="result-sections">{analysis.sections.map((section) => {
+      const row = sections.find((item) => item.section_id === section.section_id);
+      const reconciliation = row?.balance_reconciliation as Json | undefined ?? row?.position_reconciliation as Json | undefined;
+      const count = String(row?.normalized_transaction_count ?? row?.security_transaction_count ?? row?.record_count ?? 0);
+      return <article key={section.section_id}>
+        <div className="result-section-title"><div><strong>{section.original_title}</strong><small>{String(row?.local_account_name ?? row?.account_id ?? section.mapped_account_id ?? "übersprungen")}</small></div><span className={`status-badge ${String(row?.status ?? section.import_status).toLowerCase()}`}>{String(row?.status ?? section.import_status)}</span></div>
+        <div className="result-section-meta"><span><b>{count}</b> verarbeitete Datensätze</span><span>{analysis.period_start} – {analysis.period_end}</span></div>
+        {reconciliation ? <div className="reconciliation-summary"><span>Abgleich</span><strong>{String(reconciliation.status)}</strong><small>Abweichung {String(reconciliation.balance_difference ?? "positionsbezogen")}</small></div> : section.section_type !== "UNKNOWN" && <button className="secondary small" disabled={busy} onClick={() => onReconcile(section)}>Endsaldo abgleichen</button>}
+      </article>;
+    })}</div>
+    {relations.length > 0 && <><h3 className="subheading">Wertpapier-Finanzierungen</h3><div className="relation-list">{relations.map((relation) => <article key={String(relation.relation_id)}><div><strong>{String(relation.amount)} {String(relation.currency)}</strong><small>{String(relation.booking_date ?? "–")} → {String(relation.security_identifier ?? "Wertpapier")}</small><p>{String(relation.match_reason ?? "Deterministischer Relationsmatch")}</p></div><span className="status-badge">{String(relation.status)}</span><div>{relation.status === "PROPOSED" && <><button className="primary small" onClick={() => onRelation(String(relation.relation_id), "Confirm")}>Bestätigen</button><button className="secondary small" onClick={() => onRelation(String(relation.relation_id), "Reject")}>Ablehnen</button></>}{relation.status === "CONFIRMED" && <button className="danger-link" onClick={() => onRelation(String(relation.relation_id), "Break")}>Verknüpfung lösen</button>}</div></article>)}</div></>}
+  </section>;
 }
 
 function History({ result, onOpen, onResume }: { result: QueryState<{ imports: HistoryRow[] }>; onOpen: (row: HistoryRow) => void; onResume: (row: HistoryRow) => void }) {

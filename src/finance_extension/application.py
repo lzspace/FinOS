@@ -40,6 +40,7 @@ from .classification import (
     create_rule,
     reject_classification,
 )
+from .categories import CATEGORY_CODES
 from .crypto import KeyProvider, KeychainKeyProvider
 from .diagnostics import LocalDiagnosticRecorder
 from .forecasting import (
@@ -322,6 +323,7 @@ class FinanceApplicationService:
             "GetProjectedMonthEndBalance": self._projected_balance,
             "ListAccountReviews": self._account_reviews,
             "GetCategoryBreakdown": self._category_breakdown,
+            "ListCategories": self._categories,
             "ListClassificationReviews": self._classification_reviews,
             "ListReconciliationReviews": self._reconciliation_reviews,
             "ListRecurringPatterns": self._recurring_patterns,
@@ -722,6 +724,20 @@ class FinanceApplicationService:
             for key in ("gross_expense", "refund_amount", "effective_expense"):
                 item[key] = str(item[key])
         return self._envelope(result, status="EMPTY" if not result["categories"] else "READY")
+
+    def _categories(self, _: dict[str, Any]) -> dict[str, Any]:
+        custom = {
+            str(event["payload"].get("category_code", ""))
+            for event in self._store.events()
+            if event["event_type"]
+            in {
+                "TransactionClassificationConfirmed",
+                "ClassificationRuleCreated",
+            }
+            and str(event["payload"].get("category_code", "")).startswith("CUSTOM_")
+        }
+        codes = [*CATEGORY_CODES, *sorted(custom)]
+        return self._envelope({"categories": [{"category_code": code} for code in codes]})
 
     def _classification_reviews(self, _: dict[str, Any]) -> dict[str, Any]:
         rows = classification_review(self._store)

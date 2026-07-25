@@ -1,0 +1,16 @@
+SYNTHETIC_TEST_DATA
+Bank;SYNTHETIC_BANK
+Synthetischer Testexport
+Umsätze Girokonto
+Buchungstag;Wertstellung (Valuta);Vorgang;Buchungstext;Umsatz in EUR
+01.12.24;02.12.24;Lastschrift/Belastung;Synthetischer Einkauf;-36,85
+03.12.24;03.12.24;Entgelte;Synthetische Gebühr;-17
+04.12.24;04.12.24;Gutschrift;Synthetisches Gehalt;1.300
+05.12.24;06.12.24;Wertpapiere;Kauf Fonds WKN ABC123;-1.000,00
+
+Umsätze Tagesgeld PLUS-Konto
+Keine Umsätze vorhanden.
+
+Umsätze Depot
+Buchungstag;Geschäftstag;Stück / Nom.;Bezeichnung;WKN;Währung;Ausführungskurs;Umsatz in EUR
+06.12.24;05.12.24;10;Synthetischer Fonds;ABC123;EUR;100,00;-1.000,00

@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { App, CriticalState } from "./App";
+import { App, CriticalState, DesktopBridgeUnavailableState, DesktopServiceErrorState } from "./App";
 import { mockQuery } from "./mockData";
 
 afterEach(cleanup);
@@ -31,6 +31,25 @@ describe("Finance UI contract", () => {
     expect(await screen.findByRole("heading", { name: "Konten" })).toBeInTheDocument();
     expect(await screen.findByText("Wertpapierdepot")).toBeInTheDocument();
     expect(screen.getAllByText("Veraltet").length).toBeGreaterThan(0);
+  });
+
+  it("shows transaction context and persists a newly created category", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Transaktionen/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Details zu Markthalle/ }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Markthalle Süd" });
+    expect(within(dialog).getAllByText("Lebensmittel").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("Transaktionsbeschreibung")).toBeInTheDocument();
+    expect(within(dialog).getByText("Anbieter")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Neue Kategorie" }));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name der neuen Kategorie" }), { target: { value: "Haustiere" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Hinzufügen" }));
+    expect(within(dialog).getByRole("combobox", { name: "Kategorie" })).toHaveValue("CUSTOM_HAUSTIERE");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Kategorie speichern" }));
+    await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent("Kategorie wurde gespeichert"));
   });
 
   it("exposes all three runtime security states without treating unchecked as passed", () => {
@@ -64,5 +83,18 @@ describe("Finance UI contract", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Anwendungspaket verändert");
     expect(screen.getByText("FINANCE_BUNDLE_TAMPERED")).toBeInTheDocument();
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+  });
+
+  it("shows the controlled state when the desktop bridge is unavailable", () => {
+    render(<DesktopBridgeUnavailableState />);
+    expect(screen.getByRole("alert")).toHaveTextContent("DESKTOP_BRIDGE_UNAVAILABLE");
+    expect(screen.getByText(/ausschließlich in der lokalen Desktop-Anwendung/)).toBeInTheDocument();
+  });
+
+  it("does not mislabel a terminated desktop service as a version conflict", () => {
+    render(<DesktopServiceErrorState error="Unbekannter Fehler" />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Finance konnte nicht gestartet werden");
+    expect(screen.getByText("DESKTOP_APPLICATION_PROCESS_TERMINATED")).toBeInTheDocument();
+    expect(screen.queryByText("Version nicht kompatibel")).not.toBeInTheDocument();
   });
 });

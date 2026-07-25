@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/desktop_ipc.schema.json",
+  "title": "Agent OS Finance desktop IPC contract",
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "operation", "contract_version", "payload"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^req_[a-f0-9]{32}$"
+        },
+        "operation": {
+          "enum": ["query", "command", "runtime_status", "shutdown"]
+        },
+        "contract_version": {
+          "const": "1.3.0"
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]+$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "operation", "contract_version", "status"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation": {
+          "enum": ["query", "command", "runtime_status", "shutdown", "invalid"]
+        },
+        "contract_version": {
+          "const": "1.3.0"
+        },
+        "status": {
+          "enum": ["OK", "ERROR"]
+        },
+        "result": {},
+        "error": {
+          "$ref": "#/$defs/error"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "OK"
+              }
+            }
+          },
+          "then": {
+            "required": ["result"],
+            "not": {
+              "required": ["error"]
+            }
+          },
+          "else": {
+            "required": ["error"],
+            "not": {
+              "required": ["result"]
+            }
+          }
+        }
+      ]
+    },
+    "selected_import_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file_ref", "display_name", "size_bytes"],
+      "properties": {
+        "file_ref": {
+          "type": "string",
+          "pattern": "^file_[a-f0-9]{32}$"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[^/\\\\]+\\.csv$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 52428800
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/response"
+    },
+    {
+      "$ref": "#/$defs/selected_import_file"
+    }
+  ]
+}

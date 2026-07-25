@@ -9,15 +9,20 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build": "npm run generate:contracts && tsc --noEmit && vite build",
-    "check:offline": "node scripts/offline-check.mjs"
+    "check:offline": "node scripts/offline-check.mjs",
+    "desktop:dev": "cd .. && ui/node_modules/.bin/tauri dev",
+    "desktop:test": "cargo test --manifest-path ../src-tauri/Cargo.toml",
+    "desktop:build": "cd .. && PYTHONPATH=src .venv-alt/bin/python tools/build_desktop_sidecar.py && ui/node_modules/.bin/tauri build",
+    "desktop:offline": "cd .. && PYTHONPATH=src .venv-alt/bin/python tools/check_desktop_offline.py"
   },
   "dependencies": {
     "@vitejs/plugin-react": "6.0.3",
-    "vite": "8.1.5",
     "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react-dom": "19.2.7",
+    "vite": "8.1.5"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.1",
     "@testing-library/jest-dom": "7.0.0",
     "@testing-library/react": "16.3.2",
     "@types/react": "19.2.17",

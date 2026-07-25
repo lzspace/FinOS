@@ -53,4 +53,7 @@ node_modules/
 .ruff_cache/
 build/
 dist/
+src-tauri/target/
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
 .DS_Store

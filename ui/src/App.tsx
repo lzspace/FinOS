@@ -31,6 +31,21 @@ const money = (value: string | null | undefined, currency = "EUR") =>
     : new Intl.NumberFormat("de-DE", { style: "currency", currency }).format(Number(value));
 const date = (value: string) => new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value));
 const label = (value: string) => value.toLowerCase().replaceAll("_", " ").replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+const categoryNames: Record<string, string> = {
+  INCOME_SALARY: "Gehalt", INCOME_OTHER: "Sonstige Einnahmen",
+  HOUSING_RENT: "Miete", HOUSING_UTILITIES: "Wohnen & Nebenkosten",
+  FOOD_GROCERIES: "Lebensmittel", FOOD_RESTAURANTS: "Restaurant",
+  MOBILITY_PUBLIC_TRANSPORT: "Öffentlicher Verkehr", MOBILITY_FUEL: "Tanken",
+  HEALTH: "Gesundheit", INSURANCE: "Versicherungen", LEISURE: "Freizeit",
+  SUBSCRIPTIONS: "Abonnements", EDUCATION: "Bildung", FEES: "Gebühren",
+  TAXES: "Steuern", OTHER_EXPENSE: "Sonstige Ausgaben", UNCLASSIFIED: "Nicht kategorisiert",
+};
+const categoryLabel = (value: string) => categoryNames[value] ?? label(value.replace(/^CUSTOM_/, ""));
+const relationStatusLabel = (value: string) => value === "NONE" ? "Nicht erkannt" : label(value);
+const customCategoryCode = (value: string) => {
+  const slug = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48);
+  return slug ? `CUSTOM_${slug}` : "";
+};
 
 function useFinanceQuery<T>(name: string, payload: Record<string, unknown> = {}): QueryResult<T> {
   const signature = JSON.stringify(payload);
@@ -101,6 +116,12 @@ export function App() {
   const visibleNavigation = navigation.filter((item) => !item.capability || enabled[item.capability]);
 
   if (startup.state === "LOADING") return <FullState state="LOADING" />;
+  if (startup.error?.includes("DESKTOP_BRIDGE_UNAVAILABLE")) {
+    return <DesktopBridgeUnavailableState />;
+  }
+  if (startup.error) {
+    return <DesktopServiceErrorState error={startup.error} />;
+  }
   if (!startup.envelope || startup.envelope.data.status !== "READY") {
     return <CriticalState status={startup.envelope?.data.status ?? "INCOMPATIBLE_VERSION"} errorCode={startup.envelope?.data.error_code ?? startup.error} />;
   }
@@ -110,6 +131,9 @@ export function App() {
 
   return (
     <div className="shell">
+      {financeBridge.isPreview && <div className="preview-banner" role="status">
+        UI-VORSCHAU · ausschließlich synthetische Beispieldaten · kein Realdatenimport
+      </div>}
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">A</span><div><strong>Agent OS</strong><small>Finance · lokal</small></div></div>
         <nav aria-label="Hauptnavigation">
@@ -144,6 +168,29 @@ export function App() {
       </main>
     </div>
   );
+}
+
+export function DesktopBridgeUnavailableState() {
+  return <main className="full-state critical-state" role="alert">
+    <span className="brand-mark">!</span>
+    <span className="eyebrow">DESKTOP-HOST ERFORDERLICH</span>
+    <h1>Desktop-Bridge nicht verfügbar</h1>
+    <p>Reale Finanzdaten können ausschließlich in der lokalen Desktop-Anwendung geöffnet werden.</p>
+    <code>DESKTOP_BRIDGE_UNAVAILABLE</code>
+    <small>Der Browsermodus führt keinen Dateiimport und keinen Datenzugriff aus.</small>
+  </main>;
+}
+
+export function DesktopServiceErrorState({ error }: { error: string }) {
+  const code = error === "Unbekannter Fehler" ? "DESKTOP_APPLICATION_PROCESS_TERMINATED" : error.split(":", 1)[0];
+  return <main className="full-state critical-state" role="alert">
+    <span className="brand-mark">!</span>
+    <span className="eyebrow">LOKALER DIENST NICHT VERFÜGBAR</span>
+    <h1>Finance konnte nicht gestartet werden</h1>
+    <p>Der lokale Hintergrunddienst wurde beendet. Nach einem unerwarteten Abbruch wird ein veralteter Workspace-Lock beim nächsten Start sicher bereinigt.</p>
+    <code>{code}</code>
+    <small>Es wurden keine Finanzdaten verändert.</small>
+  </main>;
 }
 
 export function CriticalState({ status, errorCode }: { status: StartupState; errorCode?: string | null }) {
@@ -241,22 +288,57 @@ function PanelHeader({ title, subtitle, action, onAction }: { title: string; sub
 
 function Transactions({ month }: { month: string }) {
   const result = useFinanceQuery<{ transactions: Transaction[] }>("ListTransactions", { month });
+  const categories = useFinanceQuery<{ categories: Array<{ category_code: string }> }>("ListCategories");
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [message, setMessage] = useState("");
+  const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string>>({});
   const classify = async () => { await financeBridge.command("ClassifyTransactions", { month }); setMessage("Klassifikation lokal ausgeführt."); };
   return <QueryBoundary result={result}>{({ transactions }) => <>
     <section className="section-intro"><div><h2>Buchungen im Zeitraum</h2><p>Effektive Beträge nach bestätigten Dubletten, Transfers und Rückerstattungen.</p></div><button className="primary" onClick={classify}>Regeln anwenden</button></section>
     {message && <div className="toast" role="status">{message}</div>}
-    <section className="panel table-panel"><table><thead><tr><th>Datum</th><th>Gegenpartei</th><th>Kategorie</th><th>Status</th><th className="numeric">Betrag</th><th><span className="sr-only">Aktion</span></th></tr></thead><tbody>{transactions.map((item) => <tr key={item.transaction_id}><td>{date(item.booking_date)}</td><td><strong>{item.counterparty}</strong><small>{item.description}</small></td><td><span className={`category-tag ${item.category_code === "UNCLASSIFIED" ? "warn" : ""}`}>{label(item.category_code)}</span></td><td><span className="status-dot ok">Effektiv</span></td><td className={`numeric amount ${Number(item.amount) >= 0 ? "positive-text" : ""}`}>{money(item.amount, item.currency)}</td><td><button className="icon-button" onClick={() => setSelected(item)} aria-label={`Details zu ${item.counterparty}`}>→</button></td></tr>)}</tbody></table></section>
-    {selected && <TransactionDialog transaction={selected} onClose={() => setSelected(null)} />}
+    <section className="panel table-panel"><table><thead><tr><th>Datum</th><th>Anbieter und Beschreibung</th><th>Kategorie</th><th>Status</th><th className="numeric">Betrag</th><th><span className="sr-only">Aktion</span></th></tr></thead><tbody>{transactions.map((item) => { const category = categoryOverrides[item.transaction_id] ?? item.category_code; return <tr key={item.transaction_id}><td>{date(item.booking_date)}</td><td><strong>{item.counterparty || "Unbekannter Anbieter"}</strong><small>{item.description || item.normalized_description || "Keine Beschreibung"}</small></td><td><span className={`category-tag ${category === "UNCLASSIFIED" ? "warn" : ""}`}>{categoryLabel(category)}</span></td><td><span className="status-dot ok">Effektiv</span></td><td className={`numeric amount ${Number(item.amount) >= 0 ? "positive-text" : ""}`}>{money(item.amount, item.currency)}</td><td><button className="icon-button" onClick={() => setSelected({ ...item, category_code: category })} aria-label={`Details zu ${item.counterparty}`}>→</button></td></tr>; })}</tbody></table></section>
+    {selected && <TransactionDialog transaction={selected} categories={categories.envelope?.data.categories.map((item) => item.category_code) ?? []} onClose={() => setSelected(null)} onSaved={(category) => { setCategoryOverrides((current) => ({ ...current, [selected.transaction_id]: category })); setSelected((current) => current ? { ...current, category_code: category } : current); setMessage(`Kategorie „${categoryLabel(category)}“ wurde gespeichert.`); }} />}
   </>}</QueryBoundary>;
 }
 
-function TransactionDialog({ transaction, onClose }: { transaction: Transaction; onClose: () => void }) {
+function TransactionDialog({ transaction, categories, onClose, onSaved }: { transaction: Transaction; categories: string[]; onClose: () => void; onSaved: (category: string) => void }) {
   const close = useRef<HTMLButtonElement>(null);
   const details = useFinanceQuery<Record<string, unknown>>("GetTransactionDetails", { transaction_id: transaction.transaction_id });
   const handleKeyDown = useModalFocus(close, onClose);
-  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="transaction-title" onKeyDown={handleKeyDown}><button ref={close} className="dialog-close" onClick={onClose} aria-label="Dialog schließen">×</button><span className="eyebrow">TRANSAKTIONSDETAIL</span><h2 id="transaction-title">{transaction.counterparty}</h2><strong className="dialog-amount">{money(transaction.amount)}</strong><dl><div><dt>Buchungstag</dt><dd>{date(transaction.booking_date)}</dd></div><div><dt>Kategorie</dt><dd>{label(transaction.category_code)}</dd></div><div><dt>Beschreibung</dt><dd>{transaction.description}</dd></div><div><dt>Cashflow-relevant</dt><dd>{transaction.cashflow_relevant ? "Ja" : "Nein"}</dd></div></dl><div className="detail-state">{details.state === "LOADING" ? "Event-Historie wird geladen …" : `Query-Projektion · ${details.state}`}</div></section></div>;
+  const [category, setCategory] = useState(transaction.category_code);
+  const [creating, setCreating] = useState(false);
+  const [newCategory, setNewCategory] = useState("");
+  const [rememberProvider, setRememberProvider] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const detail = details.envelope?.data ?? {};
+  const categoryOptions = Array.from(new Set([transaction.category_code, ...categories, ...(category.startsWith("CUSTOM_") ? [category] : [])]));
+  const addCategory = () => {
+    const code = customCategoryCode(newCategory);
+    if (!code) { setFeedback("Gib einen Namen für die neue Kategorie ein."); return; }
+    setCategory(code);
+    setCreating(false);
+    setNewCategory("");
+    setFeedback(`Neue Kategorie „${categoryLabel(code)}“ ist ausgewählt.`);
+  };
+  const save = async () => {
+    if (!category || category === "UNCLASSIFIED") { setFeedback("Wähle zuerst eine Kategorie."); return; }
+    setBusy(true);
+    setFeedback("");
+    try {
+      await financeBridge.command("ConfirmClassification", { transaction_id: transaction.transaction_id, category_code: category });
+      if (rememberProvider && transaction.counterparty.trim()) {
+        await financeBridge.command("CreateClassificationRule", { field: "counterparty", operator: "EQUALS", value: transaction.counterparty, category_code: category, priority: 250 });
+      }
+      onSaved(category);
+      setFeedback(rememberProvider ? "Kategorie und Anbieterregel wurden gespeichert." : "Kategorie wurde gespeichert.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Kategorie konnte nicht gespeichert werden.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog wide transaction-dialog" role="dialog" aria-modal="true" aria-labelledby="transaction-title" onKeyDown={handleKeyDown}><button ref={close} className="dialog-close" onClick={onClose} aria-label="Dialog schließen">×</button><span className="eyebrow">TRANSAKTIONSDETAIL</span><div className="transaction-dialog-head"><div><h2 id="transaction-title">{transaction.counterparty || "Unbekannter Anbieter"}</h2><p>{transaction.description || transaction.normalized_description || "Keine Transaktionsbeschreibung vorhanden"}</p></div><strong className="dialog-amount">{money(transaction.amount, transaction.currency)}</strong></div><section className="category-editor" aria-label="Kategorie bearbeiten"><div><label htmlFor="transaction-category">Kategorie</label><select id="transaction-category" value={category} onChange={(event) => setCategory(event.target.value)}>{categoryOptions.map((code) => <option value={code} key={code}>{categoryLabel(code)}</option>)}</select></div><button className="secondary small" type="button" onClick={() => setCreating((value) => !value)}>{creating ? "Abbrechen" : "Neue Kategorie"}</button>{creating && <div className="new-category-row"><input aria-label="Name der neuen Kategorie" value={newCategory} onChange={(event) => setNewCategory(event.target.value)} placeholder="z. B. Haustiere" /><button className="secondary small" type="button" onClick={addCategory}>Hinzufügen</button></div>}<label className="remember-rule"><input type="checkbox" checked={rememberProvider} onChange={(event) => setRememberProvider(event.target.checked)} /> Für diesen Anbieter künftig automatisch verwenden</label><button className="primary" disabled={busy || category === "UNCLASSIFIED"} onClick={save}>{busy ? "Speichert …" : "Kategorie speichern"}</button></section>{feedback && <div className="toast compact" role="status">{feedback}</div>}<dl className="transaction-facts"><div><dt>Anbieter</dt><dd>{String(detail.counterparty ?? transaction.counterparty ?? "–")}</dd></div><div><dt>Transaktionsbeschreibung</dt><dd>{String(detail.description ?? transaction.description ?? "–")}</dd></div><div><dt>Buchungstag</dt><dd>{date(String(detail.booking_date ?? transaction.booking_date))}</dd></div><div><dt>Wertstellung</dt><dd>{detail.value_date ? date(String(detail.value_date)) : "–"}</dd></div><div><dt>Konto</dt><dd>{String(detail.account_id ?? "–")}</dd></div><div><dt>Cashflow-relevant</dt><dd>{Boolean(detail.cashflow_relevant ?? transaction.cashflow_relevant) ? "Ja" : "Nein"}</dd></div><div><dt>Dublette</dt><dd>{relationStatusLabel(String((detail.reconciliation as Record<string, unknown> | undefined)?.duplicate_status ?? transaction.duplicate_status ?? "NONE"))}</dd></div><div><dt>Transfer</dt><dd>{relationStatusLabel(String((detail.reconciliation as Record<string, unknown> | undefined)?.transfer_status ?? transaction.transfer_status ?? "NONE"))}</dd></div></dl><div className="detail-state">{details.state === "LOADING" ? "Event-Historie wird geladen …" : `${((detail.event_history as unknown[] | undefined) ?? []).length} zugehörige Events · Projektion ${details.state}`}</div></section></div>;
 }
 
 function Categories({ month }: { month: string }) {
@@ -359,7 +441,7 @@ function LegacyImports() {
     : "";
   const choose = async () => {
     const selected = await financeBridge.selectImportFile();
-    const path = selected?.file_reference ?? null;
+    const path = selected?.file_ref ?? null;
     setSourcePath(path);
     if (!path) { setMessage("Die lokale Dateiauswahl ist nur im Desktop-Wrapper verfügbar."); return; }
     setBusy(true); setMessage("");

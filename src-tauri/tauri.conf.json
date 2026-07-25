@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Agent OS Finance",
+  "version": "1.2.0",
+  "identifier": "de.agent-os.finance",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../ui run dev -- --host 127.0.0.1",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm --prefix ../ui run build",
+    "frontendDist": "../ui/dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "csp": "default-src 'self'; connect-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Agent OS Finance",
+        "width": 1320,
+        "height": 860,
+        "minWidth": 980,
+        "minHeight": 680,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "create": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "externalBin": ["binaries/finance-desktop-worker"],
+    "category": "Finance",
+    "shortDescription": "Private, local-only personal finance",
+    "longDescription": "Agent OS Finance processes encrypted personal finance data exclusively on this Mac.",
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
+    }
+  }
+}

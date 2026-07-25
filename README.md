@@ -268,3 +268,17 @@ Belegfunktion, kein OCR, keine externe KI, keine Mehrbenutzernutzung und keine
 Wiederherstellung ohne mindestens einen passenden Schlüssel. Details zum
 lokalen Datenpfad, Sicherheitsmodell und Incident-Verhalten stehen in
 [`SECURITY.md`](SECURITY.md).
+## Desktop-Host
+
+Der produktive Realdatenimport läuft ausschließlich im Tauri-Desktop-Host. Vor
+dem Laden der React-Anwendung stellt er `window.__FINANCE_IPC__` bereit. Die
+Oberfläche erhält bei der nativen CSV-Auswahl nur eine kurzlebige
+`file_ref`, den Anzeigenamen und die Dateigröße. Der geprüfte lokale Pfad
+verbleibt im Rust-Host und wird nur über ein zeilenbasiertes
+stdin/stdout-Protokoll an den lokalen Python-Application-Service übergeben.
+
+`npm run dev` bleibt eine deutlich gekennzeichnete UI-Vorschau mit
+ausschließlich synthetischen Daten. Ohne Desktop-Bridge zeigt ein
+Produktionsbundle `DESKTOP_BRIDGE_UNAVAILABLE`; es fällt nicht auf Mockdaten
+oder direkten Datenzugriff zurück. Der E2E-Fixture-Registrar wird nur mit dem
+Rust-Feature `e2e-fixtures` kompiliert.

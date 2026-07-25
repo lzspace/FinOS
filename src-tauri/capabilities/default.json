@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "No direct filesystem, shell, network, keychain or database access is exposed to the UI.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
+

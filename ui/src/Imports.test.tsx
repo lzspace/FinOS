@@ -58,11 +58,31 @@ function ipcFor(step: number | null, overrides: Partial<DesktopFinanceIPC> = {})
   let activeStep = step;
   const commands: Array<[string, Record<string, unknown>]> = [];
   const ipc: DesktopFinanceIPC = {
-    selectImportFile: vi.fn(async () => ({ file_reference: "file_token_01", display_name: "Juli.csv" })),
-    query: vi.fn(async (name: string) => {
+    selectImportFile: vi.fn(async () => ({ file_ref: "file_token_01", display_name: "Juli.csv", size_bytes: 2048 })),
+    getRuntimeStatus: vi.fn(async () => ({
+      request_id: "req_runtime", operation: "runtime_status" as const, contract_version: "1.3.0",
+      status: "OK" as const, result: { preview: false },
+    })),
+    invoke: vi.fn(async (operation: "query" | "command", request: Record<string, unknown>) => {
+      const name = String(request.name);
+      const payload = (request.payload ?? {}) as Record<string, unknown>;
+      if (operation === "command") {
+        commands.push([name, payload]);
+        if (name === "AnalyzeImportFile") {
+          activeStep = 1;
+          return {
+            request_id: "req_command", operation, contract_version: "1.3.0", status: "OK",
+            result: { schema_version: "1.0.0", status: "COMPLETED", result: analysis },
+          } as const;
+        }
+        return {
+          request_id: "req_command", operation, contract_version: "1.3.0", status: "OK",
+          result: { schema_version: "1.0.0", status: "COMPLETED", result: 1 },
+        } as const;
+      }
       if (name === "GetImportWizardState") {
-        if (activeStep === null) return envelope(null, "EMPTY");
-        return envelope({
+        if (activeStep === null) return desktopQuery(envelope(null, "EMPTY"));
+        return desktopQuery(envelope({
           export_id: analysis.export_id,
           current_step: activeStep,
           completed_steps: Array.from({ length: activeStep - 1 }, (_, index) => index + 1),
@@ -77,50 +97,52 @@ function ipcFor(step: number | null, overrides: Partial<DesktopFinanceIPC> = {})
             section_results: [{ ...section, status: "IMPORTED", local_account_name: "Girokonto", normalized_transaction_count: 2 }],
             relations: [],
           } : null,
-        });
+        }));
       }
-      if (name === "GetImportHistory") return envelope({ imports: activeStep === null ? [] : [{
+      if (name === "GetImportHistory") return desktopQuery(envelope({ imports: activeStep === null ? [] : [{
         export_id: analysis.export_id, bank_identifier: "BANK_A", report_month: "2026-07",
         imported_at: "2026-07-24T10:00:00Z", section_count: 1,
         completed_section_count: activeStep === 5 ? 1 : 0, status: activeStep === 5 ? "COMPLETED" : "ANALYZED",
         import_profile: analysis.import_profile, parser_version: "GermanMultiAccountCsvV1@1.0.0",
         source_file_hash: analysis.source_file_hash, resumable: activeStep !== 5,
-      }] });
-      if (name === "ListAccounts") return envelope({ accounts: [{
+      }] }));
+      if (name === "ListAccounts") return desktopQuery(envelope({ accounts: [{
         account_id: "acc_main", display_name: "Girokonto", account_type: "CHECKING",
         institution: "BANK_A", currency: "EUR", status: "ACTIVE", include_in_cashflow: true,
         include_in_liquidity: true, include_in_net_worth: true, opened_at: "2025-01-01",
         closed_at: null, masked_reference: "•••• 4821", latest_balance: null,
         available_balance: null, balance_date: null, balance_source: null,
         reconciliation_status: "NOT_RECONCILED", freshness: "CURRENT",
-      }] });
-      if (name === "GetImportSectionPreview") return envelope({
+      }] }));
+      if (name === "GetImportSectionPreview") return desktopQuery(envelope({
         ...section, first_booking_date: "2026-07-01", last_booking_date: "2026-07-20",
         amount_sum: "-42.00", duplicate_candidate_count: 0,
         preview: [{ booking_date: "2026-07-01", description: "Miete", amount: "-40.00" }],
-      });
-      if (name === "GetImportExecutionResult") return envelope({
+      }));
+      if (name === "GetImportExecutionResult") return desktopQuery(envelope({
         status: "COMPLETED", normalized_transaction_count: 2, security_transaction_count: 0,
         section_results: [{ ...section, status: "IMPORTED", local_account_name: "Girokonto", normalized_transaction_count: 2 }],
         relations: [],
-      });
-      if (name === "GetImportHistoryDetail") return envelope({
+      }));
+      if (name === "GetImportHistoryDetail") return desktopQuery(envelope({
         status: "COMPLETED", analysis,
         audit_history: [{ sequence_number: 42, event_type: "ImportSectionCompleted", occurred_at: "2026-07-24T10:00:00Z" }],
-      });
-      return envelope(null, "EMPTY");
-    }),
-    command: vi.fn(async (name: string, payload: Record<string, unknown>) => {
-      commands.push([name, payload]);
-      if (name === "AnalyzeImportFile") {
-        activeStep = 1;
-        return { schema_version: "1.0.0", status: "COMPLETED", result: analysis };
-      }
-      return { schema_version: "1.0.0", status: "COMPLETED", result: 1 };
+      }));
+      return desktopQuery(envelope(null, "EMPTY"));
     }),
     ...overrides,
   };
   return { ipc, commands };
+}
+
+function desktopQuery(result: unknown) {
+  return {
+    request_id: "req_query",
+    operation: "query" as const,
+    contract_version: "1.3.0",
+    status: "OK" as const,
+    result,
+  };
 }
 
 afterEach(() => {
@@ -150,12 +172,26 @@ describe("Importassistent 1.2.0", () => {
     expect(commands[0][1]).not.toHaveProperty("source_file_path");
   });
 
+  it("zeigt einen Fehler der nativen Dateiauswahl anstatt die UI abzubrechen", async () => {
+    const { ipc } = ipcFor(null, {
+      selectImportFile: vi.fn(async () => {
+        throw new Error("FINANCE_IMPORT_FILE_CLOUD_PATH");
+      }),
+    });
+    window.__FINANCE_IPC__ = ipc;
+    render(<Imports uiMonth="2026-07" manifest={manifest} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Lokale CSV auswählen" }));
+
+    expect(await screen.findByText("FINANCE_IMPORT_FILE_CLOUD_PATH")).toBeInTheDocument();
+  });
+
   it("setzt einen Import an der projizierten Kontenzuordnung fort", async () => {
     const { ipc } = ipcFor(2);
     window.__FINANCE_IPC__ = ipc;
     render(<Imports uiMonth="2026-07" manifest={manifest} />);
     expect(await screen.findByRole("heading", { name: "Konten zuordnen" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Lokales Konto" })).toHaveValue("acc_main");
+    expect(screen.getByRole("combobox", { name: "Bestehendes Konto" })).toHaveValue("acc_main");
     expect(screen.queryByText(/gespeicherte Stelle/i)).not.toBeInTheDocument();
   });
 

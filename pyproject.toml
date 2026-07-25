@@ -16,13 +16,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build==1.5.0", "pytest==9.1.1", "ruff==0.15.22"]
+dev = ["build==1.5.0", "pytest==9.1.1", "ruff==0.15.22", "pyinstaller==6.19.0"]
 
 [project.scripts]
 finance = "finance_extension.cli:main"
 finance-release = "finance_extension.release_build:main"
 finance-release-verify = "finance_extension.release_verify:main"
 finance-acceptance = "finance_extension.acceptance:main"
+finance-desktop-worker = "finance_extension.desktop_worker:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/finance_extension"]
