@@ -14,6 +14,7 @@
         { "$ref": "#/$defs/EmptyImportSectionProcessed" },
         { "$ref": "#/$defs/OpeningBalanceRecorded" },
         { "$ref": "#/$defs/ClosingBalanceRecorded" },
+        { "$ref": "#/$defs/OpeningBalanceCarryForwardAdjusted" },
         { "$ref": "#/$defs/SecurityTransactionNormalized" },
         { "$ref": "#/$defs/OpeningSecurityPositionRecorded" },
         { "$ref": "#/$defs/EmptyOpeningSecurityPositionsConfirmed" },
@@ -170,16 +171,36 @@
     },
     "BalancePayload": {
       "type": "object", "additionalProperties": false,
-      "required": ["balance_id", "account_id", "balance_date", "booked_balance", "available_balance", "currency", "source", "confirmation", "comment", "recorded_at"],
+      "required": ["balance_id", "account_id", "balance_date", "booked_balance", "available_balance", "currency", "source", "confirmation", "comment", "recorded_at", "carry_forward_source_reconciliation_id", "suggested_value", "adjustment_reason"],
       "properties": {
         "balance_id": { "type": "string" }, "account_id": { "type": "string" }, "balance_date": { "type": "string", "format": "date" },
         "booked_balance": { "type": "string" }, "available_balance": { "type": ["string", "null"] }, "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
         "source": { "enum": ["BANK_STATEMENT", "BANK_EXPORT", "MANUAL_ENTRY", "PREVIOUS_SYSTEM", "CALCULATED"] }, "confirmation": { "type": "boolean" },
-        "comment": { "type": ["string", "null"] }, "recorded_at": { "type": "string", "format": "date-time" }
+        "comment": { "type": ["string", "null"] }, "recorded_at": { "type": "string", "format": "date-time" },
+        "carry_forward_source_reconciliation_id": { "type": ["string", "null"] },
+        "suggested_value": { "type": ["string", "null"] },
+        "adjustment_reason": { "type": ["string", "null"] }
       }
     },
     "OpeningBalanceRecorded": { "properties": { "event_type": { "const": "OpeningBalanceRecorded" }, "aggregate_type": { "const": "OpeningBalance" }, "payload": { "$ref": "#/$defs/BalancePayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
     "ClosingBalanceRecorded": { "properties": { "event_type": { "const": "ClosingBalanceRecorded" }, "aggregate_type": { "const": "ClosingBalance" }, "payload": { "$ref": "#/$defs/BalancePayload" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "OpeningBalanceCarryForwardAdjusted": {
+      "properties": {
+        "event_type": { "const": "OpeningBalanceCarryForwardAdjusted" },
+        "aggregate_type": { "const": "OpeningBalance" },
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["balance_id", "account_id", "balance_date", "previous_value", "value", "reason", "source_reconciliation_id", "adjusted_at"],
+          "properties": {
+            "balance_id": { "type": "string" }, "account_id": { "type": "string" }, "balance_date": { "type": "string", "format": "date" },
+            "previous_value": { "type": "string" }, "value": { "type": "string" },
+            "reason": { "type": "string", "minLength": 1 }, "source_reconciliation_id": { "type": ["string", "null"] },
+            "adjusted_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "required": ["event_type", "aggregate_type", "payload"]
+    },
     "SecurityPositionPayload": {
       "type": "object", "additionalProperties": false,
       "required": ["position_id", "account_id", "valuation_date", "security_identifier_type", "security_identifier", "security_name", "quantity", "confirmation"],

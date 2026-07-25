@@ -671,6 +671,9 @@ def _record_balance(
     source: str,
     confirmation: bool,
     comment: str | None = None,
+    carry_forward_source_reconciliation_id: str | None = None,
+    suggested_value: str | None = None,
+    adjustment_reason: str | None = None,
 ) -> str:
     account = accounts(store).get(account_id)
     if not account:
@@ -682,7 +685,16 @@ def _record_balance(
         raise StoreInvariantError("FINANCE_BALANCE_INVALID")
     if not isinstance(confirmation, bool) or (source == "CALCULATED" and confirmation):
         raise StoreInvariantError("FINANCE_BALANCE_CONFIRMATION_INVALID")
-    aggregate_type = "OpeningBalance" if kind == "OpeningBalanceRecorded" else "ClosingBalance"
+    is_opening = kind == "OpeningBalanceRecorded"
+    suggested = (
+        _decimal(suggested_value, "FINANCE_BALANCE_INVALID")
+        if is_opening and suggested_value is not None
+        else None
+    )
+    adjusted = suggested is not None and suggested != booked
+    if adjusted and not (adjustment_reason and adjustment_reason.strip()):
+        raise StoreInvariantError("FINANCE_OPENING_BALANCE_ADJUSTMENT_REASON_REQUIRED")
+    aggregate_type = "OpeningBalance" if is_opening else "ClosingBalance"
     aggregate_id = f"{aggregate_type.lower()}_{account_id}"
     command_id = _id("cmd")
     payload = {
@@ -696,13 +708,40 @@ def _record_balance(
         "confirmation": confirmation,
         "comment": comment,
         "recorded_at": _now(),
+        "carry_forward_source_reconciliation_id": (
+            carry_forward_source_reconciliation_id if is_opening else None
+        ),
+        "suggested_value": str(suggested) if suggested is not None else None,
+        "adjustment_reason": adjustment_reason.strip() if adjusted and adjustment_reason else None,
     }
+    base_version = store.next_aggregate_version(aggregate_type, aggregate_id)
+    events = [_event(kind, aggregate_type, aggregate_id, base_version, command_id, payload)]
+    if adjusted:
+        events.append(
+            _event(
+                "OpeningBalanceCarryForwardAdjusted",
+                aggregate_type,
+                aggregate_id,
+                base_version + 1,
+                command_id,
+                {
+                    "balance_id": aggregate_id,
+                    "account_id": account_id,
+                    "balance_date": balance_date,
+                    "previous_value": str(suggested),
+                    "value": str(booked),
+                    "reason": adjustment_reason.strip() if adjustment_reason else "",
+                    "source_reconciliation_id": carry_forward_source_reconciliation_id,
+                    "adjusted_at": _now(),
+                },
+            )
+        )
     digest = hashlib.sha256(repr(sorted(payload.items())).encode()).hexdigest()
     _append(
         store,
         kind.removesuffix("Recorded").replace("Balance", "Balance"),
         digest,
-        [_event(kind, aggregate_type, aggregate_id, store.next_aggregate_version(aggregate_type, aggregate_id), command_id, payload)],
+        events,
     )
     return aggregate_id
 
@@ -729,6 +768,123 @@ def opening_balances(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
 
 def closing_balances(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
     return _latest_balance(store, "ClosingBalanceRecorded")
+
+
+def _previous_period(period_start: str) -> tuple[str, str]:
+    """Return the immediately preceding calendar month as (start, end)."""
+    start = date.fromisoformat(period_start)
+    prev_year, prev_month = (
+        (start.year, start.month - 1) if start.month > 1 else (start.year - 1, 12)
+    )
+    prev_start = date(prev_year, prev_month, 1)
+    prev_end = date(prev_year, prev_month, monthrange(prev_year, prev_month)[1])
+    return prev_start.isoformat(), prev_end.isoformat()
+
+
+OPENING_BALANCE_SUGGESTION_REASONS = {
+    "ELIGIBLE",
+    "ACCOUNT_NOT_FOUND",
+    "MISSING_CLOSING_BALANCE",
+    "CLOSING_BALANCE_NOT_CONFIRMED",
+    "CURRENCY_MISMATCH",
+    "PRIOR_MONTH_NOT_RECONCILED",
+    "UNRESOLVED_DIFFERENCE",
+    "PRIOR_IMPORT_INCOMPLETE",
+}
+
+
+def suggested_opening_balance(
+    store: LocalFinanceStore, *, account_id: str, period_start: str
+) -> dict[str, Any]:
+    """Propose the confirmed, reconciled prior-month closing balance as the opening balance.
+
+    Only an identical account, an immediately preceding calendar month, a
+    confirmed closing balance and a MATCHED reconciliation of a completed
+    prior import make the suggestion eligible; every other case returns a
+    stable reason_code instead of a value.
+    """
+    prev_start, prev_end = _previous_period(period_start)
+    account = accounts(store).get(account_id)
+    if not account:
+        return {
+            "eligible": False,
+            "reason_code": "ACCOUNT_NOT_FOUND",
+            "period_start": prev_start,
+            "period_end": prev_end,
+        }
+    closing_events = [
+        event
+        for event in store.events("ClosingBalanceRecorded")
+        if event["payload"]["account_id"] == account_id
+    ]
+    closing = closing_events[-1]["payload"] if closing_events else None
+    closing_event_id = closing_events[-1]["event_id"] if closing_events else None
+    if not closing or closing["balance_date"] != prev_end:
+        return {
+            "eligible": False,
+            "reason_code": "MISSING_CLOSING_BALANCE",
+            "period_start": prev_start,
+            "period_end": prev_end,
+        }
+    if not closing["confirmation"]:
+        return {
+            "eligible": False,
+            "reason_code": "CLOSING_BALANCE_NOT_CONFIRMED",
+            "period_start": prev_start,
+            "period_end": prev_end,
+        }
+    if closing["currency"] != account["currency"]:
+        return {
+            "eligible": False,
+            "reason_code": "CURRENCY_MISMATCH",
+            "period_start": prev_start,
+            "period_end": prev_end,
+        }
+    reconciliations = [
+        value
+        for value in imported_period_reconciliations(store).values()
+        if value["account_id"] == account_id
+        and value["period_start"] == prev_start
+        and value["period_end"] == prev_end
+    ]
+    reconciliation = reconciliations[-1] if reconciliations else None
+    if not reconciliation or reconciliation["status"] != "MATCHED":
+        reason = (
+            "UNRESOLVED_DIFFERENCE"
+            if reconciliation and reconciliation["status"] == "DIFFERENCE"
+            else "PRIOR_MONTH_NOT_RECONCILED"
+        )
+        return {
+            "eligible": False,
+            "reason_code": reason,
+            "period_start": prev_start,
+            "period_end": prev_end,
+        }
+    prior_import_complete = any(
+        run["account_id"] == account_id
+        and run["period_start"] == prev_start
+        and run["period_end"] == prev_end
+        and run["section_type"] in {"CHECKING", "SAVINGS"}
+        and run["status"] in {"IMPORTED", "EMPTY_COMPLETED"}
+        for run in imported_section_runs(store).values()
+    )
+    if not prior_import_complete:
+        return {
+            "eligible": False,
+            "reason_code": "PRIOR_IMPORT_INCOMPLETE",
+            "period_start": prev_start,
+            "period_end": prev_end,
+        }
+    return {
+        "eligible": True,
+        "reason_code": "ELIGIBLE",
+        "period_start": prev_start,
+        "period_end": prev_end,
+        "suggested_value": closing["booked_balance"],
+        "currency": closing["currency"],
+        "source_closing_balance_event_id": closing_event_id,
+        "source_reconciliation_id": reconciliation["reconciliation_id"],
+    }
 
 
 def record_opening_security_position(
@@ -1145,7 +1301,7 @@ def initial_balance_requirements(store: LocalFinanceStore, analysis_id: str) -> 
                 and opening["confirmation"]
                 and opening["balance_date"] < analysis["period_start"]
             )
-            requirements.append({"account_id": account_id, "section_id": section["section_id"], "requirement_type": "OPENING_BALANCE", "required": first_import, "satisfied": satisfied, "record": opening})
+            requirements.append({"account_id": account_id, "section_id": section["section_id"], "requirement_type": "OPENING_BALANCE", "required": first_import, "satisfied": satisfied, "record": opening, "suggested_opening_balance": suggested_opening_balance(store, account_id=account_id, period_start=analysis["period_start"])})
         elif section["section_type"] == "BROKERAGE":
             existing = [value for value in positions.values() if value["account_id"] == account_id]
             first_security_import = not any(
@@ -1792,4 +1948,5 @@ __all__ = [
     "security_positions",
     "security_transactions",
     "section_bindings",
+    "suggested_opening_balance",
 ]

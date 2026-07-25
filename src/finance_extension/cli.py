@@ -52,6 +52,7 @@ from .multi_account_import import (
     reconcile_imported_period_balance,
     record_opening_balance,
     reject_investment_funding_relation,
+    suggested_opening_balance,
 )
 from .reconciliation import (
     break_transfer,
@@ -259,6 +260,12 @@ def _parser() -> argparse.ArgumentParser:
         default="manual",
     )
     balance_opening.add_argument("--comment")
+    balance_opening.add_argument("--suggested-value")
+    balance_opening.add_argument("--carry-forward-source")
+    balance_opening.add_argument("--adjustment-reason")
+    balance_opening_suggest = balance_sub.add_parser("opening-suggest")
+    balance_opening_suggest.add_argument("--account", required=True)
+    balance_opening_suggest.add_argument("--period-start", required=True)
 
     sub.add_parser("liquidity")
     sub.add_parser("net-worth")
@@ -458,8 +465,16 @@ def main() -> int:
                     source=source,
                     confirmation=True,
                     comment=args.comment,
+                    carry_forward_source_reconciliation_id=args.carry_forward_source,
+                    suggested_value=args.suggested_value,
+                    adjustment_reason=args.adjustment_reason,
                 )
                 print(f"Anfangssaldo erfasst: {balance_id}")
+            elif args.balance_action == "opening-suggest":
+                suggestion = suggested_opening_balance(
+                    store, account_id=args.account, period_start=args.period_start
+                )
+                print(json.dumps(suggestion, ensure_ascii=False, indent=2))
             else:
                 for item in account_balance_history(store, args.account):
                     print(
