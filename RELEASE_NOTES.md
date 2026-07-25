@@ -1,4 +1,33 @@
-# Agent OS Finance 1.2.0
+# Agent OS Finance 1.4.0
+
+Version 1.4.0 unifies period selection and the account workspace. A central,
+typed period control (`MONTH`, `YEAR`, `CUSTOM_RANGE`) replaces the free month
+text input and drives the account overview, transactions, categories and
+wealth views; an import's own report month remains immutable. `QUARTER` and
+`ALL_TIME` modes are reserved internally but not yet exposed.
+
+The account overview and a full seven-tab account workspace (Übersicht,
+Transaktionen, Salden, Abgleiche, Importe, Positionen for brokerage accounts,
+Audit) are backed by eleven new or extended versioned queries
+(`GetAvailablePeriods`, `ListAccountOverviews`, `GetAccountDetail`,
+`GetAccountPeriodSummary`, `ListAccountTransactions`,
+`ListAccountReconciliations`, `ListAccountImports`, `ListAccountPositions`,
+`GetAccountPositionHistory`, `GetAccountAuditTrail`, plus the existing
+`GetAccountBalanceHistory`). Reported and calculated balances stay clearly
+separated everywhere; brokerage accounts show positions instead of a checking
+balance. Every response envelope now carries `projection_version`,
+`freshness_status` and `generated_at` alongside the existing
+`projection_sequence`/`event_store_sequence` pair.
+
+The capability manifest explicitly reports `product_version` (1.4.0),
+`contract_version` (1.4.0, additive), `store_schema_version` (unchanged at 3)
+and `ui_contract_version` (1.4.0) plus per-projection versions; Settings
+renders all of them from the runtime manifest, never hardcoded. Because no new
+physical store structure or reinterpreted event payload is required, the
+store schema stays 3 and every new view is reconstructed live from existing
+events rather than a persisted, potentially lagging projection.
+
+## 1.2.0
 
 Version 1.2.0 completes the local React integration for
 `GermanMultiAccountCsvV1`. The import area is now a projection-backed,

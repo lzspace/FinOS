@@ -17,6 +17,16 @@ from .accounts import (
     record_balance_snapshot,
     update_account,
 )
+from .account_workspace import (
+    account_audit_trail,
+    account_balance_ledger,
+    account_imports,
+    account_overview_for_period,
+    account_period_summary,
+    account_positions,
+    account_reconciliations_for_period,
+)
+from .periods import PeriodSelectionError, available_periods, default_month_period, resolve_period
 from .cashflow import monthly_cashflow
 from .classification import (
     category_breakdown,
@@ -199,9 +209,25 @@ def _parser() -> argparse.ArgumentParser:
         command = forecast_sub.add_parser(action)
         command.add_argument("--month", required=True)
 
+    period = sub.add_parser("period")
+    period_sub = period.add_subparsers(dest="period_action", required=True)
+    period_sub.add_parser("available")
+
+    def _add_period_arguments(command: argparse.ArgumentParser) -> None:
+        command.add_argument("--period-mode", default="MONTH", choices=["MONTH", "YEAR", "CUSTOM_RANGE"])
+        command.add_argument("--year", type=int)
+        command.add_argument("--month", type=int)
+        command.add_argument("--start", dest="period_start")
+        command.add_argument("--end", dest="period_end")
+
     account = sub.add_parser("account")
     account_sub = account.add_subparsers(dest="account_action", required=True)
     account_sub.add_parser("list")
+    account_overview_command = account_sub.add_parser("overview")
+    _add_period_arguments(account_overview_command)
+    account_detail_command = account_sub.add_parser("detail")
+    account_detail_command.add_argument("--account", required=True)
+    _add_period_arguments(account_detail_command)
     account_create = account_sub.add_parser("create")
     account_create.add_argument("--id")
     account_create.add_argument("--name", required=True)
@@ -329,6 +355,21 @@ def _print_reconciled_cashflow(flow: dict[str, object]) -> None:
     )
 
 
+def _resolve_cli_period(args: argparse.Namespace) -> dict[str, object]:
+    if not (args.year or args.month or args.period_start or args.period_end):
+        return default_month_period()
+    try:
+        return resolve_period(
+            args.period_mode,
+            year=args.year,
+            month=args.month,
+            start_date=args.period_start,
+            end_date=args.period_end,
+        )
+    except PeriodSelectionError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
 def main() -> int:
     args = _parser().parse_args()
     provider = (
@@ -383,6 +424,8 @@ def main() -> int:
                 else rotate_encryption_key(store, archive_provider, args.backup_directory)
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif args.action == "period":
+            print(json.dumps(available_periods(store), ensure_ascii=False, indent=2))
         elif args.action == "account":
             if args.account_action == "create":
                 account_id = create_account(
@@ -416,6 +459,22 @@ def main() -> int:
             elif args.account_action == "close":
                 close_account(store, args.account, args.date)
                 print("Konto geschlossen.")
+            elif args.account_action == "overview":
+                period = _resolve_cli_period(args)
+                result = account_overview_for_period(store, period)
+                print(json.dumps({"period": period, "accounts": result}, ensure_ascii=False, indent=2))
+            elif args.account_action == "detail":
+                period = _resolve_cli_period(args)
+                result = {
+                    "period": period,
+                    "period_summary": account_period_summary(store, args.account, period),
+                    "balance_history": account_balance_ledger(store, args.account, period),
+                    "reconciliations": account_reconciliations_for_period(store, args.account, period),
+                    "imports": account_imports(store, args.account),
+                    "positions": account_positions(store, args.account),
+                    "audit_history": account_audit_trail(store, args.account, period),
+                }
+                print(json.dumps(result, ensure_ascii=False, indent=2))
             else:
                 for item in account_overview(store):
                     print(

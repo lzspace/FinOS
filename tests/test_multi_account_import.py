@@ -836,7 +836,7 @@ class GermanMultiAccountImportTests(unittest.TestCase):
             "MATCHED",
         )
         manifest = application.query("GetCapabilityManifest")["data"]
-        self.assertEqual(manifest["contract_version"], "1.3.0")
+        self.assertEqual(manifest["contract_version"], "1.4.0")
         self.assertTrue(manifest["capabilities"]["position_reconciliation_capability"])
         wizard = application.query(
             "GetImportWizardState", {"export_id": analyzed["export_id"]}
@@ -917,6 +917,70 @@ class GermanMultiAccountImportTests(unittest.TestCase):
                 for event in detail["audit_history"]
             )
         )
+
+        period = {"mode": "MONTH", "year": 2024, "month": 12}
+        overviews = application.query("ListAccountOverviews", {"period": period})["data"]
+        self.assertEqual(overviews["period"]["display_label"], "Dezember 2024")
+        overview_by_id = {row["account_id"]: row for row in overviews["accounts"]}
+        self.assertEqual(overview_by_id["acc_checking"]["account_type"], "CHECKING")
+        self.assertIsNone(overview_by_id["acc_checking"]["position_count"])
+        self.assertEqual(overview_by_id["acc_brokerage"]["account_type"], "BROKERAGE")
+        self.assertEqual(overview_by_id["acc_brokerage"]["position_count"], 1)
+
+        checking_detail = application.query(
+            "GetAccountDetail", {"account_id": "acc_checking", "period": period}
+        )["data"]
+        self.assertEqual(checking_detail["account"]["account_id"], "acc_checking")
+        self.assertTrue(
+            any(row["balance_type"] == "OPENING" for row in checking_detail["balance_history"])
+        )
+        self.assertTrue(
+            any(row["balance_type"] == "CLOSING" for row in checking_detail["balance_history"])
+        )
+
+        reconciliations = application.query(
+            "ListAccountReconciliations", {"account_id": "acc_checking"}
+        )["data"]["reconciliations"]
+        self.assertEqual(reconciliations[0]["status"], "DIFFERENCE")
+        self.assertEqual(
+            reconciliations[0]["explanation"],
+            "Bankseitige Abschlussbuchung wird im Folgemonat gezeigt.",
+        )
+
+        imports = application.query("ListAccountImports", {"account_id": "acc_checking"})["data"][
+            "imports"
+        ]
+        self.assertEqual(imports[0]["section_type"], "CHECKING")
+        self.assertEqual(imports[0]["bank_identifier"], analyzed["bank_identifier"])
+
+        positions = application.query("ListAccountPositions", {"account_id": "acc_brokerage"})[
+            "data"
+        ]["positions"]
+        self.assertEqual(positions[0]["security_identifier"], "ABC123")
+        self.assertEqual(positions[0]["closing_quantity"], "10.00000000")
+
+        audit_trail = application.query(
+            "GetAccountAuditTrail", {"account_id": "acc_checking"}
+        )["data"]["audit_history"]
+        self.assertTrue(
+            any(event["event_type"] == "ImportedPeriodBalanceReconciled" for event in audit_trail)
+        )
+        self.assertTrue(
+            any(event["event_type"] == "BalanceDifferenceDocumented" for event in audit_trail)
+        )
+
+        transactions = application.query(
+            "ListAccountTransactions", {"account_id": "acc_checking", "period": period}
+        )["data"]["transactions"]
+        self.assertTrue(all(item["account_id"] == "acc_checking" for item in transactions))
+
+        summary = application.query(
+            "GetAccountPeriodSummary", {"account_id": "acc_checking", "period": period}
+        )["data"]
+        self.assertEqual(summary["account_id"], "acc_checking")
+
+        available = application.query("GetAvailablePeriods")["data"]
+        self.assertIn("2024-12", available["available_months"])
 
     def test_application_resolves_opaque_import_file_reference(self) -> None:
         application = FinanceApplicationService(
