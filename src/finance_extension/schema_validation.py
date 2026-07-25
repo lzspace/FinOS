@@ -63,6 +63,7 @@ SCHEMA_BY_EVENT = {
     "EmptyImportSectionProcessed": "multi_account_import_events.schema.json",
     "OpeningBalanceRecorded": "multi_account_import_events.schema.json",
     "ClosingBalanceRecorded": "multi_account_import_events.schema.json",
+    "OpeningBalanceCarryForwardAdjusted": "multi_account_import_events.schema.json",
     "SecurityTransactionNormalized": "multi_account_import_events.schema.json",
     "OpeningSecurityPositionRecorded": "multi_account_import_events.schema.json",
     "EmptyOpeningSecurityPositionsConfirmed": "multi_account_import_events.schema.json",

@@ -54,7 +54,11 @@ const envelope = <T,>(data: T, state: Envelope<T>["state"] = "READY"): Envelope<
   data,
 });
 
-function ipcFor(step: number | null, overrides: Partial<DesktopFinanceIPC> = {}) {
+function ipcFor(
+  step: number | null,
+  overrides: Partial<DesktopFinanceIPC> = {},
+  options: { requirements?: Record<string, unknown>[]; auditHistory?: Record<string, unknown>[] } = {},
+) {
   let activeStep = step;
   const commands: Array<[string, Record<string, unknown>]> = [];
   const ipc: DesktopFinanceIPC = {
@@ -89,7 +93,7 @@ function ipcFor(step: number | null, overrides: Partial<DesktopFinanceIPC> = {})
           status: activeStep === 5 ? "COMPLETED" : "ANALYZED",
           can_resume: activeStep < 5,
           analysis,
-          requirements: [],
+          requirements: options.requirements ?? [],
           execution_result: activeStep === 5 ? {
             status: "COMPLETED",
             normalized_transaction_count: 2,
@@ -126,7 +130,7 @@ function ipcFor(step: number | null, overrides: Partial<DesktopFinanceIPC> = {})
       }));
       if (name === "GetImportHistoryDetail") return desktopQuery(envelope({
         status: "COMPLETED", analysis,
-        audit_history: [{ sequence_number: 42, event_type: "ImportSectionCompleted", occurred_at: "2026-07-24T10:00:00Z" }],
+        audit_history: options.auditHistory ?? [{ sequence_number: 42, event_type: "ImportSectionCompleted", occurred_at: "2026-07-24T10:00:00Z" }],
       }));
       return desktopQuery(envelope(null, "EMPTY"));
     }),
@@ -193,6 +197,94 @@ describe("Importassistent 1.2.0", () => {
     expect(await screen.findByRole("heading", { name: "Konten zuordnen" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Bestehendes Konto" })).toHaveValue("acc_main");
     expect(screen.queryByText(/gespeicherte Stelle/i)).not.toBeInTheDocument();
+  });
+
+  it("übernimmt den bestätigten Endsaldo des Vormonats automatisch als Anfangssaldo", async () => {
+    const { ipc } = ipcFor(3, {}, {
+      requirements: [{
+        account_id: "acc_main", section_id: section.section_id, requirement_type: "OPENING_BALANCE",
+        required: false, satisfied: true, record: null,
+        suggested_opening_balance: {
+          eligible: true, reason_code: "ELIGIBLE", period_start: "2026-06-01", period_end: "2026-06-30",
+          suggested_value: "3145.24", currency: "EUR",
+          source_closing_balance_event_id: "evt_closing", source_reconciliation_id: "recon_june",
+        },
+      }],
+    });
+    window.__FINANCE_IPC__ = ipc;
+    render(<Imports uiMonth="2026-07" manifest={manifest} />);
+    expect(await screen.findByRole("heading", { name: "Anfangswerte prüfen" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText(/Anfangssaldo am/)).toHaveValue("3145.24"));
+    expect(screen.getByText(/Automatisch aus dem bestätigten Endsaldo des Vormonats übernommen/)).toBeInTheDocument();
+    expect(screen.getByText(/Quelle: Bestätigter Endsaldo/)).toHaveTextContent("2026-06-30");
+  });
+
+  it("zeigt einen Hinweis, wenn der Anfangssaldo nicht automatisch übernommen werden kann", async () => {
+    const { ipc } = ipcFor(3, {}, {
+      requirements: [{
+        account_id: "acc_main", section_id: section.section_id, requirement_type: "OPENING_BALANCE",
+        required: false, satisfied: true, record: null,
+        suggested_opening_balance: {
+          eligible: false, reason_code: "UNRESOLVED_DIFFERENCE", period_start: "2026-06-01", period_end: "2026-06-30",
+        },
+      }],
+    });
+    window.__FINANCE_IPC__ = ipc;
+    render(<Imports uiMonth="2026-07" manifest={manifest} />);
+    expect(await screen.findByText(/Der Anfangssaldo konnte nicht automatisch übernommen werden/)).toBeInTheDocument();
+    expect(screen.getByText(/ungelöste Saldodifferenz/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Anfangssaldo am/)).toHaveValue("");
+  });
+
+  it("verlangt eine Begründung, wenn der übernommene Anfangssaldo geändert wird", async () => {
+    const { ipc, commands } = ipcFor(3, {}, {
+      requirements: [{
+        account_id: "acc_main", section_id: section.section_id, requirement_type: "OPENING_BALANCE",
+        required: false, satisfied: true, record: null,
+        suggested_opening_balance: {
+          eligible: true, reason_code: "ELIGIBLE", period_start: "2026-06-01", period_end: "2026-06-30",
+          suggested_value: "3145.24", currency: "EUR",
+          source_closing_balance_event_id: "evt_closing", source_reconciliation_id: "recon_june",
+        },
+      }],
+    });
+    window.__FINANCE_IPC__ = ipc;
+    render(<Imports uiMonth="2026-07" manifest={manifest} />);
+    const openingInput = await screen.findByLabelText(/Anfangssaldo am/);
+    fireEvent.change(openingInput, { target: { value: "3000.00" } });
+    const save = screen.getByRole("button", { name: "Anfangswerte bestätigen und Vorschau erstellen" });
+    fireEvent.click(save);
+    expect(await screen.findByText(/Begründung.*erforderlich/)).toBeInTheDocument();
+    expect(commands.some(([name]) => name === "RecordOpeningBalance")).toBe(false);
+
+    fireEvent.change(screen.getByLabelText(/Begründung für die Abweichung/), {
+      target: { value: "Bankkorrektur nach Rücklastschrift" },
+    });
+    fireEvent.click(save);
+    await waitFor(() => expect(commands.some(([name]) => name === "RecordOpeningBalance")).toBe(true));
+    const recorded = commands.find(([name]) => name === "RecordOpeningBalance")?.[1];
+    expect(recorded).toMatchObject({
+      booked_balance: "3000.00",
+      suggested_value: "3145.24",
+      adjustment_reason: "Bankkorrektur nach Rücklastschrift",
+    });
+  });
+
+  it("übersetzt technische Eventnamen im Auditverlauf und bietet eine Fallback-Darstellung für unbekannte Events", async () => {
+    const { ipc } = ipcFor(5, {}, {
+      auditHistory: [
+        { sequence_number: 41, event_type: "OpeningBalanceRecorded", occurred_at: "2026-07-24T09:00:00Z", account_id: "acc_main", payload: { booked_balance: "3145.24", currency: "EUR", balance_date: "2026-06-30" } },
+        { sequence_number: 140, event_type: "SomeFutureEvent", occurred_at: "2026-07-24T10:00:00Z" },
+      ],
+    });
+    window.__FINANCE_IPC__ = ipc;
+    render(<Imports uiMonth="2026-07" manifest={manifest} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Anfangssaldo erfasst");
+    expect(dialog).toHaveTextContent("Unbekanntes Ereignis");
+    expect(dialog).toHaveTextContent("SomeFutureEvent");
+    expect(dialog).toHaveTextContent("globale Event-Sequenz");
   });
 
   it("stellt die vollständige Vorschau wieder her und verlangt eine explizite Bestätigung", async () => {

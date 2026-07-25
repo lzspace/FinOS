@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { financeBridge, SchemaCompatibilityError, type SelectedImportFile } from "./bridge";
 import type { Account, CapabilityManifest, Envelope, ViewState } from "./contracts/generated";
+import { EVENT_CATEGORY_ORDER, EVENT_CATEGORY_TITLES, eventLabel, type EventCategory } from "./eventLabels";
+
+const OPENING_BALANCE_REASON_TEXT: Record<string, string> = {
+  MISSING_CLOSING_BALANCE: "Der vorherige Monat besitzt keinen abschließend bestätigten Endsaldo.",
+  CLOSING_BALANCE_NOT_CONFIRMED: "Der vorherige Monat besitzt keinen abschließend bestätigten Endsaldo.",
+  CURRENCY_MISMATCH: "Die Währung hat sich gegenüber dem Vormonat geändert.",
+  PRIOR_MONTH_NOT_RECONCILED: "Für den vorherigen Monat liegt noch kein Saldenabgleich vor.",
+  UNRESOLVED_DIFFERENCE: "Der vorherige Monat weist eine ungelöste Saldodifferenz auf.",
+  PRIOR_IMPORT_INCOMPLETE: "Der Import des vorherigen Monats wurde nicht vollständig abgeschlossen.",
+  ACCOUNT_NOT_FOUND: "Für dieses Konto liegt kein Vormonat vor.",
+};
 
 type Json = Record<string, unknown>;
 type QueryState<T> = { state: ViewState; data?: T; error?: string };
@@ -97,6 +108,8 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
   const [mappings, setMappings] = useState<Record<string, string>>({});
   const [skipConfirmed, setSkipConfirmed] = useState<Record<string, boolean>>({});
   const [openingBalances, setOpeningBalances] = useState<Record<string, string>>({});
+  const [openingSuggestions, setOpeningSuggestions] = useState<Record<string, Json>>({});
+  const [adjustmentReasons, setAdjustmentReasons] = useState<Record<string, string>>({});
   const [closingBalances, setClosingBalances] = useState<Record<string, string>>({});
   const [emptyPositions, setEmptyPositions] = useState<Record<string, boolean>>({});
   const [positions, setPositions] = useState<Record<string, Json[]>>({});
@@ -137,6 +150,25 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    const requirements = (wizard.data?.requirements as Json[] | undefined) ?? [];
+    const suggestionsByAccount: Record<string, Json> = {};
+    for (const requirement of requirements) {
+      if (requirement.requirement_type !== "OPENING_BALANCE" || !requirement.suggested_opening_balance) continue;
+      suggestionsByAccount[String(requirement.account_id)] = requirement.suggested_opening_balance as Json;
+    }
+    setOpeningSuggestions(suggestionsByAccount);
+    setOpeningBalances((current) => {
+      const updated = { ...current };
+      for (const [accountId, suggestion] of Object.entries(suggestionsByAccount)) {
+        if (updated[accountId] === undefined && suggestion.eligible) {
+          updated[accountId] = String(suggestion.suggested_value ?? "");
+        }
+      }
+      return updated;
+    });
+  }, [wizard.data]);
 
   const analysis = wizard.data?.analysis;
   const incompatible = requiredCapabilities.filter((name) => manifest.capabilities[name] !== true);
@@ -252,10 +284,22 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
         if (!accountId || accountId === "__SKIP__") continue;
         if (section.section_type === "CHECKING" || section.section_type === "SAVINGS") {
           if (!openingBalances[accountId]) throw new Error(`Der bestätigte Anfangssaldo für „${section.original_title}“ fehlt.`);
+          const suggestion = openingSuggestions[accountId];
+          const suggestedValue = suggestion?.eligible ? String(suggestion.suggested_value) : undefined;
+          const deviatesFromSuggestion = suggestedValue !== undefined && suggestedValue !== openingBalances[accountId];
+          const reason = adjustmentReasons[accountId]?.trim();
+          if (deviatesFromSuggestion && !reason) {
+            throw new Error(`Für die Abweichung vom automatisch übernommenen Anfangssaldo bei „${section.original_title}“ ist eine Begründung erforderlich.`);
+          }
           await financeBridge.command("RecordOpeningBalance", {
             account_id: accountId, balance_date: previousDay(analysis.period_start),
             booked_balance: openingBalances[accountId], available_balance: null, currency: "EUR",
             source: "MANUAL_ENTRY", confirmation: true, comment: "Im Importassistenten bestätigt",
+            ...(suggestedValue !== undefined ? {
+              suggested_value: suggestedValue,
+              carry_forward_source_reconciliation_id: String(suggestion?.source_reconciliation_id ?? ""),
+            } : {}),
+            ...(deviatesFromSuggestion ? { adjustment_reason: reason } : {}),
           });
           if (closingBalances[accountId]) {
             await financeBridge.command("RecordClosingBalance", {
@@ -381,7 +425,7 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
       {uiMonth !== analysis.report_month && <div className="status-banner"><strong>Abweichender Auswertungsmonat</strong><span>UI: {uiMonth} · Importdatei: {analysis.report_month}. Importiert wird ausschließlich der Dateizeitraum.</span></div>}
       {step === 1 && <AnalysisStep analysis={analysis} fileName={selectedFile?.display_name} bankIdentifier={bankIdentifier} onBankIdentifier={setBankIdentifier} onConfirm={confirmAnalysis} />}
       {step === 2 && <MappingStep analysis={analysis} accounts={activeAccounts} mappings={mappings} skips={skipConfirmed} names={newAccountName} onMap={(id, value) => setMappings((current) => ({ ...current, [id]: value }))} onSkip={(id, value) => setSkipConfirmed((current) => ({ ...current, [id]: value }))} onName={(id, value) => setNewAccountName((current) => ({ ...current, [id]: value }))} onCreate={createAccountFor} onSave={saveMappings} busy={busy} />}
-      {step === 3 && <ValuesStep analysis={analysis} mappings={mappings} opening={openingBalances} closing={closingBalances} emptyPositions={emptyPositions} positions={positions} onOpening={(id, value) => setOpeningBalances((current) => ({ ...current, [id]: value }))} onClosing={(id, value) => setClosingBalances((current) => ({ ...current, [id]: value }))} onEmpty={(id, value) => setEmptyPositions((current) => ({ ...current, [id]: value }))} onAddPosition={addPosition} onPosition={editPosition} onSave={saveInitialValues} busy={busy} />}
+      {step === 3 && <ValuesStep analysis={analysis} mappings={mappings} opening={openingBalances} closing={closingBalances} suggestions={openingSuggestions} reasons={adjustmentReasons} emptyPositions={emptyPositions} positions={positions} onOpening={(id, value) => setOpeningBalances((current) => ({ ...current, [id]: value }))} onClosing={(id, value) => setClosingBalances((current) => ({ ...current, [id]: value }))} onReason={(id, value) => setAdjustmentReasons((current) => ({ ...current, [id]: value }))} onEmpty={(id, value) => setEmptyPositions((current) => ({ ...current, [id]: value }))} onAddPosition={addPosition} onPosition={editPosition} onSave={saveInitialValues} busy={busy} />}
       {step === 4 && <PreviewStep analysis={analysis} previews={previews} validation={validation} confirmed={previewConfirmed} onConfirmed={setPreviewConfirmed} onExecute={executeImport} busy={busy} />}
       {step === 5 && <ResultStep analysis={analysis} result={result} onReconcile={reconcile} onRelation={relationAction} busy={busy} />}
     </>}
@@ -425,8 +469,29 @@ function MappingStep({ analysis, accounts, mappings, skips, names, onMap, onSkip
   </section>;
 }
 
-function ValuesStep({ analysis, mappings, opening, closing, emptyPositions, positions, onOpening, onClosing, onEmpty, onAddPosition, onPosition, onSave, busy }: { analysis: Analysis; mappings: Record<string, string>; opening: Record<string, string>; closing: Record<string, string>; emptyPositions: Record<string, boolean>; positions: Record<string, Json[]>; onOpening: (id: string, value: string) => void; onClosing: (id: string, value: string) => void; onEmpty: (id: string, value: boolean) => void; onAddPosition: (id: string) => void; onPosition: (id: string, index: number, field: string, value: string) => void; onSave: () => void; busy: boolean }) {
-  return <section className="panel import-stage"><header><span className="eyebrow">SCHRITT 3</span><h2>Anfangswerte prüfen</h2><p>Salden und Depotbestände werden je Konto getrennt bestätigt.</p></header><div className="values-list">{analysis.sections.map((section) => { const accountId = mappings[section.section_id] ?? section.mapped_account_id ?? ""; if (!accountId || accountId === "__SKIP__") return null; if (section.section_type !== "BROKERAGE") return <article key={section.section_id}><h3>{section.original_title}</h3><div className="field-grid"><label>Anfangssaldo am {previousDay(analysis.period_start)}<input inputMode="decimal" value={opening[accountId] ?? ""} onChange={(event) => onOpening(accountId, event.target.value)} /></label><label>Gemeldeter Endsaldo am {analysis.period_end}<input inputMode="decimal" value={closing[accountId] ?? ""} onChange={(event) => onClosing(accountId, event.target.value)} placeholder="optional, für Abgleich" /></label></div></article>; const rows = positions[accountId] ?? []; return <article key={section.section_id}><h3>{section.original_title}</h3><label className="danger-confirm"><input type="checkbox" checked={Boolean(emptyPositions[accountId])} onChange={(event) => onEmpty(accountId, event.target.checked)} /> Vor dem Berichtsmonat waren ausdrücklich keine Positionen vorhanden.</label>{rows.map((row, index) => <div className="position-row" key={`${accountId}-${index}`}><select value={String(row.security_identifier_type)} onChange={(event) => onPosition(accountId, index, "security_identifier_type", event.target.value)}><option>ISIN</option><option>WKN</option><option>OTHER</option></select><input aria-label="Wertpapierkennung" placeholder="Kennung" value={String(row.security_identifier)} onChange={(event) => onPosition(accountId, index, "security_identifier", event.target.value)} /><input aria-label="Wertpapiername" placeholder="Name" value={String(row.security_name)} onChange={(event) => onPosition(accountId, index, "security_name", event.target.value)} /><input aria-label="Anfangsbestand" placeholder="Anfang" inputMode="decimal" value={String(row.opening_quantity)} onChange={(event) => onPosition(accountId, index, "opening_quantity", event.target.value)} /><input aria-label="Endbestand" placeholder="Ende" inputMode="decimal" value={String(row.closing_quantity)} onChange={(event) => onPosition(accountId, index, "closing_quantity", event.target.value)} /></div>)}<button className="secondary small" onClick={() => onAddPosition(accountId)}>Position hinzufügen</button></article>; })}</div><footer><button className="primary" disabled={busy} onClick={onSave}>Anfangswerte bestätigen und Vorschau erstellen</button></footer></section>;
+function ValuesStep({ analysis, mappings, opening, closing, suggestions, reasons, emptyPositions, positions, onOpening, onClosing, onReason, onEmpty, onAddPosition, onPosition, onSave, busy }: { analysis: Analysis; mappings: Record<string, string>; opening: Record<string, string>; closing: Record<string, string>; suggestions: Record<string, Json>; reasons: Record<string, string>; emptyPositions: Record<string, boolean>; positions: Record<string, Json[]>; onOpening: (id: string, value: string) => void; onClosing: (id: string, value: string) => void; onReason: (id: string, value: string) => void; onEmpty: (id: string, value: boolean) => void; onAddPosition: (id: string) => void; onPosition: (id: string, index: number, field: string, value: string) => void; onSave: () => void; busy: boolean }) {
+  return <section className="panel import-stage"><header><span className="eyebrow">SCHRITT 3</span><h2>Anfangswerte prüfen</h2><p>Salden und Depotbestände werden je Konto getrennt bestätigt.</p></header><div className="values-list">{analysis.sections.map((section) => {
+    const accountId = mappings[section.section_id] ?? section.mapped_account_id ?? "";
+    if (!accountId || accountId === "__SKIP__") return null;
+    if (section.section_type !== "BROKERAGE") {
+      const suggestion = suggestions[accountId];
+      const eligible = Boolean(suggestion?.eligible);
+      const suggestedValue = eligible ? String(suggestion.suggested_value) : undefined;
+      const deviates = suggestedValue !== undefined && suggestedValue !== (opening[accountId] ?? "");
+      return <article key={section.section_id}>
+        <h3>{section.original_title}</h3>
+        <div className="field-grid">
+          <label>Anfangssaldo am {previousDay(analysis.period_start)}<input inputMode="decimal" value={opening[accountId] ?? ""} onChange={(event) => onOpening(accountId, event.target.value)} /></label>
+          <label>Gemeldeter Endsaldo am {analysis.period_end}<input inputMode="decimal" value={closing[accountId] ?? ""} onChange={(event) => onClosing(accountId, event.target.value)} placeholder="optional, für Abgleich" /></label>
+        </div>
+        {eligible ? <p className="opening-balance-hint success">Automatisch aus dem bestätigten Endsaldo des Vormonats übernommen.<br /><small>Quelle: Bestätigter Endsaldo {String(suggestion.period_end ?? "")}</small></p>
+          : suggestion && <p className="opening-balance-hint warning">Der Anfangssaldo konnte nicht automatisch übernommen werden.<br /><small>{OPENING_BALANCE_REASON_TEXT[String(suggestion.reason_code ?? "")] ?? "Der vorherige Monat besitzt keinen abschließend bestätigten Endsaldo."}</small></p>}
+        {deviates && <label className="danger-confirm">Begründung für die Abweichung vom übernommenen Anfangssaldo<textarea required value={reasons[accountId] ?? ""} onChange={(event) => onReason(accountId, event.target.value)} /></label>}
+      </article>;
+    }
+    const rows = positions[accountId] ?? [];
+    return <article key={section.section_id}><h3>{section.original_title}</h3><label className="danger-confirm"><input type="checkbox" checked={Boolean(emptyPositions[accountId])} onChange={(event) => onEmpty(accountId, event.target.checked)} /> Vor dem Berichtsmonat waren ausdrücklich keine Positionen vorhanden.</label>{rows.map((row, index) => <div className="position-row" key={`${accountId}-${index}`}><select value={String(row.security_identifier_type)} onChange={(event) => onPosition(accountId, index, "security_identifier_type", event.target.value)}><option>ISIN</option><option>WKN</option><option>OTHER</option></select><input aria-label="Wertpapierkennung" placeholder="Kennung" value={String(row.security_identifier)} onChange={(event) => onPosition(accountId, index, "security_identifier", event.target.value)} /><input aria-label="Wertpapiername" placeholder="Name" value={String(row.security_name)} onChange={(event) => onPosition(accountId, index, "security_name", event.target.value)} /><input aria-label="Anfangsbestand" placeholder="Anfang" inputMode="decimal" value={String(row.opening_quantity)} onChange={(event) => onPosition(accountId, index, "opening_quantity", event.target.value)} /><input aria-label="Endbestand" placeholder="Ende" inputMode="decimal" value={String(row.closing_quantity)} onChange={(event) => onPosition(accountId, index, "closing_quantity", event.target.value)} /></div>)}<button className="secondary small" onClick={() => onAddPosition(accountId)}>Position hinzufügen</button></article>;
+  })}</div><footer><button className="primary" disabled={busy} onClick={onSave}>Anfangswerte bestätigen und Vorschau erstellen</button></footer></section>;
 }
 
 function PreviewStep({ analysis, previews, validation, confirmed, onConfirmed, onExecute, busy }: { analysis: Analysis; previews: Json[]; validation: Json | null; confirmed: boolean; onConfirmed: (value: boolean) => void; onExecute: () => void; busy: boolean }) {
@@ -462,8 +527,81 @@ function History({ result, onOpen, onResume }: { result: QueryState<{ imports: H
   return <section className="panel import-history"><header><div><span className="eyebrow">DAUERHAFTE PROJEKTION</span><h2>Importhistorie</h2></div><span>{rows.length} Exporte</span></header>{result.state === "LOADING" ? <div className="page-state"><span className="loader" /></div> : rows.length === 0 ? <div className="page-state"><h3>Noch keine Importe</h3><p>Analysierte Dateien erscheinen hier ohne lokalen Dateipfad.</p></div> : <div className="history-table">{rows.map((row) => <article key={row.export_id}><div><strong>{row.bank_identifier} · {row.report_month}</strong><small>{new Date(row.imported_at).toLocaleString("de-DE")} · {row.import_profile}</small></div><span>{row.completed_section_count}/{row.section_count} Abschnitte</span><span className="status-badge">{row.status}</span><code>{shortHash(row.source_file_hash)}</code><div><button className="secondary small" onClick={() => onOpen(row)}>Details</button>{row.resumable && <button className="primary small" onClick={() => onResume(row)}>Fortsetzen</button>}</div></article>)}</div>}</section>;
 }
 
+function actorLabel(entry: Json): string {
+  const eventType = String(entry.event_type);
+  const payload = (entry.payload as Json | undefined) ?? {};
+  if (["ImportFileAnalyzed", "ImportSectionCompleted", "EmptyImportSectionProcessed", "ImportedPeriodBalanceReconciled", "ImportedSecurityPositionsReconciled", "ImportBatchStarted", "ImportBatchCompleted"].includes(eventType)) {
+    return "System (automatisch)";
+  }
+  if (payload.source === "CALCULATED") return "System (automatisch berechnet)";
+  return "Sie";
+}
+
+function businessImpact(entry: Json): string {
+  const eventType = String(entry.event_type);
+  const payload = (entry.payload as Json | undefined) ?? {};
+  if (eventType === "OpeningBalanceRecorded" || eventType === "ClosingBalanceRecorded") {
+    return `${eventType === "OpeningBalanceRecorded" ? "Anfangssaldo" : "Endsaldo"} ${String(payload.booked_balance ?? "")} ${String(payload.currency ?? "")} zum ${String(payload.balance_date ?? "")} gespeichert.`;
+  }
+  if (eventType === "OpeningBalanceCarryForwardAdjusted") {
+    return `Anfangssaldo von ${String(payload.previous_value ?? "")} auf ${String(payload.value ?? "")} geändert. Begründung: „${String(payload.reason ?? "")}“.`;
+  }
+  if (eventType === "ImportedPeriodBalanceReconciled") {
+    return `Abgleichstatus ${String(payload.status ?? "")}${payload.balance_difference && payload.balance_difference !== "0" && payload.balance_difference !== "0.00" ? `, Abweichung ${String(payload.balance_difference)}` : ""}.`;
+  }
+  return eventLabel(eventType).description;
+}
+
+function AuditEntry({ entry }: { entry: Json }) {
+  const [infoOpen, setInfoOpen] = useState(false);
+  const label = eventLabel(String(entry.event_type));
+  const payload = (entry.payload as Json | undefined) ?? {};
+  return <div className="audit-entry">
+    <div className="audit-entry-head">
+      <code>#{String(entry.sequence_number)}</code>
+      <strong>{label.title}</strong>
+      <small>{new Date(String(entry.occurred_at)).toLocaleString("de-DE")}</small>
+      <button type="button" className="info-button" aria-label="Kurzbeschreibung anzeigen" aria-expanded={infoOpen} onClick={() => setInfoOpen((value) => !value)}>i</button>
+    </div>
+    {infoOpen && <p className="audit-description">{label.description}</p>}
+    <details className="audit-detail">
+      <summary>Details</summary>
+      <dl className="audit-facts">
+        <div><dt>Konto</dt><dd>{String(entry.account_id ?? payload.account_id ?? "–")}</dd></div>
+        <div><dt>Ausgelöst von</dt><dd>{actorLabel(entry)}</dd></div>
+        <div><dt>Fachliche Auswirkung</dt><dd>{businessImpact(entry)}</dd></div>
+      </dl>
+      <details className="audit-technical">
+        <summary>Technische Details</summary>
+        <dl className="audit-facts">
+          <div><dt>Eventtyp</dt><dd><code>{String(entry.event_type)}</code></dd></div>
+          <div><dt>Event-ID</dt><dd><code>{String(entry.event_id ?? "–")}</code></dd></div>
+          <div><dt>Sequenz</dt><dd>#{String(entry.sequence_number)}</dd></div>
+          <div><dt>Aggregate-ID</dt><dd><code>{String(entry.aggregate_type ?? "–")}/{String(entry.aggregate_id ?? "–")}</code></dd></div>
+          <div><dt>Correlation-ID</dt><dd><code>{String(entry.correlation_id ?? "–")}</code></dd></div>
+          <div><dt>Contract-Version</dt><dd>{String(entry.schema_version ?? "–")}</dd></div>
+          <div><dt>Zeitpunkt</dt><dd>{String(entry.occurred_at ?? "–")}</dd></div>
+        </dl>
+      </details>
+    </details>
+  </div>;
+}
+
 function HistoryDetail({ detail, onClose }: { detail: Json; onClose: () => void }) {
   const analysis = detail.analysis as Analysis | undefined;
   const audit = (detail.audit_history as Json[] | undefined) ?? [];
-  return <div className="dialog-backdrop"><section className="dialog wide" role="dialog" aria-modal="true" aria-labelledby="history-title"><button className="dialog-close" onClick={onClose} aria-label="Dialog schließen">×</button><span className="eyebrow">IMPORTDETAIL</span><h2 id="history-title">{analysis?.bank_identifier} · {analysis?.report_month}</h2><p>Status {String(detail.status)} · {analysis?.sections.length ?? 0} Abschnitte · Hash {shortHash(analysis?.source_file_hash ?? "")}</p><h3>Auditverlauf</h3><div className="audit-list">{audit.map((event) => <div key={String(event.sequence_number)}><code>#{String(event.sequence_number)}</code><strong>{String(event.event_type)}</strong><small>{new Date(String(event.occurred_at)).toLocaleString("de-DE")}</small></div>)}</div></section></div>;
+  const hasSequenceGaps = audit.some((entry, index) => index > 0 && Number(entry.sequence_number) - Number(audit[index - 1].sequence_number) > 1);
+  const grouped = EVENT_CATEGORY_ORDER.map((category) => ({
+    category,
+    entries: audit.filter((entry) => eventLabel(String(entry.event_type)).category === category),
+  })).filter((group) => group.entries.length > 0);
+  return <div className="dialog-backdrop"><section className="dialog wide" role="dialog" aria-modal="true" aria-labelledby="history-title"><button className="dialog-close" onClick={onClose} aria-label="Dialog schließen">×</button><span className="eyebrow">IMPORTDETAIL</span><h2 id="history-title">{analysis?.bank_identifier} · {analysis?.report_month}</h2><p>Status {String(detail.status)} · {analysis?.sections.length ?? 0} Abschnitte · Hash {shortHash(analysis?.source_file_hash ?? "")}</p>
+    <h3>Auditverlauf</h3>
+    {audit.length > 0 && <p className="audit-sequence-note">Die Nummer neben jedem Ereignis (z. B. „#{String(audit[audit.length - 1].sequence_number)}“) ist die globale Event-Sequenz des gesamten Datenbestands.{hasSequenceGaps && " Lücken zwischen den Nummern sind normal: Dazwischenliegende Events gehören zu anderen Konten oder Verarbeitungsschritten und werden hier nicht angezeigt."}</p>}
+    {grouped.map((group) => <div className="audit-group" key={group.category}>
+      <h4>{EVENT_CATEGORY_TITLES[group.category as EventCategory]}</h4>
+      <div className="audit-list">{group.entries.map((entry) => <AuditEntry entry={entry} key={String(entry.event_id ?? entry.sequence_number)} />)}</div>
+    </div>)}
+    {audit.length === 0 && <p className="page-state">Für diesen Import liegen noch keine Auditereignisse vor.</p>}
+  </section></div>;
 }

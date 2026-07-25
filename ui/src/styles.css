@@ -282,8 +282,25 @@ td small { margin-top: 3px; color: #84908d; }
 .import-empty, .import-blocker { padding: 28px; text-align: center; }
 .import-empty p, .import-blocker p { color: var(--muted); font-size: 10px; }
 .import-empty label { display: block; max-width: 360px; margin: 18px auto; color: var(--muted); font-size: 9px; }
-.audit-list { display: grid; gap: 7px; margin-top: 14px; }
-.audit-list > div { display: grid; grid-template-columns: 70px 1fr auto; gap: 10px; padding: 9px; border-radius: 7px; background: #f3f6f3; font-size: 9px; }
+.audit-sequence-note { margin: 8px 0 4px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.audit-group { margin-top: 16px; }
+.audit-group h4 { margin: 0 0 8px; color: var(--muted); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+.audit-list { display: grid; gap: 7px; }
+.audit-entry { padding: 9px; border-radius: 7px; background: #f3f6f3; font-size: 9px; }
+.audit-entry-head { display: grid; grid-template-columns: 40px 1fr auto auto; gap: 10px; align-items: center; }
+.audit-entry-head code { color: var(--muted); }
+.info-button { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); background: white; color: var(--muted); font-size: 9px; font-style: italic; line-height: 1; cursor: pointer; }
+.audit-description { margin: 7px 0 0; color: var(--muted); line-height: 1.5; }
+.audit-detail { margin-top: 7px; }
+.audit-detail summary, .audit-technical summary { cursor: pointer; color: var(--muted); font-size: 8px; }
+.audit-facts { display: grid; gap: 5px; margin: 7px 0 0; }
+.audit-facts div { display: flex; gap: 6px; }
+.audit-facts dt { color: var(--muted); min-width: 110px; }
+.audit-facts dd { margin: 0; }
+.audit-technical { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); }
+.opening-balance-hint { margin: 8px 0 0; padding: 8px 10px; border-radius: 7px; font-size: 9px; line-height: 1.5; }
+.opening-balance-hint.success { color: #17584c; background: #e7f2ed; }
+.opening-balance-hint.warning { color: #864737; background: #f7e9e2; }
 .version-chip { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: white; font-size: 9px; }
 .security-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 11px; }.security-check { display: flex; gap: 10px; align-items: center; padding: 14px; box-shadow: none; }.security-icon { width: 29px; height: 29px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; font-weight: 900; }.security-icon.passed { color: #17614f; background: #ddefe7; }.security-icon.failed { color: #934737; background: #f4ddd7; }.security-icon.not_checked { color: #745b2e; background: #f3e9d1; }.security-check strong, .security-check small { display: block; }.security-check strong { font-size: 10px; }.security-check small { color: var(--muted); margin-top: 4px; font-size: 8px; }.settings-info { margin-top: 16px; }.settings-info dl { display: grid; grid-template-columns: repeat(4,1fr); margin: 0; padding: 4px 20px 20px; gap: 15px; }.settings-info dt { color: var(--muted); font-size: 8px; }.settings-info dd { margin: 5px 0 0; font-size: 11px; font-weight: 800; }
 .recovery-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }.recovery-card { min-height: 176px; padding: 18px; display: grid; grid-template-columns: 39px 1fr auto; gap: 13px; align-items: start; box-shadow: none; }.recovery-icon { width: 39px; height: 39px; display: grid; place-items: center; border-radius: 10px; color: #285d52; background: #dfeee8; font-size: 17px; font-weight: 900; }.recovery-icon.ok { color: #315c24; background: #e3edcf; }.recovery-icon.warn { color: #8e493b; background: #f4ded9; }.recovery-card h3 { margin: 1px 0 7px; font-size: 13px; }.recovery-card p { min-height: 38px; margin: 0 0 13px; color: var(--muted); font-size: 9px; line-height: 1.45; }.recovery-card strong, .recovery-card small { display: block; }.recovery-card strong { font-size: 10px; }.recovery-card small { margin-top: 4px; color: var(--muted); font: 8px ui-monospace,monospace; }.recovery-card > button, .recovery-card > .status-badge { align-self: center; }.card-actions { display: grid; gap: 6px; align-self: center; }.restore-warning { margin-top: 13px; padding: 16px 18px; display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; border-color: #e5c48d; background: #fff8e9; }.restore-warning strong { color: #704d1e; font-size: 11px; }.restore-warning p { margin: 4px 0 0; color: #806a48; font-size: 9px; }

@@ -30,6 +30,7 @@ from finance_extension.multi_account_import import (
     parse_german_quantity,
     reconcile_imported_period_balance,
     reconcile_imported_security_positions,
+    closing_balances,
     record_closing_balance,
     record_closing_security_position,
     record_opening_balance,
@@ -38,6 +39,7 @@ from finance_extension.multi_account_import import (
     security_positions,
     security_transactions,
     section_bindings,
+    suggested_opening_balance,
 )
 from finance_extension.recovery import create_backup, restore_backup
 from finance_extension.schema_validation import validate_event
@@ -59,6 +61,19 @@ Keine Umsätze vorhanden.
 Umsätze Depot
 Buchungstag;Geschäftstag;Stück / Nom.;Bezeichnung;WKN;Währung;Ausführungskurs;Umsatz in EUR
 06.12.24;05.12.24;10;Synthetischer Fonds;ABC123;EUR;100,00;-1.000,00
+"""
+
+SYNTHETIC_JANUARY_EXPORT = """Bank;SYNTHETIC_BANK
+Synthetischer Testexport
+Umsätze Girokonto
+Buchungstag;Wertstellung (Valuta);Vorgang;Buchungstext;Umsatz in EUR
+05.01.25;05.01.25;Lastschrift/Belastung;Synthetischer Einkauf Januar;-20,00
+
+Umsätze Tagesgeld PLUS-Konto
+Keine Umsätze vorhanden.
+
+Umsätze Depot
+Keine Umsätze vorhanden.
 """
 
 
@@ -976,6 +991,173 @@ class GermanMultiAccountImportTests(unittest.TestCase):
         self.assertEqual(
             investment_funding_relations(self.store)[relation_id]["status"], "REJECTED"
         )
+
+    def test_opening_balance_carry_forward_suggestion_and_adjustment(self) -> None:
+        december = self._analyze_and_map()
+        record_opening_balance(
+            self.store,
+            account_id="acc_checking",
+            balance_date="2024-11-30",
+            booked_balance="2000.00",
+            available_balance="2000.00",
+            currency="EUR",
+            source="MANUAL_ENTRY",
+            confirmation=True,
+            comment="Synthetischer Anfangswert",
+        )
+        record_opening_balance(
+            self.store,
+            account_id="acc_savings",
+            balance_date="2024-11-30",
+            booked_balance="5000.00",
+            available_balance=None,
+            currency="EUR",
+            source="BANK_STATEMENT",
+            confirmation=True,
+            comment=None,
+        )
+        record_opening_security_position(
+            self.store,
+            account_id="acc_brokerage",
+            valuation_date="2024-11-30",
+            security_identifier_type="WKN",
+            security_identifier="OLD123",
+            security_name="Synthetischer Altbestand",
+            quantity="2",
+            valuation_price="50",
+            price_currency="EUR",
+            market_value="100",
+            valuation_source="MANUAL_ENTRY",
+            confirmation=True,
+        )
+        imported = import_mapped_sections(self.store, december["analysis_id"])
+        self.assertEqual(imported["status"], "COMPLETED")
+        record_closing_balance(
+            self.store,
+            account_id="acc_checking",
+            balance_date="2024-12-31",
+            booked_balance="2246.15",
+            available_balance=None,
+            currency="EUR",
+            source="BANK_STATEMENT",
+            confirmation=True,
+        )
+        reconciliation = reconcile_imported_period_balance(
+            self.store,
+            account_id="acc_checking",
+            period_start="2024-12-01",
+            period_end="2024-12-31",
+        )
+        self.assertEqual(reconciliation["status"], "MATCHED")
+
+        # Savings never received a closing balance: no eligible suggestion.
+        savings_suggestion = suggested_opening_balance(
+            self.store, account_id="acc_savings", period_start="2025-01-01"
+        )
+        self.assertFalse(savings_suggestion["eligible"])
+        self.assertEqual(savings_suggestion["reason_code"], "MISSING_CLOSING_BALANCE")
+
+        # Checking has a confirmed, MATCHED prior month: the closing balance
+        # is proposed unchanged.
+        suggestion = suggested_opening_balance(
+            self.store, account_id="acc_checking", period_start="2025-01-01"
+        )
+        self.assertTrue(suggestion["eligible"])
+        self.assertEqual(suggestion["suggested_value"], "2246.15")
+        self.assertEqual(suggestion["source_reconciliation_id"], reconciliation["reconciliation_id"])
+
+        january_source = self.root / "synthetic-export-january.csv"
+        january_source.write_bytes(SYNTHETIC_JANUARY_EXPORT.encode("cp1252"))
+        january = analyze_import_file(self.store, january_source)
+        self.assertEqual(january["period_start"], "2025-01-01")
+        map_import_sections(
+            self.store,
+            january["analysis_id"],
+            [
+                {
+                    "section_id": section["section_id"],
+                    "account_id": {
+                        "CHECKING": "acc_checking",
+                        "SAVINGS": "acc_savings",
+                        "BROKERAGE": "acc_brokerage",
+                    }[section["section_type"]],
+                    "action": "USE_EXISTING_ACCOUNT",
+                }
+                for section in january["sections"]
+            ],
+        )
+        requirements = initial_balance_requirements(self.store, january["analysis_id"])
+        checking_requirement = next(
+            item for item in requirements if item["account_id"] == "acc_checking"
+        )
+        self.assertEqual(
+            checking_requirement["suggested_opening_balance"]["suggested_value"], "2246.15"
+        )
+
+        # Accepting the suggestion unchanged records no correction event.
+        record_opening_balance(
+            self.store,
+            account_id="acc_checking",
+            balance_date="2024-12-31",
+            booked_balance=suggestion["suggested_value"],
+            available_balance=None,
+            currency="EUR",
+            source="BANK_STATEMENT",
+            confirmation=True,
+            carry_forward_source_reconciliation_id=suggestion["source_reconciliation_id"],
+            suggested_value=suggestion["suggested_value"],
+        )
+        self.assertEqual(len(self.store.events("OpeningBalanceCarryForwardAdjusted")), 0)
+
+        # Overriding the suggestion without a reason is rejected …
+        with self.assertRaisesRegex(
+            StoreInvariantError, "FINANCE_OPENING_BALANCE_ADJUSTMENT_REASON_REQUIRED"
+        ):
+            record_opening_balance(
+                self.store,
+                account_id="acc_checking",
+                balance_date="2024-12-31",
+                booked_balance="2200.00",
+                available_balance=None,
+                currency="EUR",
+                source="MANUAL_ENTRY",
+                confirmation=True,
+                carry_forward_source_reconciliation_id=suggestion["source_reconciliation_id"],
+                suggested_value=suggestion["suggested_value"],
+            )
+
+        # … but succeeds, and is recorded as a correction event, with one.
+        record_opening_balance(
+            self.store,
+            account_id="acc_checking",
+            balance_date="2024-12-31",
+            booked_balance="2200.00",
+            available_balance=None,
+            currency="EUR",
+            source="MANUAL_ENTRY",
+            confirmation=True,
+            carry_forward_source_reconciliation_id=suggestion["source_reconciliation_id"],
+            suggested_value=suggestion["suggested_value"],
+            adjustment_reason="Bankkorrektur nach Rücklastschrift",
+        )
+        corrections = self.store.events("OpeningBalanceCarryForwardAdjusted")
+        self.assertEqual(len(corrections), 1)
+        self.assertEqual(corrections[0]["payload"]["previous_value"], "2246.15")
+        self.assertEqual(corrections[0]["payload"]["value"], "2200.00")
+        self.assertEqual(
+            corrections[0]["payload"]["reason"], "Bankkorrektur nach Rücklastschrift"
+        )
+        # The prior month's confirmed closing balance is untouched.
+        self.assertEqual(closing_balances(self.store)["acc_checking"]["booked_balance"], "2246.15")
+
+        # The correction stays visible in the import audit trail after a restart.
+        event_count = len(self.store.events())
+        self.store.close()
+        self.store = LocalFinanceStore(
+            self.root / "workspace", StaticKeyProvider(self.key)
+        ).open()
+        self.assertEqual(len(self.store.events()), event_count)
+        self.assertEqual(len(self.store.events("OpeningBalanceCarryForwardAdjusted")), 1)
 
 
 if __name__ == "__main__":

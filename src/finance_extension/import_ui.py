@@ -232,6 +232,7 @@ def import_history_detail(
         "ImportBatchCompleted",
         "OpeningBalanceRecorded",
         "ClosingBalanceRecorded",
+        "OpeningBalanceCarryForwardAdjusted",
         "OpeningSecurityPositionRecorded",
         "ClosingSecurityPositionRecorded",
         "EmptyOpeningSecurityPositionsConfirmed",
@@ -263,9 +264,16 @@ def import_history_detail(
         audit.append(
             {
                 "sequence_number": event["sequence_number"],
+                "event_id": event["event_id"],
                 "event_type": event["event_type"],
                 "occurred_at": event["occurred_at"],
+                "aggregate_type": event["aggregate_type"],
                 "aggregate_id": event["aggregate_id"],
+                "correlation_id": event["correlation_id"],
+                "causation_id": event["causation_id"],
+                "schema_version": event["schema_version"],
+                "account_id": payload.get("account_id"),
+                "payload": payload,
             }
         )
     return {
