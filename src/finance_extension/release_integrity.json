@@ -1,8 +1,7 @@
 {
-  "format_version": 1,
   "application_version": "1.2.0",
+  "format_version": 1,
   "schemas": {
-    "sha256": "d1a26735d5bb051253e9a4afd947d757c0c1e2c266ee7ca90f92234dbdcbd7ef",
     "files": {
       "account_audit_trail.response.schema.json": "97b66ab5d491e18a0004a59eb81d6c7b1672b5a4ef653c16f901064a27ec8871",
       "account_balance_history.response.schema.json": "9f8c9369070b417768d22f68d86e2e56305dab08b2583e5c89f9fc7d5440c830",
@@ -76,7 +75,7 @@
       "migration_status.response.schema.json": "825dc59d7b47d9d69a9af72e567402e5fe021d388242631da5d0e427e472539e",
       "multi_account_import.response.schema.json": "c2987a72245e15d3ca633346230026fbfbd1eb3b5747fecc98cfa5353ff07f15",
       "multi_account_import_commands.schema.json": "4ad39167eb2953870302a1163a084c79cc2ddc74acce20a7cdefd66eae9d2e2c",
-      "multi_account_import_events.schema.json": "20e4be31acb2cb4e9eafa0aa91caf2149f7acfdfd979de5911da8b00666a0f58",
+      "multi_account_import_events.schema.json": "e4a4f5f37033677dcd5a5ad123fd12ac8268d34f91a3bf5f9233961a9b548926",
       "net_worth_history.response.schema.json": "6c3d5465c54936e6c700170848e2d3ef7f32f522124f584ddeca1cb46905f0e1",
       "net_worth_overview.response.schema.json": "21bad8d75d8db8a102c75085f14553120bcb371597b2cc57b1efb1f0e6bc7791",
       "opening_balance_recorded.event.schema.json": "2a5556fbb3c1297ca4047dcceddbf7a8a0da8c45a77ea6ecbf4d0311e8d74c6a",
@@ -105,14 +104,15 @@
       "transaction_detail.response.schema.json": "9dc7c50261542be07c1f12182d6487f770977954db7ee659a962540ec5e4efb9",
       "transaction_list.response.schema.json": "3ee3bcdb59099f90606c6bc703b2a9f38e872447b7b6d652902c3067386565fe",
       "vertical_slice_events.schema.json": "091ea19d244cd66f3702303465a59d8a64b9f2a9732fe78390273e0c0fc79227"
-    }
+    },
+    "sha256": "c3c014cdbb74cebb8eddc671edfb9a4fac525073e8e96b851b5203a4783b86d2"
   },
   "ui_bundle": {
-    "sha256": "53fdf7ae685bed52785d285494bef9d6bb8916544960b96c808eb9b8c11ae0f8",
     "files": {
       "assets/index-BdP1MoNO.css": "e0570a4aa16a4806461ebe45eda6f2d737ed783da366e19a32d0d32b15353b49",
       "assets/index-D2iFdGaH.js": "10a4907f4e42f02d53055837c523a630a626430c52e43f94f605660e095a7eef",
       "index.html": "5eb050d2492e5c48c2c8a6af5f056c5339b3bc56d487b5fccd503922d1dd8dd9"
-    }
+    },
+    "sha256": "53fdf7ae685bed52785d285494bef9d6bb8916544960b96c808eb9b8c11ae0f8"
   }
 }

@@ -223,6 +223,41 @@ class GermanMultiAccountImportTests(unittest.TestCase):
             }
         )
 
+    def test_accepts_opening_and_closing_balance_events_recorded_before_carry_forward_fields_existed(
+        self,
+    ) -> None:
+        for event_type, aggregate_type in (
+            ("OpeningBalanceRecorded", "OpeningBalance"),
+            ("ClosingBalanceRecorded", "ClosingBalance"),
+        ):
+            validate_event(
+                {
+                    "event_id": "evt_" + "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+                    "event_type": event_type,
+                    "aggregate_type": aggregate_type,
+                    "aggregate_id": f"{aggregate_type.lower()}_acc_main",
+                    "aggregate_version": 1,
+                    "occurred_at": "2024-01-01T00:00:00Z",
+                    "correlation_id": "corr_" + "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+                    "causation_id": "cmd_" + "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+                    "schema_version": "1.0.0",
+                    "payload": {
+                        "balance_id": f"{aggregate_type.lower()}_acc_main",
+                        "account_id": "acc_main",
+                        "balance_date": "2024-01-01",
+                        "booked_balance": "1000.00",
+                        "available_balance": "1000.00",
+                        "currency": "EUR",
+                        "source": "MANUAL_ENTRY",
+                        "confirmation": True,
+                        "comment": None,
+                        "recorded_at": "2024-01-01T00:00:00Z",
+                        # Recorded before OpeningBalanceCarryForwardAdjusted introduced these
+                        # fields: real historical events never have these keys at all.
+                    },
+                }
+            )
+
     def test_full_cp1252_workflow_rebuild_and_idempotency(self) -> None:
         analysis = self._analyze_and_map()
         self.assertEqual(analysis["encoding"], "cp1252")

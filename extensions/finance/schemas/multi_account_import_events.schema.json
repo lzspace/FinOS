@@ -171,7 +171,7 @@
     },
     "BalancePayload": {
       "type": "object", "additionalProperties": false,
-      "required": ["balance_id", "account_id", "balance_date", "booked_balance", "available_balance", "currency", "source", "confirmation", "comment", "recorded_at", "carry_forward_source_reconciliation_id", "suggested_value", "adjustment_reason"],
+      "required": ["balance_id", "account_id", "balance_date", "booked_balance", "available_balance", "currency", "source", "confirmation", "comment", "recorded_at"],
       "properties": {
         "balance_id": { "type": "string" }, "account_id": { "type": "string" }, "balance_date": { "type": "string", "format": "date" },
         "booked_balance": { "type": "string" }, "available_balance": { "type": ["string", "null"] }, "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
