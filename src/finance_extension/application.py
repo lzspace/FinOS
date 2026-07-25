@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -31,6 +32,19 @@ from .accounts import (
     reconcile_account_balance,
     record_balance_snapshot,
     update_account,
+)
+from .account_workspace import (
+    account_audit_trail,
+    account_balance_ledger,
+    account_imports,
+    account_overview_for_period,
+    account_period_summary,
+    account_positions,
+    account_position_history,
+    account_reconciliations_for_period,
+    account_review_counts,
+    account_transactions_for_period,
+    derive_overview_status,
 )
 from .classification import (
     active_classifications,
@@ -127,11 +141,35 @@ from .recovery import (
     validate_store_integrity,
     verify_archive,
 )
+from .periods import (
+    PeriodSelectionError,
+    available_periods,
+    default_month_period,
+    resolve_period_from_payload,
+)
 from .release_security import ReleaseIntegrityError, verify_integrity_manifest
 from .schema_validation import SCHEMA_ROOT
 from .store import LocalFinanceStore, StoreInvariantError
 from .storage_policy import validate_runtime_path
 from .workspace_lock import inspect_workspace_lock
+
+PRODUCT_VERSION = "1.4.0"
+CONTRACT_VERSION = "1.4.0"
+UI_CONTRACT_VERSION = "1.4.0"
+PROJECTION_VERSIONS: dict[str, str] = {
+    "account_overview": "1.0.0",
+    "account_detail": "1.0.0",
+    "account_period_summary": "1.0.0",
+    "account_transactions": "1.0.0",
+    "balance_history": "1.0.0",
+    "account_reconciliations": "1.0.0",
+    "account_imports": "1.0.0",
+    "account_positions": "1.0.0",
+    "account_position_history": "1.0.0",
+    "account_audit_trail": "1.0.0",
+    "available_periods": "1.0.0",
+    "financial_time_series": "1.0.0",
+}
 
 
 class ApplicationContractError(ValueError):
@@ -292,13 +330,26 @@ class FinanceApplicationService:
         events = self._store.events()
         return events[-1]["sequence_number"] if events else 0
 
-    def _envelope(self, data: Any, *, status: str = "READY") -> dict[str, Any]:
+    def _envelope(
+        self, data: Any, *, status: str = "READY", projection_version: str = "1.0.0"
+    ) -> dict[str, Any]:
         sequence = self._sequence()
+        projection_sequence = sequence
+        event_store_sequence = sequence
+        if projection_sequence < event_store_sequence:
+            freshness_status = "STALE"
+        elif projection_sequence > event_store_sequence:
+            freshness_status = "INVALID"
+        else:
+            freshness_status = "CURRENT"
         return {
             "schema_version": "1.0.0",
             "state": status,
-            "projection_sequence": sequence,
-            "event_store_sequence": sequence,
+            "projection_sequence": projection_sequence,
+            "event_store_sequence": event_store_sequence,
+            "projection_version": projection_version,
+            "freshness_status": freshness_status,
+            "generated_at": datetime.now(UTC).isoformat(),
             "data": data,
         }
 
@@ -315,6 +366,16 @@ class FinanceApplicationService:
             "GetAccount": self._account,
             "GetAccountBalanceHistory": self._account_balance_history,
             "GetBalanceReconciliation": self._balance_reconciliation,
+            "GetAvailablePeriods": self._available_periods,
+            "ListAccountOverviews": self._account_overviews,
+            "GetAccountDetail": self._account_detail,
+            "GetAccountPeriodSummary": self._account_period_summary,
+            "ListAccountTransactions": self._account_transactions_query,
+            "ListAccountReconciliations": self._account_reconciliations_query,
+            "ListAccountImports": self._account_imports_query,
+            "ListAccountPositions": self._account_positions_query,
+            "GetAccountPositionHistory": self._account_position_history_query,
+            "GetAccountAuditTrail": self._account_audit_trail_query,
             "GetLiquidityOverview": self._liquidity,
             "GetNetWorthOverview": self._net_worth,
             "GetNetWorthHistory": self._net_worth_history,
@@ -414,9 +475,12 @@ class FinanceApplicationService:
         return self._envelope(
             {
                 "extension_version": __version__,
-                "contract_version": "1.3.0",
+                "product_version": PRODUCT_VERSION,
+                "contract_version": CONTRACT_VERSION,
                 "store_schema_version": self._store.schema_version(),
+                "ui_contract_version": UI_CONTRACT_VERSION,
                 "schema_version": "1.0.0",
+                "projection_versions": PROJECTION_VERSIONS,
                 "capabilities": {
                     "imports": True,
                     "multi_account_import": True,
@@ -440,6 +504,8 @@ class FinanceApplicationService:
                     "restore": True,
                     "data_export": True,
                     "migrations": True,
+                    "period_control": True,
+                    "account_workspace": True,
                     "tax": False,
                     "receipts": False,
                     "cloud_sync": False,
@@ -675,6 +741,147 @@ class FinanceApplicationService:
         account_id = _require_identifier(payload, "account_id")
         row = balance_reconciliations(self._store).get(account_id)
         return self._envelope(row, status="EMPTY" if row is None else "READY")
+
+    def _resolve_period(self, payload: dict[str, Any]) -> dict[str, Any]:
+        has_explicit_period = bool(
+            payload.get("period") or payload.get("mode") or payload.get("start_date") or payload.get("year")
+        )
+        try:
+            return resolve_period_from_payload(payload) if has_explicit_period else default_month_period()
+        except PeriodSelectionError as exc:
+            raise ApplicationContractError(str(exc)) from exc
+
+    def _available_periods(self, _: dict[str, Any]) -> dict[str, Any]:
+        return self._envelope(
+            available_periods(self._store),
+            projection_version=PROJECTION_VERSIONS["available_periods"],
+        )
+
+    def _account_overviews(self, payload: dict[str, Any]) -> dict[str, Any]:
+        period = self._resolve_period(payload)
+        rows = account_overview_for_period(
+            self._store,
+            period,
+            account_types=payload.get("account_types"),
+            status=payload.get("status"),
+            currency=payload.get("currency"),
+            include_closed=bool(payload.get("include_closed", False)),
+        )
+        state = (
+            "EMPTY"
+            if not rows
+            else "STALE"
+            if any(row["data_freshness"] == "STALE" for row in rows)
+            else "READY"
+        )
+        return self._envelope(
+            {"period": period, "accounts": rows},
+            status=state,
+            projection_version=PROJECTION_VERSIONS["account_overview"],
+        )
+
+    def _account_detail(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        period = self._resolve_period(payload)
+        row = next(
+            (
+                item
+                for item in account_overview(self._store, period["end_date"])
+                if item["account_id"] == account_id
+            ),
+            None,
+        )
+        if row is None:
+            raise ApplicationContractError("FINANCE_ACCOUNT_NOT_FOUND")
+        summary = account_period_summary(self._store, account_id, period)
+        data = {
+            "account": row,
+            "overview_status": derive_overview_status(row),
+            "period": period,
+            "period_summary": summary,
+            "balance_history": account_balance_ledger(self._store, account_id, period),
+            "reconciliation": balance_reconciliations(self._store).get(account_id),
+            "open_review_count": account_review_counts(self._store).get(account_id, 0),
+        }
+        return self._envelope(
+            data,
+            status="STALE" if row["freshness"] == "STALE" else "READY",
+            projection_version=PROJECTION_VERSIONS["account_detail"],
+        )
+
+    def _account_period_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        period = self._resolve_period(payload)
+        data = account_period_summary(self._store, account_id, period)
+        return self._envelope(data, projection_version=PROJECTION_VERSIONS["account_period_summary"])
+
+    def _account_transactions_query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        period = self._resolve_period(payload)
+        rows = account_transactions_for_period(
+            self._store,
+            account_id,
+            period,
+            category_code=payload.get("category_code"),
+            direction=payload.get("direction"),
+            import_month=payload.get("import_month"),
+        )
+        return self._envelope(
+            {"account_id": account_id, "period": period, "transactions": rows},
+            status="EMPTY" if not rows else "READY",
+            projection_version=PROJECTION_VERSIONS["account_transactions"],
+        )
+
+    def _account_reconciliations_query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        period = self._resolve_period(payload) if payload.get("period") or payload.get("mode") else None
+        rows = account_reconciliations_for_period(self._store, account_id, period)
+        status_filter = payload.get("status")
+        if status_filter:
+            rows = [row for row in rows if row["status"] == status_filter]
+        return self._envelope(
+            {"account_id": account_id, "reconciliations": rows},
+            status="EMPTY" if not rows else "READY",
+            projection_version=PROJECTION_VERSIONS["account_reconciliations"],
+        )
+
+    def _account_imports_query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        rows = account_imports(self._store, account_id)
+        return self._envelope(
+            {"account_id": account_id, "imports": rows},
+            status="EMPTY" if not rows else "READY",
+            projection_version=PROJECTION_VERSIONS["account_imports"],
+        )
+
+    def _account_positions_query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        rows = account_positions(self._store, account_id)
+        return self._envelope(
+            {"account_id": account_id, "positions": rows},
+            status="EMPTY" if not rows else "READY",
+            projection_version=PROJECTION_VERSIONS["account_positions"],
+        )
+
+    def _account_position_history_query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        period = self._resolve_period(payload) if payload.get("period") or payload.get("mode") else None
+        rows = account_position_history(self._store, account_id, period)
+        return self._envelope(
+            {"account_id": account_id, "period": period, "transactions": rows},
+            status="EMPTY" if not rows else "READY",
+            projection_version=PROJECTION_VERSIONS["account_position_history"],
+        )
+
+    def _account_audit_trail_query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = _require_identifier(payload, "account_id")
+        period = self._resolve_period(payload) if payload.get("period") or payload.get("mode") else None
+        rows = account_audit_trail(self._store, account_id, period)
+        return self._envelope(
+            {"account_id": account_id, "period": period, "audit_history": rows},
+            status="EMPTY" if not rows else "READY",
+            projection_version=PROJECTION_VERSIONS["account_audit_trail"],
+        )
 
     def _liquidity(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = liquidity_overview(

@@ -38,9 +38,9 @@ SCHEMA_ROOT = ROOT / "extensions" / "finance" / "schemas"
 UI_ROOT = ROOT / "ui" / "dist"
 EMBEDDED_INTEGRITY = Path(__file__).with_name("release_integrity.json")
 SOURCE_DATE_EPOCH = "1767225600"  # 2026-01-01T00:00:00Z
-CONTRACT_VERSION = "1.3.0"
-PREVIOUS_CONTRACT_VERSION = "1.2.0"
-PREVIOUS_CONTRACT_CATALOG = ROOT / "extensions" / "finance" / "contracts" / "catalog-1.2.0.json"
+CONTRACT_VERSION = "1.4.0"
+PREVIOUS_CONTRACT_VERSION = "1.3.0"
+PREVIOUS_CONTRACT_CATALOG = ROOT / "extensions" / "finance" / "contracts" / "catalog-1.3.0.json"
 
 
 def _write_json(path: Path, value: Any) -> None:

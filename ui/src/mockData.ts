@@ -1,20 +1,39 @@
 import type { Envelope } from "./contracts/generated";
 
-const envelope = <T>(data: T, state: Envelope<T>["state"] = "READY"): Envelope<T> => ({
+const envelope = <T>(
+  data: T,
+  state: Envelope<T>["state"] = "READY",
+  projectionVersion = "1.0.0",
+): Envelope<T> => ({
   schema_version: "1.0.0",
   state,
   projection_sequence: 892,
   event_store_sequence: 892,
+  projection_version: projectionVersion,
+  freshness_status: "CURRENT",
+  generated_at: "2026-07-25T09:00:00Z",
   data,
 });
+
+const MOCK_PERIOD = {
+  mode: "MONTH" as const,
+  start_date: "2026-07-01",
+  end_date: "2026-07-31",
+  timezone: "Europe/Berlin",
+  display_label: "Juli 2026",
+  aggregation: "DAY" as const,
+  comparison_period: null,
+};
 
 export function mockQuery(name: string, payload: Record<string, unknown> = {}): Envelope<unknown> {
   const month = String(payload.month ?? "2026-07");
   const responses: Record<string, Envelope<unknown>> = {
     GetCapabilityManifest: envelope({
       extension_version: "1.2.0",
-      contract_version: "1.3.0",
+      product_version: "1.4.0",
+      contract_version: "1.4.0",
       store_schema_version: 3,
+      ui_contract_version: "1.4.0",
       schema_version: "1.0.0",
       capabilities: {
         imports: true,
@@ -37,10 +56,23 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
         restore: true,
         data_export: true,
         migrations: true,
+        period_control: true,
+        account_workspace: true,
         tax: false,
         receipts: false,
         cloud_sync: false,
         external_models: false,
+      },
+      projection_versions: {
+        account_overview: "1.0.0",
+        account_detail: "1.0.0",
+        financial_time_series: "1.0.0",
+        balance_history: "1.0.0",
+        account_reconciliations: "1.0.0",
+        account_imports: "1.0.0",
+        account_positions: "1.0.0",
+        account_audit_trail: "1.0.0",
+        available_periods: "1.0.0",
       },
     }),
     GetStartupStatus: envelope({
@@ -90,6 +122,82 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
     GetAccount: envelope({ account: { account_id: String(payload.account_id ?? "acc_main"), display_name: payload.account_id === "acc_card" ? "Kreditkarte" : "Girokonto", account_type: payload.account_id === "acc_card" ? "CREDIT_CARD" : "CHECKING", institution: payload.account_id === "acc_card" ? "Kartenbank" : "Lokale Bank", currency: "EUR", status: "ACTIVE", include_in_cashflow: true, include_in_liquidity: payload.account_id !== "acc_card", include_in_net_worth: true, opened_at: "2022-03-01", closed_at: null, masked_reference: payload.account_id === "acc_card" ? "•••• 9012" : "•••• 4821", latest_balance: payload.account_id === "acc_card" ? "-2480.00" : "6420.00", available_balance: payload.account_id === "acc_card" ? null : "6180.00", balance_date: payload.account_id === "acc_card" ? "2026-05-31" : "2026-07-20", balance_source: "IMPORT_SOURCE", reconciliation_status: payload.account_id === "acc_card" ? "REVIEW_REQUIRED" : "MATCHED", freshness: payload.account_id === "acc_card" ? "STALE" : "CURRENT" }, balance_history: payload.account_id === "acc_card" ? [{ snapshot_id: "bal_card", balance_date: "2026-05-31", booked_balance: "-2480.00", currency: "EUR", source: "IMPORT_SOURCE" }] : [{ snapshot_id: "bal_02", balance_date: "2026-07-20", booked_balance: "6420.00", currency: "EUR", source: "IMPORT_SOURCE" }, { snapshot_id: "bal_01", balance_date: "2026-07-01", booked_balance: "5200.00", currency: "EUR", source: "RECONCILED" }], reconciliation: payload.account_id === "acc_card" ? { status: "REVIEW_REQUIRED", calculated_balance: "-2437.20", reported_balance: "-2480.00", balance_difference: "-42.80" } : { status: "MATCHED", calculated_balance: "6420.00", reported_balance: "6420.00", balance_difference: "0.00" } }),
     GetAccountBalanceHistory: envelope({ account_id: String(payload.account_id ?? "acc_main"), snapshots: [{ snapshot_id: "bal_02", balance_date: "2026-07-20", booked_balance: "6420.00", currency: "EUR", source: "IMPORT_SOURCE" }] }),
     GetBalanceReconciliation: envelope({ account_id: String(payload.account_id ?? "acc_main"), status: "MATCHED", calculated_balance: "6420.00", reported_balance: "6420.00", balance_difference: "0.00" }),
+    GetAvailablePeriods: envelope({
+      earliest_date: "2024-11-01",
+      latest_date: "2026-07-25",
+      available_months: ["2026-05", "2026-06", "2026-07"],
+      available_years: [2024, 2025, 2026],
+      max_custom_range_days: 1096,
+      supported_modes: ["MONTH", "YEAR", "CUSTOM_RANGE"],
+      reserved_modes: ["QUARTER", "ALL_TIME"],
+    }),
+    ListAccountOverviews: envelope({
+      period: MOCK_PERIOD,
+      accounts: [
+        { account_id: "acc_main", display_name: "Girokonto", account_type: "CHECKING", institution: "Lokale Bank", currency: "EUR", status: "ACTIVE", reported_balance: "6420.00", reported_balance_date: "2026-07-20", calculated_balance: "6420.00", calculated_balance_date: "2026-07-20", balance_difference: "0.00", reconciliation_status: "MATCHED", period_income: "4320.00", period_expenses: "2598.40", period_net_cashflow: "1721.60", last_import_month: "2026-07", last_import_status: "IMPORTED", open_review_count: 0, data_freshness: "CURRENT", position_count: null, acquisition_value: null, open_investment_funding_relations: 0, overview_status: "MATCHED" },
+        { account_id: "acc_savings", display_name: "Rücklage", account_type: "SAVINGS", institution: "Lokale Bank", currency: "EUR", status: "ACTIVE", reported_balance: "12000.00", reported_balance_date: "2026-07-18", calculated_balance: null, calculated_balance_date: null, balance_difference: null, reconciliation_status: "NOT_RECONCILED", period_income: "0.00", period_expenses: "0.00", period_net_cashflow: "0.00", last_import_month: null, last_import_status: null, open_review_count: 1, data_freshness: "CURRENT", position_count: null, acquisition_value: null, open_investment_funding_relations: 0, overview_status: "REVIEW_REQUIRED" },
+        { account_id: "acc_depot", display_name: "Wertpapierdepot", account_type: "BROKERAGE", institution: "Direktbank", currency: "EUR", status: "ACTIVE", reported_balance: "72500.00", reported_balance_date: "2026-07-01", calculated_balance: "72500.00", calculated_balance_date: "2026-07-01", balance_difference: "0.00", reconciliation_status: "MATCHED", period_income: "0.00", period_expenses: "0.00", period_net_cashflow: "0.00", last_import_month: "2026-07", last_import_status: "IMPORTED", open_review_count: 0, data_freshness: "CURRENT", position_count: 2, acquisition_value: "68000.00", open_investment_funding_relations: 0, overview_status: "MATCHED" },
+        { account_id: "acc_card", display_name: "Kreditkarte", account_type: "CREDIT_CARD", institution: "Kartenbank", currency: "EUR", status: "ACTIVE", reported_balance: "-2480.00", reported_balance_date: "2026-05-31", calculated_balance: "-2437.20", calculated_balance_date: "2026-05-31", balance_difference: "-42.80", reconciliation_status: "REVIEW_REQUIRED", period_income: "0.00", period_expenses: "0.00", period_net_cashflow: "0.00", last_import_month: "2026-05", last_import_status: "IMPORTED", open_review_count: 1, data_freshness: "STALE", position_count: null, acquisition_value: null, open_investment_funding_relations: 0, overview_status: "STALE" },
+      ],
+    }, "STALE"),
+    GetAccountDetail: envelope({
+      account: { account_id: String(payload.account_id ?? "acc_main"), display_name: "Girokonto", account_type: "CHECKING", institution: "Lokale Bank", currency: "EUR", status: "ACTIVE", reported_balance: "6420.00", reported_balance_date: "2026-07-20", calculated_balance: "6420.00", calculated_balance_date: "2026-07-20", balance_difference: "0.00", reconciliation_status: "MATCHED", period_income: "4320.00", period_expenses: "2598.40", period_net_cashflow: "1721.60", last_import_month: "2026-07", last_import_status: "IMPORTED", open_review_count: 0, data_freshness: "CURRENT", position_count: null, acquisition_value: null, open_investment_funding_relations: 0, overview_status: "MATCHED" },
+      overview_status: "MATCHED",
+      period: MOCK_PERIOD,
+      period_summary: { account_id: String(payload.account_id ?? "acc_main"), period: MOCK_PERIOD, period_income: "4320.00", period_expenses: "2598.40", period_net_cashflow: "1721.60", transaction_count: 5, balance_point_count: 2 },
+      balance_history: [
+        { balance_type: "OPENING", balance_date: "2026-06-30", reported_value: "5200.00", calculated_value: "5200.00", currency: "EUR", source: "MANUAL_ENTRY", confirmation_status: "CONFIRMED", correction_status: "AS_SUGGESTED", adjustment_reason: null, carry_forward_source_reconciliation_id: "balrec_prev", sequence_number: 810 },
+        { balance_type: "CLOSING", balance_date: "2026-07-20", reported_value: "6420.00", calculated_value: null, currency: "EUR", source: "IMPORT_SOURCE", confirmation_status: "CONFIRMED", correction_status: "MANUAL", adjustment_reason: null, carry_forward_source_reconciliation_id: null, sequence_number: 891 },
+        { balance_type: "CALCULATED", balance_date: "2026-07-20", reported_value: "6420.00", calculated_value: "6420.00", currency: "EUR", source: "RECONCILED", confirmation_status: "CONFIRMED", correction_status: "MATCHED", adjustment_reason: null, carry_forward_source_reconciliation_id: null, sequence_number: 892 },
+      ],
+      reconciliation: { status: "MATCHED", calculated_balance: "6420.00", reported_balance: "6420.00", balance_difference: "0.00" },
+      open_review_count: 0,
+    }),
+    GetAccountPeriodSummary: envelope({ account_id: String(payload.account_id ?? "acc_main"), period: MOCK_PERIOD, period_income: "4320.00", period_expenses: "2598.40", period_net_cashflow: "1721.60", transaction_count: 5, balance_point_count: 2 }),
+    ListAccountTransactions: envelope({
+      account_id: String(payload.account_id ?? "acc_main"),
+      period: MOCK_PERIOD,
+      transactions: [
+        { transaction_id: "txn_104", account_id: String(payload.account_id ?? "acc_main"), booking_date: "2026-07-18", amount: "-83.42", currency: "EUR", direction: "DEBIT", counterparty: "Markthalle Süd", normalized_description: "Lebensmittel", category_code: "FOOD_GROCERIES", duplicate_status: "NONE", transfer_status: "NONE", refund_status: "NONE", export_id: "export_july" },
+        { transaction_id: "txn_100", account_id: String(payload.account_id ?? "acc_main"), booking_date: "2026-07-01", amount: "4000.00", currency: "EUR", direction: "CREDIT", counterparty: "Beispiel GmbH", normalized_description: "Gehalt", category_code: "INCOME_SALARY", duplicate_status: "NONE", transfer_status: "NONE", refund_status: "NONE", export_id: "export_july" },
+      ],
+    }),
+    ListAccountReconciliations: envelope({
+      account_id: String(payload.account_id ?? "acc_main"),
+      reconciliations: [
+        { reconciliation_id: "import_balance_01", account_id: String(payload.account_id ?? "acc_main"), report_month: "2026-07", period_start: "2026-07-01", period_end: "2026-07-31", opening_balance: "5200.00", relevant_transaction_count: 12, calculated_closing_balance: "6420.00", reported_closing_balance: "6420.00", balance_difference: "0.00", status: "MATCHED", raw_status: "MATCHED", explanation: null, export_id: "export_july" },
+        { reconciliation_id: "import_balance_00", account_id: String(payload.account_id ?? "acc_main"), report_month: "2026-06", period_start: "2026-06-01", period_end: "2026-06-30", opening_balance: "4980.00", relevant_transaction_count: 9, calculated_closing_balance: "5245.00", reported_closing_balance: "5200.00", balance_difference: "-45.00", status: "REVIEW_REQUIRED", raw_status: "DIFFERENCE", explanation: null, export_id: "export_june" },
+      ],
+    }),
+    ListAccountImports: envelope({
+      account_id: String(payload.account_id ?? "acc_main"),
+      imports: [
+        { export_id: "export_july", section_id: "section_checking_july", section_type: "CHECKING", bank_identifier: "BANK_A", report_month: "2026-07", period_start: "2026-07-01", period_end: "2026-07-31", import_status: "IMPORTED", record_count: 12, parser_version: "GermanMultiAccountCsvV1@1.0.1", profile_version: "1.0.0", content_hash: "a421…9bf0", imported_at: "2026-07-20T10:24:00Z" },
+        { export_id: "export_june", section_id: "section_checking_june", section_type: "CHECKING", bank_identifier: "BANK_A", report_month: "2026-06", period_start: "2026-06-01", period_end: "2026-06-30", import_status: "IMPORTED", record_count: 9, parser_version: "GermanMultiAccountCsvV1@1.0.1", profile_version: "1.0.0", content_hash: "c038…7a12", imported_at: "2026-06-20T09:05:00Z" },
+      ],
+    }),
+    ListAccountPositions: envelope({
+      account_id: String(payload.account_id ?? "acc_depot"),
+      positions: [
+        { position_id: "position_01", account_id: String(payload.account_id ?? "acc_depot"), security_identifier_type: "WKN", security_identifier: "ABC123", security_name: "Synthetischer Fonds", opening_quantity: "8.00000000", purchased_quantity: "2.00000000", sold_quantity: "0.00000000", closing_quantity: "10.00000000", reported_closing_quantity: "10.00000000", position_difference: "0.00000000", market_value: "45000.00", acquisition_value: "42000.00", currency: "EUR" },
+        { position_id: "position_02", account_id: String(payload.account_id ?? "acc_depot"), security_identifier_type: "ISIN", security_identifier: "DE0001234567", security_name: "Beispiel-ETF", opening_quantity: "50.00000000", purchased_quantity: "0.00000000", sold_quantity: "5.00000000", closing_quantity: "45.00000000", reported_closing_quantity: "45.00000000", position_difference: "0.00000000", market_value: "27500.00", acquisition_value: "26000.00", currency: "EUR" },
+      ],
+    }),
+    GetAccountPositionHistory: envelope({
+      account_id: String(payload.account_id ?? "acc_depot"),
+      period: MOCK_PERIOD,
+      transactions: [
+        { transaction_id: "sec_txn_01", account_id: String(payload.account_id ?? "acc_depot"), booking_date: "2026-07-05", security_identifier: "ABC123", security_name: "Synthetischer Fonds", transaction_type: "INVESTMENT_PURCHASE", quantity: "2.00000000", price_currency: "EUR" },
+      ],
+    }),
+    GetAccountAuditTrail: envelope({
+      account_id: String(payload.account_id ?? "acc_main"),
+      period: null,
+      audit_history: [
+        { sequence_number: 891, event_id: "evt_891", event_type: "ImportedPeriodBalanceReconciled", occurred_at: "2026-07-20T10:24:00Z", aggregate_type: "ImportedPeriodBalance", aggregate_id: "import_balance_01", account_id: String(payload.account_id ?? "acc_main"), related_import_id: "export_july", related_balance_id: "import_balance_01", payload: { status: "MATCHED" } },
+        { sequence_number: 812, event_id: "evt_812", event_type: "OpeningBalanceCarryForwardAdjusted", occurred_at: "2026-06-30T21:10:00Z", aggregate_type: "OpeningBalance", aggregate_id: "openingbalance_acc_main", account_id: String(payload.account_id ?? "acc_main"), related_import_id: null, related_balance_id: "openingbalance_acc_main", payload: { reason: "Ausstehende Korrekturbuchung", previous_value: "5245.24", value: "5200.00" } },
+      ],
+    }),
     GetLiquidityOverview: envelope({ valuation_currency: "EUR", as_of: "2026-07-20", liquid_funds: "18420.00", accounts: [], stale_account_ids: [], currency_conflicts: [] }),
     GetNetWorthOverview: envelope({ valuation_currency: "EUR", as_of: "2026-07-20", liquid_funds: "18420.00", savings: "12000.00", investments: "72500.00", other_assets: "0.00", total_assets: "90920.00", liabilities: "4500.00", net_worth: "86420.00", investable_assets: "84500.00", currency_conflicts: [], source_snapshot_ids: ["bal_01", "bal_02", "bal_03", "bal_04"] }),
     GetNetWorthHistory: envelope({ history: [{ as_of: "2026-05-31", net_worth: "82100.00" }, { as_of: "2026-06-30", net_worth: "84280.00" }, { as_of: "2026-07-20", net_worth: "86420.00" }] }),

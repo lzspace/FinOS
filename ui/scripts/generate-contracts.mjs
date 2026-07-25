@@ -36,6 +36,15 @@ const required = [
   "import_history_detail.response.schema.json",
   "imported_period_reconciliation_context.response.schema.json",
   "position_reconciliation.response.schema.json",
+  "available_periods.response.schema.json",
+  "account_overview_list.response.schema.json",
+  "account_period_summary.response.schema.json",
+  "account_transaction_list.response.schema.json",
+  "account_reconciliation_list.response.schema.json",
+  "account_import_list.response.schema.json",
+  "account_position_list.response.schema.json",
+  "account_position_history.response.schema.json",
+  "account_audit_trail.response.schema.json",
 ];
 
 for (const name of required) {

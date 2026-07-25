@@ -97,4 +97,62 @@ describe("Finance UI contract", () => {
     expect(screen.getByText("DESKTOP_APPLICATION_PROCESS_TERMINATED")).toBeInTheDocument();
     expect(screen.queryByText("Version nicht kompatibel")).not.toBeInTheDocument();
   });
+
+  it("supports switching the central period control between month, year and range", async () => {
+    render(<App />);
+    const group = await screen.findByRole("group", { name: "Zeitraumsteuerung" });
+    expect(within(group).getByRole("tab", { name: "Monat" })).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(within(group).getByRole("tab", { name: "Jahr" }));
+    expect(within(group).getByRole("tab", { name: "Jahr" })).toHaveAttribute("aria-selected", "true");
+    expect(within(group).getByLabelText("Jahr auswählen")).toBeInTheDocument();
+
+    fireEvent.click(within(group).getByRole("tab", { name: "Zeitraum" }));
+    expect(within(group).getByRole("tab", { name: "Zeitraum" })).toHaveAttribute("aria-selected", "true");
+    expect(within(group).getByLabelText("Startdatum")).toBeInTheDocument();
+    expect(within(group).getByLabelText("Enddatum")).toBeInTheDocument();
+  });
+
+  it("hides the period control on settings and imports where it does not apply", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Einstellungen/ }));
+    expect(screen.queryByRole("group", { name: "Zeitraumsteuerung" })).not.toBeInTheDocument();
+  });
+
+  it("shows a full account workspace with period-scoped tabs, separates cash from brokerage accounts, and surfaces the German audit trail", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
+    expect(await screen.findByText(/Kontenübersicht/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Depots" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Geldkonten" })).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Konto Girokonto öffnen" }));
+    const dialog = await screen.findByRole("dialog", { name: "Girokonto" });
+    expect(within(dialog).getByRole("tab", { name: "Übersicht" })).toHaveAttribute("aria-selected", "true");
+    expect(within(dialog).getByText("Gemeldeter Saldo")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Audit" }));
+    expect(await within(dialog).findByText("Saldenabgleich durchgeführt")).toBeInTheDocument();
+  });
+
+  it("keeps a depot's position table separate from a normal checking-account balance", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Depot Wertpapierdepot öffnen" }));
+    const dialog = await screen.findByRole("dialog", { name: "Wertpapierdepot" });
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Positionen" }));
+    expect(await within(dialog).findByText("ABC123")).toBeInTheDocument();
+  });
+
+  it("displays explicit runtime version and projection metadata in settings, not hardcoded values", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Einstellungen/ }));
+    expect(await screen.findByText("Produktversion")).toBeInTheDocument();
+    expect(screen.getByText("Contract-Version")).toBeInTheDocument();
+    expect(screen.getByText("UI-Contract-Version")).toBeInTheDocument();
+    expect(screen.getAllByText("1.4.0").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText("Store-Schema")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("Account Overview")).toBeInTheDocument();
+  });
 });

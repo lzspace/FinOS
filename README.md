@@ -112,6 +112,30 @@ to synthetic test data. Cashflow treats every positive amount as income and
 every negative amount as an expense; transfers, investments and refunds are
 not yet distinguished.
 
+Version 1.4.0 unifies period control and the account workspace. `finance
+account overview`/`finance account detail` and the `ListAccountOverviews` /
+`GetAccountDetail` queries accept an explicit `MONTH`, `YEAR` or
+`CUSTOM_RANGE` period instead of a free month string; the same period drives
+the account overview, transactions, categories and wealth views, while an
+import's own report month stays immutable. Each account now exposes a full
+workspace — transactions, balances (with carry-forward and adjustment reasons
+visible), period reconciliations, import history, brokerage positions and an
+account-scoped audit trail — through eleven new or extended versioned
+queries. Every query response carries `projection_version`,
+`freshness_status` and `generated_at`; the capability manifest reports
+`product_version`, `contract_version`, `store_schema_version` and
+`ui_contract_version` explicitly, and Settings renders them from the runtime
+manifest only. The store schema remains 3 since every new view is
+reconstructed live from existing events.
+
+```bash
+finance --data-dir /absolute/local/finance-data period available
+finance --data-dir /absolute/local/finance-data account overview \
+  --period-mode MONTH --year 2026 --month 7
+finance --data-dir /absolute/local/finance-data account detail \
+  --account acc_checking --period-mode MONTH --year 2026 --month 7
+```
+
 Version 0.3.0 adds deterministic, event-sourced classification with stable
 category codes. It deliberately contains no AI or probabilistic model.
 Confirmed user decisions are authoritative; unmatched and conflicting results

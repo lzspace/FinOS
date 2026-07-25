@@ -178,6 +178,114 @@ class ApplicationServiceTests(unittest.TestCase):
         self._validate(allocation, "asset_allocation.response.schema.json")
         self._validate(projected, "projected_month_end_balance.response.schema.json")
 
+    def test_account_workspace_queries_use_period_control_and_versioned_contracts(self) -> None:
+        create_account(
+            self.store,
+            account_id="acc_main",
+            display_name="Girokonto",
+            account_type="CHECKING",
+            institution="Lokale Bank",
+            currency="EUR",
+            opened_at="2026-01-01",
+        )
+        record_balance_snapshot(
+            self.store,
+            account_id="acc_main",
+            balance_date="2026-06-30",
+            booked_balance="1200.00",
+            available_balance="1150.00",
+            currency="EUR",
+            source="MANUAL_ENTRY",
+            confidence="HIGH",
+        )
+        record_balance_snapshot(
+            self.store,
+            account_id="acc_main",
+            balance_date="2026-07-20",
+            booked_balance="1200.00",
+            available_balance="1150.00",
+            currency="EUR",
+            source="MANUAL_ENTRY",
+            confidence="HIGH",
+        )
+        reconcile_account_balance(self.store, "acc_main")
+        period = {"mode": "MONTH", "year": 2026, "month": 7}
+
+        available = self.application.query("GetAvailablePeriods")
+        overviews = self.application.query("ListAccountOverviews", {"period": period})
+        detail = self.application.query(
+            "GetAccountDetail", {"account_id": "acc_main", "period": period}
+        )
+        summary = self.application.query(
+            "GetAccountPeriodSummary", {"account_id": "acc_main", "period": period}
+        )
+        transactions = self.application.query(
+            "ListAccountTransactions", {"account_id": "acc_main", "period": period}
+        )
+        reconciliations = self.application.query(
+            "ListAccountReconciliations", {"account_id": "acc_main"}
+        )
+        imports = self.application.query("ListAccountImports", {"account_id": "acc_main"})
+        positions = self.application.query("ListAccountPositions", {"account_id": "acc_main"})
+        audit_trail = self.application.query(
+            "GetAccountAuditTrail", {"account_id": "acc_main"}
+        )
+
+        self.assertEqual(overviews["data"]["accounts"][0]["overview_status"], "MATCHED")
+        self.assertEqual(detail["data"]["account"]["account_id"], "acc_main")
+        self.assertEqual(positions["data"]["positions"], [])
+        for response in (
+            overviews,
+            detail,
+            summary,
+            transactions,
+            reconciliations,
+            imports,
+            positions,
+            audit_trail,
+            available,
+        ):
+            self.assertIn("projection_version", response)
+            self.assertEqual(response["freshness_status"], "CURRENT")
+            self.assertIn("generated_at", response)
+
+        self._validate(available, "available_periods.response.schema.json")
+        self._validate(overviews, "account_overview_list.response.schema.json")
+        self._validate(detail, "account_detail.response.schema.json")
+        self._validate(summary, "account_period_summary.response.schema.json")
+        self._validate(transactions, "account_transaction_list.response.schema.json")
+        self._validate(reconciliations, "account_reconciliation_list.response.schema.json")
+        self._validate(imports, "account_import_list.response.schema.json")
+        self._validate(positions, "account_position_list.response.schema.json")
+        self._validate(audit_trail, "account_audit_trail.response.schema.json")
+
+        with self.assertRaisesRegex(ApplicationContractError, "FINANCE_ACCOUNT_NOT_FOUND"):
+            self.application.query("GetAccountDetail", {"account_id": "does_not_exist"})
+        with self.assertRaisesRegex(Exception, "FINANCE_PERIOD_SELECTION_INVALID"):
+            self.application.query(
+                "ListAccountOverviews", {"period": {"mode": "MONTH", "year": 2026, "month": 13}}
+            )
+        with self.assertRaisesRegex(Exception, "FINANCE_PERIOD_RANGE_TOO_LARGE"):
+            self.application.query(
+                "ListAccountOverviews",
+                {
+                    "period": {
+                        "mode": "CUSTOM_RANGE",
+                        "start_date": "2000-01-01",
+                        "end_date": "2026-01-01",
+                    }
+                },
+            )
+
+        manifest = self.application.query("GetCapabilityManifest")["data"]
+        self.assertEqual(manifest["product_version"], "1.4.0")
+        self.assertEqual(manifest["contract_version"], "1.4.0")
+        self.assertEqual(manifest["ui_contract_version"], "1.4.0")
+        self.assertEqual(manifest["store_schema_version"], 3)
+        self.assertIn("account_overview", manifest["projection_versions"])
+        self.assertTrue(manifest["capabilities"]["period_control"])
+        self.assertTrue(manifest["capabilities"]["account_workspace"])
+
     def test_recovery_commands_and_status_queries_use_versioned_contracts(self) -> None:
         empty = self.application.query("ListBackups")
         created = self.application.command("CreateBackup", {})
