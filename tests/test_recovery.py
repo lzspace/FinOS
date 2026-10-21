@@ -120,6 +120,23 @@ class RecoveryTests(unittest.TestCase):
             restore_backup(self.store, manipulated, self.backup_key)
         self.assertEqual(len(self.store.events()), before)
 
+    def test_integrity_diagnostic_identifies_invalid_event_without_payload(self) -> None:
+        self._import("diagnostic.csv", "10.00")
+        self.store.connection.execute(
+            "UPDATE event_store SET event_type = 'UnknownEvent' WHERE sequence_number = 1"
+        )
+        self.store.connection.commit()
+
+        result = validate_store_integrity(self.store)
+
+        self.assertEqual(result["status"], "INVALID")
+        self.assertEqual(result["error_code"], "FINANCE_EVENT_SCHEMA_INVALID")
+        self.assertEqual(
+            result["diagnostic"],
+            {"event_sequence": 1, "event_type": "UnknownEvent", "schema_path": "$"},
+        )
+        self.assertNotIn("payload", result["diagnostic"])
+
     def test_future_archive_is_blocked_as_downgrade_protection(self) -> None:
         self._import("future.csv", "100.00")
         backup = create_backup(self.store, self.backup_key, self.backups)

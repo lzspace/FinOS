@@ -71,6 +71,25 @@
             "type": "boolean"
           }
         },
+        "local_ai": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "available", "runtime", "model", "trust_zone", "processing_location", "network_egress", "network_ingress", "import_mapping", "category_suggestions", "automatic_classification", "error_code"],
+          "properties": {
+            "status": { "enum": ["DISABLED", "LOADING_MODEL", "READY", "AI_UNAVAILABLE"] },
+            "available": { "type": "boolean" },
+            "runtime": { "const": "llama.cpp" },
+            "model": { "type": ["object", "null"] },
+            "trust_zone": { "const": "PRIVATE_LOCAL" },
+            "processing_location": { "const": "LOCAL_DEVICE" },
+            "network_egress": { "const": "DENY" },
+            "network_ingress": { "const": "DENY" },
+            "import_mapping": { "type": "boolean" },
+            "category_suggestions": { "type": "boolean" },
+            "automatic_classification": { "const": false },
+            "error_code": { "type": ["string", "null"] }
+          }
+        },
         "projection_versions": {
           "type": "object",
           "additionalProperties": {

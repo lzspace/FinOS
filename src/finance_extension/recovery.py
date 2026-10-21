@@ -42,6 +42,21 @@ class RecoveryInvariantError(ValueError):
     pass
 
 
+class IntegrityValidationError(RecoveryInvariantError):
+    """A validation failure with metadata that is safe to show locally.
+
+    The diagnostic deliberately contains no event payload or identifiers: both
+    may contain financial data. It only identifies the immutable event class
+    and its sequence in the local store.
+    """
+
+    def __init__(self, code: str, *, sequence_number: int, event_type: str, schema_path: str) -> None:
+        super().__init__(code)
+        self.sequence_number = sequence_number
+        self.event_type = event_type
+        self.schema_path = schema_path
+
+
 @dataclass(frozen=True)
 class VerifiedArchive:
     path: Path
@@ -309,7 +324,14 @@ def _validate_sqlite_image(database: bytes, files: dict[str, bytes]) -> dict[str
             try:
                 validate_event(_event_from_row(row))
             except Exception as exc:
-                raise RecoveryInvariantError("FINANCE_EVENT_SCHEMA_INVALID") from exc
+                message = str(exc)
+                schema_path = message.partition(": ")[2] or "$.payload"
+                raise IntegrityValidationError(
+                    "FINANCE_EVENT_SCHEMA_INVALID",
+                    sequence_number=int(row["sequence_number"]),
+                    event_type=str(row["event_type"]),
+                    schema_path=schema_path,
+                ) from exc
         imports = connection.execute(
             "SELECT stored_file_reference, content_hash FROM import_files"
         ).fetchall()
@@ -569,6 +591,17 @@ def validate_store_integrity(store: LocalFinanceStore) -> dict[str, Any]:
             "checked_at": datetime.now(UTC).isoformat(),
             **details,
             "storage_encryption": "FERNET_AUTHENTICATED",
+        }
+    except IntegrityValidationError as exc:
+        return {
+            "status": "INVALID",
+            "checked_at": datetime.now(UTC).isoformat(),
+            "error_code": str(exc),
+            "diagnostic": {
+                "event_sequence": exc.sequence_number,
+                "event_type": exc.event_type,
+                "schema_path": exc.schema_path,
+            },
         }
     except Exception as exc:
         return {

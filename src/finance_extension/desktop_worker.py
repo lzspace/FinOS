@@ -15,6 +15,7 @@ from typing import Any, TextIO
 
 from .application import ApplicationContractError, FinanceApplicationService
 from .crypto import KeychainKeyProvider, StaticKeyProvider
+from .local_model import LocalModelService
 from .store import LocalFinanceStore, StoreInvariantError
 from .workspace_lock import (
     inspect_workspace_lock,
@@ -221,11 +222,20 @@ def main(argv: list[str] | None = None) -> int:
     if isinstance(provider, KeychainKeyProvider):
         provider.get_or_create_key()
     with LocalFinanceStore(data_dir, provider) as store:
+        executable = os.environ.get("FINANCE_LLAMA_CPP_EXECUTABLE")
+        local_model = LocalModelService(
+            data_dir.parent / "models",
+            executable_path=executable,
+        )
         application = FinanceApplicationService(
             store,
             network_egress_disabled=True,
+            local_model_service=local_model,
         )
-        return serve(DesktopRequestHandler(application), sys.stdin, sys.stdout)
+        try:
+            return serve(DesktopRequestHandler(application), sys.stdin, sys.stdout)
+        finally:
+            local_model.shutdown()
 
 
 if __name__ == "__main__":

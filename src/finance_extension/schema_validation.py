@@ -128,6 +128,43 @@ def _validate_legacy_import_analysis(event: dict[str, Any]) -> None:
         raise EventValidationError("FINANCE_EVENT_SCHEMA_INVALID: $.payload") from exc
 
 
+def _validate_legacy_balance(event: dict[str, Any]) -> None:
+    """Accept balances written before carry-forward fields existed.
+
+    Version 1.3 added three nullable carry-forward fields to balance events.
+    Existing events are immutable, so recovery validation
+    supplies only those documented defaults before applying the current,
+    strict schema. A partial set is never accepted as legacy data.
+    """
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        raise EventValidationError("FINANCE_EVENT_SCHEMA_INVALID: $.payload")
+    legacy_fields = {
+        "balance_id",
+        "account_id",
+        "balance_date",
+        "booked_balance",
+        "available_balance",
+        "currency",
+        "source",
+        "confirmation",
+        "comment",
+        "recorded_at",
+    }
+    if set(payload) != legacy_fields:
+        raise EventValidationError("FINANCE_EVENT_SCHEMA_INVALID: $.payload")
+    normalized = {
+        **event,
+        "payload": {
+            **payload,
+            "carry_forward_source_reconciliation_id": None,
+            "suggested_value": None,
+            "adjustment_reason": None,
+        },
+    }
+    validate_event(normalized)
+
+
 @lru_cache(maxsize=1)
 def _schemas() -> tuple[dict[str, dict[str, Any]], Registry]:
     documents = {
@@ -145,6 +182,16 @@ def validate_event(event: dict[str, Any]) -> None:
         "payload", {}
     ):
         _validate_legacy_import_analysis(event)
+        return
+    if event.get("event_type") in {"OpeningBalanceRecorded", "ClosingBalanceRecorded"} and all(
+        name not in event.get("payload", {})
+        for name in (
+            "carry_forward_source_reconciliation_id",
+            "suggested_value",
+            "adjustment_reason",
+        )
+    ):
+        _validate_legacy_balance(event)
         return
     schema_name = SCHEMA_BY_EVENT.get(
         event.get("event_type", ""), "vertical_slice_events.schema.json"

@@ -223,6 +223,37 @@ class GermanMultiAccountImportTests(unittest.TestCase):
             }
         )
 
+    def test_accepts_legacy_opening_balance_for_recovery_validation(self) -> None:
+        for event_type, aggregate_type in (
+            ("OpeningBalanceRecorded", "OpeningBalance"),
+            ("ClosingBalanceRecorded", "ClosingBalance"),
+        ):
+            validate_event(
+                {
+                "schema_version": "1.0.0",
+                "event_id": "evt_" + "a" * 32,
+                "event_type": event_type,
+                "aggregate_type": aggregate_type,
+                "aggregate_id": "openingbalance_acc_checking",
+                "aggregate_version": 1,
+                "occurred_at": "2024-08-01T00:00:00+00:00",
+                "correlation_id": "cmd_" + "b" * 32,
+                "causation_id": "cmd_" + "b" * 32,
+                "payload": {
+                    "balance_id": "openingbalance_acc_checking",
+                    "account_id": "acc_checking",
+                    "balance_date": "2024-07-31",
+                    "booked_balance": "100.00",
+                    "available_balance": None,
+                    "currency": "EUR",
+                    "source": "MANUAL_ENTRY",
+                    "confirmation": True,
+                    "comment": None,
+                    "recorded_at": "2024-08-01T00:00:00+00:00",
+                },
+                }
+            )
+
     def test_full_cp1252_workflow_rebuild_and_idempotency(self) -> None:
         analysis = self._analyze_and_map()
         self.assertEqual(analysis["encoding"], "cp1252")

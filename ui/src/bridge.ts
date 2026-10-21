@@ -21,6 +21,8 @@ export interface SelectedImportFile {
 
 export interface DesktopFinanceIPC {
   selectImportFile(): Promise<SelectedImportFile | null>;
+  selectLocalModelFile(): Promise<SelectedImportFile | null>;
+  selectLocalModelManifest(): Promise<SelectedImportFile | null>;
   invoke(operation: "query" | "command", payload: Record<string, unknown>): Promise<DesktopResponse>;
   getRuntimeStatus(): Promise<DesktopResponse>;
   /** Present only on the synthetic Vite development bridge. */
@@ -55,6 +57,7 @@ const supportedCommands = new Set([
   "CreateBackup", "VerifyBackup", "RestoreBackup", "DeleteBackup",
   "ExportFinanceData", "ImportFinanceArchive", "RotateEncryptionKey",
   "RepairLocalStore", "ValidateStoreIntegrity", "ExportDiagnostics",
+  "RegisterLocalModel", "EnableLocalModel", "DisableLocalModel",
 ]);
 
 let previewRequest = 0;
@@ -79,6 +82,12 @@ export function installDevelopmentPreviewBridge(): void {
   const bridge: DesktopFinanceIPC = {
     preview: true,
     async selectImportFile() {
+      return null;
+    },
+    async selectLocalModelFile() {
+      return null;
+    },
+    async selectLocalModelManifest() {
       return null;
     },
     async invoke(
@@ -169,6 +178,14 @@ export class FinanceBridge {
 
   async selectImportFile(): Promise<SelectedImportFile | null> {
     return this.ipc().selectImportFile();
+  }
+
+  async selectLocalModelFile(): Promise<SelectedImportFile | null> {
+    return this.ipc().selectLocalModelFile();
+  }
+
+  async selectLocalModelManifest(): Promise<SelectedImportFile | null> {
+    return this.ipc().selectLocalModelManifest();
   }
 
   async getRuntimeStatus<T = unknown>(): Promise<T> {

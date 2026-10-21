@@ -25,6 +25,7 @@ import type {
   ExpectedTransaction,
   ForecastScenario,
   LiquidityOverview,
+  LocalModelStatus,
   NetWorthOverview,
   KeyStatus,
   MigrationStatus,
@@ -219,7 +220,7 @@ export function App() {
     return <DesktopServiceErrorState error={startup.error} />;
   }
   if (!startup.envelope || startup.envelope.data.status !== "READY") {
-    return <CriticalState status={startup.envelope?.data.status ?? "INCOMPATIBLE_VERSION"} errorCode={startup.envelope?.data.error_code ?? startup.error} />;
+    return <CriticalState status={startup.envelope?.data.status ?? "INCOMPATIBLE_VERSION"} errorCode={startup.envelope?.data.error_code ?? startup.error} diagnostic={startup.envelope?.data.checks.integrity_diagnostic} />;
   }
   if (manifest.state !== "READY" || !manifest.envelope) {
     return <FullState state={manifest.state} message={manifest.error} />;
@@ -289,7 +290,7 @@ export function DesktopServiceErrorState({ error }: { error: string }) {
   </main>;
 }
 
-export function CriticalState({ status, errorCode }: { status: StartupState; errorCode?: string | null }) {
+export function CriticalState({ status, errorCode, diagnostic }: { status: StartupState; errorCode?: string | null; diagnostic?: string }) {
   const content: Record<StartupState, [string, string, string]> = {
     READY: ["Finance ist bereit", "Alle lokalen Sicherheitsprüfungen waren erfolgreich.", "Fortfahren"],
     WORKSPACE_LOCKED: ["Arbeitsbereich bereits geöffnet", "Ein anderer Prozess besitzt die Schreibsperre. Schließe ihn oder prüfe den Lock im Diagnosemodus.", "Lock prüfen"],
@@ -303,7 +304,7 @@ export function CriticalState({ status, errorCode }: { status: StartupState; err
     INSUFFICIENT_SPACE: ["Nicht genügend Speicherplatz", "Für eine atomare Speicherung oder Wiederherstellung steht nicht genug lokaler Speicher zur Verfügung.", "Speicher prüfen"],
   };
   const selected = content[status];
-  return <main className="full-state critical-state" role="alert"><span className="brand-mark">!</span><span className="eyebrow">SICHERER START BLOCKIERT</span><h1>{selected[0]}</h1><p>{selected[1]}</p>{errorCode && <code>{errorCode}</code>}<button className="primary">{selected[2]}</button><small>Nur lokale, schreibgeschützte Diagnose ist verfügbar.</small></main>;
+  return <main className="full-state critical-state" role="alert"><span className="brand-mark">!</span><span className="eyebrow">SICHERER START BLOCKIERT</span><h1>{selected[0]}</h1><p>{selected[1]}</p>{errorCode && <code>{errorCode}</code>}{diagnostic && <small>Prüfhinweis: {diagnostic}</small>}<button className="primary">{selected[2]}</button><small>Nur lokale, schreibgeschützte Diagnose ist verfügbar.</small></main>;
 }
 
 function FullState({ state, message }: { state: ViewState; message?: string }) {
@@ -839,10 +840,13 @@ function Settings({ manifest }: { manifest: CapabilityManifest }) {
   const integrity = useFinanceQuery<StoreIntegrity>("GetStoreIntegrity");
   const keys = useFinanceQuery<KeyStatus>("GetKeyStatus");
   const migrations = useFinanceQuery<MigrationStatus>("GetMigrationStatus");
+  const localModel = useFinanceQuery<LocalModelStatus>("GetLocalModelStatus");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState("");
   const [restorePath, setRestorePath] = useState<string | null>(null);
   const [rotateReady, setRotateReady] = useState(false);
+  const [modelFile, setModelFile] = useState<{ file_ref: string; display_name: string } | null>(null);
+  const [modelManifest, setModelManifest] = useState<{ file_ref: string; display_name: string } | null>(null);
   const rows = backups.envelope?.data.backups ?? [];
   const latest = rows.find((item) => item.verification_status === "VALID");
   const run = async (command: string, payload: Record<string, unknown>, success: string) => {
@@ -851,12 +855,21 @@ function Settings({ manifest }: { manifest: CapabilityManifest }) {
     catch (error) { setMessage(error instanceof Error ? error.message : "Lokale Operation fehlgeschlagen."); }
     finally { setBusy(""); }
   };
+  const chooseModel = async () => {
+    const selected = await financeBridge.selectLocalModelFile();
+    if (selected) setModelFile(selected);
+  };
+  const chooseModelManifest = async () => {
+    const selected = await financeBridge.selectLocalModelManifest();
+    if (selected) setModelManifest(selected);
+  };
   return <QueryBoundary result={result}>{(security) => <>
     <section className="section-intro"><div><h2>Laufzeitsicherheit</h2><p>Dynamisch geprüft. „Nicht geprüft“ wird ausdrücklich nicht als sicher gewertet.</p></div><span className="version-chip">Extension {manifest.extension_version} · Schema {manifest.schema_version}</span></section>
     <section className="security-grid">{Object.entries(security.checks).map(([name, status]) => <article className="panel security-check" key={name}><span className={`security-icon ${status.toLowerCase()}`}>{status === "PASSED" ? "✓" : status === "FAILED" ? "!" : "?"}</span><div><strong>{label(name)}</strong><small>{status === "PASSED" ? "Bestanden" : status === "FAILED" ? "Fehlgeschlagen" : "Nicht geprüft"}</small></div></article>)}</section>
     <h2 className="subheading">Datensicherheit und Wiederherstellung</h2>
     {message && <div className="toast" role="status">{message}</div>}
     <section className="recovery-grid">
+      <article className="panel recovery-card"><span className={`recovery-icon ${localModel.envelope?.data.status === "READY" ? "ok" : "warn"}`}>{localModel.envelope?.data.status === "READY" ? "✓" : "AI"}</span><div><h3>Lokale AI</h3><p>Verifiziertes GGUF-Modell über llama.cpp. Verarbeitung ausschließlich auf diesem Gerät.</p><strong>{localModel.envelope?.data.status === "READY" ? "Bereit" : localModel.envelope?.data.status === "LOADING_MODEL" ? "Modell wird geladen" : localModel.envelope?.data.status === "AI_UNAVAILABLE" ? "Nicht verfügbar" : "Nicht eingerichtet"}</strong><small>{localModel.envelope?.data.model ? `${localModel.envelope.data.model.model_id} · ${localModel.envelope.data.model.model_version}` : "PRIVATE_LOCAL · Netzwerk blockiert"}</small><small>{modelFile?.display_name ?? "Noch kein GGUF gewählt"} · {modelManifest?.display_name ?? "kein Manifest gewählt"}</small></div><div className="card-actions"><button className="secondary small" disabled={Boolean(busy)} onClick={chooseModel}>GGUF wählen</button><button className="secondary small" disabled={Boolean(busy)} onClick={chooseModelManifest}>Manifest wählen</button><button className="primary small" disabled={!modelFile || !modelManifest || Boolean(busy)} onClick={() => run("RegisterLocalModel", { model_file_reference: modelFile?.file_ref, manifest_file_reference: modelManifest?.file_ref }, "Modell wurde verifiziert und lokal registriert. Der Status wird beim nächsten Öffnen aktualisiert.")}>Registrieren</button>{localModel.envelope?.data.status === "READY" ? <button className="secondary small" disabled={Boolean(busy)} onClick={() => run("DisableLocalModel", {}, "Lokale AI wurde deaktiviert.")}>Deaktivieren</button> : localModel.envelope?.data.model ? <button className="secondary small" disabled={Boolean(busy)} onClick={() => run("EnableLocalModel", {}, "Lokale AI wird gestartet.")}>Aktivieren</button> : null}</div></article>
       <article className="panel recovery-card"><span className="recovery-icon">▣</span><div><h3>Datensicherung</h3><p>Vollständige, authentifiziert verschlüsselte Archive mit unabhängigem lokalem Schlüssel.</p><strong>{rows.length} lokale Backups</strong><small>{latest?.created_at ? `Zuletzt ${date(latest.created_at)}` : "Noch keine Sicherung"}</small></div><button className="primary small" disabled={Boolean(busy)} onClick={() => run("CreateBackup", {}, "Backup wurde vollständig erstellt und verifiziert.")}>Backup erstellen</button></article>
       <article className="panel recovery-card"><span className="recovery-icon">↺</span><div><h3>Datenwiederherstellung</h3><p>Vor dem atomaren Austausch werden Archiv, Version, Schema und alle enthaltenen Dateien geprüft.</p><strong>{latest ? "Verifiziertes Backup verfügbar" : "Kein gültiges Backup"}</strong><small>Keine Teilwiederherstellung</small></div><button className="secondary small" disabled={!latest || Boolean(busy)} onClick={() => setRestorePath(latest?.path ?? null)}>Wiederherstellen</button></article>
       <article className="panel recovery-card"><span className="recovery-icon">⇧</span><div><h3>Datenexport</h3><p>Portables lokales Finanzarchiv ohne Cloud-Übertragung oder externe Verarbeitung.</p><strong>Verschlüsselt und vollständig</strong><small>Formatversion 1</small></div><button className="secondary small" disabled={Boolean(busy)} onClick={() => run("ExportFinanceData", {}, "Lokales Finanzarchiv wurde exportiert und verifiziert.")}>Archiv exportieren</button></article>
@@ -866,7 +879,7 @@ function Settings({ manifest }: { manifest: CapabilityManifest }) {
     </section>
     {restorePath && <section className="restore-warning panel" role="alert"><div><strong>Vollständige Wiederherstellung bestätigen</strong><p>Der aktuelle lokale Store wird erst nach erfolgreicher Integritäts- und Kompatibilitätsprüfung atomar ersetzt.</p></div><button className="danger-link" onClick={() => setRestorePath(null)}>Abbrechen</button><button className="primary small" disabled={Boolean(busy)} onClick={() => run("RestoreBackup", { archive_path: restorePath }, "Backup wurde vollständig wiederhergestellt.").then(() => setRestorePath(null))}>Wiederherstellung bestätigen</button></section>}
     {rotateReady && <section className="restore-warning panel" role="alert"><div><strong>Schlüsselrotation bestätigen</strong><p>Vor der Rotation wird automatisch ein verifiziertes Recovery-Backup mit dem unabhängigen Archivschlüssel erzeugt.</p></div><button className="danger-link" onClick={() => setRotateReady(false)}>Abbrechen</button><button className="primary small" disabled={Boolean(busy)} onClick={() => run("RotateEncryptionKey", {}, "Schlüssel wurde nach einem Recovery-Backup atomar rotiert.").then(() => setRotateReady(false))}>Rotation bestätigen</button></section>}
-    <section className="panel settings-info"><PanelHeader title="Lokaler Datenvertrag" subtitle="UI → Desktop IPC → Application Service"/><dl><div><dt>Letzte Event-Sequenz</dt><dd>#{security.last_event_sequence}</dd></div><div><dt>Netzwerkressourcen</dt><dd>Keine</dd></div><div><dt>Direkter Store-Zugriff</dt><dd>Nicht erlaubt</dd></div><div><dt>Externe Modelle</dt><dd>Deaktiviert</dd></div></dl></section>
+    <section className="panel settings-info"><PanelHeader title="Lokaler Datenvertrag" subtitle="UI → Desktop IPC → Application Service"/><dl><div><dt>Letzte Event-Sequenz</dt><dd>#{security.last_event_sequence}</dd></div><div><dt>Netzwerkressourcen</dt><dd>Keine</dd></div><div><dt>Direkter Store-Zugriff</dt><dd>Nicht erlaubt</dd></div><div><dt>Externe Modelle</dt><dd>Deaktiviert</dd></div><div><dt>Lokale Modellverarbeitung</dt><dd>{localModel.envelope?.data.available ? "Aktiv" : "Optional / inaktiv"}</dd></div><div><dt>Auto-Kategorisierung</dt><dd>Deaktiviert</dd></div></dl></section>
     <section className="panel settings-info">
       <PanelHeader title="Versionen und Kompatibilität" subtitle="Alle Werte stammen aus dem Runtime-Manifest, keine statischen Angaben" />
       <dl>

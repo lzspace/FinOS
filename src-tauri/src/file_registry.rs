@@ -52,6 +52,19 @@ impl FileRegistry {
         self.entries.remove(file_ref).map(|entry| entry.path)
     }
 
+    pub fn take_pair(&mut self, first: &str, second: &str) -> Option<(PathBuf, PathBuf)> {
+        self.expire();
+        if first == second
+            || !self.entries.contains_key(first)
+            || !self.entries.contains_key(second)
+        {
+            return None;
+        }
+        let first_path = self.entries.remove(first)?.path;
+        let second_path = self.entries.remove(second)?.path;
+        Some((first_path, second_path))
+    }
+
     fn expire(&mut self) {
         let now = Instant::now();
         self.entries.retain(|_, entry| entry.expires_at > now);
@@ -73,5 +86,28 @@ mod tests {
         assert!(!serialized.contains("/private"));
         assert_eq!(registry.take(&selected.file_ref), Some(path));
         assert_eq!(registry.take(&selected.file_ref), None);
+    }
+
+    #[test]
+    fn pair_consumption_is_atomic() {
+        let mut registry = FileRegistry::default();
+        let model = registry.register(
+            PathBuf::from("/private/tmp/model.gguf"),
+            "model.gguf".into(),
+            12,
+        );
+        let manifest = registry.register(
+            PathBuf::from("/private/tmp/manifest.json"),
+            "manifest.json".into(),
+            12,
+        );
+        assert!(registry.take_pair(&model.file_ref, "missing").is_none());
+        assert_eq!(
+            registry.take_pair(&model.file_ref, &manifest.file_ref),
+            Some((
+                PathBuf::from("/private/tmp/model.gguf"),
+                PathBuf::from("/private/tmp/manifest.json")
+            ))
+        );
     }
 }

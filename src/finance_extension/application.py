@@ -110,6 +110,7 @@ from .import_ui import (
     investment_funding_relation_contexts,
     position_reconciliation_context,
 )
+from .local_model import LocalModelService
 from .reconciliation import (
     break_transfer,
     confirm_duplicate,
@@ -153,7 +154,7 @@ from .store import LocalFinanceStore, StoreInvariantError
 from .storage_policy import validate_runtime_path
 from .workspace_lock import inspect_workspace_lock
 
-PRODUCT_VERSION = "1.4.0"
+PRODUCT_VERSION = "1.5.0"
 CONTRACT_VERSION = "1.4.0"
 UI_CONTRACT_VERSION = "1.4.0"
 PROJECTION_VERSIONS: dict[str, str] = {
@@ -295,6 +296,7 @@ COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "DeleteBackup": ("archive_id",),
     "ImportFinanceArchive": ("archive_path",),
     "ExportDiagnostics": ("destination_path", "confirmed"),
+    "RegisterLocalModel": ("model_path", "manifest_path"),
 }
 
 
@@ -315,6 +317,7 @@ class FinanceApplicationService:
         export_directory: str | Path | None = None,
         diagnostic_recorder: LocalDiagnosticRecorder | None = None,
         import_file_resolver: Callable[[str], str | Path] | None = None,
+        local_model_service: LocalModelService | None = None,
     ) -> None:
         self._store = store
         self._network_egress_disabled = network_egress_disabled
@@ -325,6 +328,10 @@ class FinanceApplicationService:
         self._export_directory = export_directory
         self._diagnostic_recorder = diagnostic_recorder
         self._import_file_resolver = import_file_resolver
+        self._local_model_service = local_model_service or LocalModelService(
+            self._store.data_dir.parent / "models"
+        )
+        self._local_model_service.start_async()
 
     def _sequence(self) -> int:
         events = self._store.events()
@@ -416,6 +423,7 @@ class FinanceApplicationService:
             "GetStoreIntegrity": self._store_integrity,
             "GetKeyStatus": self._key_status,
             "GetMigrationStatus": self._migration_status,
+            "GetLocalModelStatus": self._local_model_status,
         }
         if query_name not in queries:
             raise ApplicationContractError("FINANCE_QUERY_UNSUPPORTED")
@@ -439,6 +447,13 @@ class FinanceApplicationService:
         checks["store_integrity"] = integrity["status"]
         if integrity["status"] != "VALID":
             state, error_code = "STORE_CORRUPTED", "FINANCE_STORE_INTEGRITY_FAILED"
+            diagnostic = integrity.get("diagnostic")
+            if isinstance(diagnostic, dict):
+                event_type = diagnostic.get("event_type")
+                sequence = diagnostic.get("event_sequence")
+                schema_path = diagnostic.get("schema_path")
+                if isinstance(event_type, str) and isinstance(sequence, int) and isinstance(schema_path, str):
+                    checks["integrity_diagnostic"] = f"{event_type} · Ereignis #{sequence} · {schema_path}"
         schema_version = self._store.schema_version()
         checks["migration"] = "CURRENT" if schema_version == 3 else "MIGRATION_REQUIRED"
         if schema_version < LocalFinanceStore.CURRENT_SCHEMA_VERSION:
@@ -472,6 +487,7 @@ class FinanceApplicationService:
         )
 
     def _capabilities(self, _: dict[str, Any]) -> dict[str, Any]:
+        local_ai = self._local_model_service.status()
         return self._envelope(
             {
                 "extension_version": __version__,
@@ -510,7 +526,12 @@ class FinanceApplicationService:
                     "receipts": False,
                     "cloud_sync": False,
                     "external_models": False,
+                    "local_ai": local_ai["available"],
+                    "local_ai_import_mapping": local_ai["import_mapping"],
+                    "local_ai_category_suggestions": local_ai["category_suggestions"],
+                    "local_ai_automatic_classification": False,
                 },
+                "local_ai": local_ai,
             }
         )
 
@@ -1208,6 +1229,9 @@ class FinanceApplicationService:
     def _migration_status(self, _: dict[str, Any]) -> dict[str, Any]:
         return self._envelope(migration_status(self._store))
 
+    def _local_model_status(self, _: dict[str, Any]) -> dict[str, Any]:
+        return self._envelope(self._local_model_service.status())
+
     def _execute_command(self, command_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         required = COMMAND_REQUIRED_FIELDS.get(command_name, ())
         if any(field not in payload for field in required):
@@ -1413,6 +1437,14 @@ class FinanceApplicationService:
             result = repair_local_store(self._store)
         elif command_name == "ValidateStoreIntegrity":
             result = validate_store_integrity(self._store)
+        elif command_name == "RegisterLocalModel":
+            result = self._local_model_service.register(
+                payload["model_path"], payload["manifest_path"]
+            )
+        elif command_name == "EnableLocalModel":
+            result = self._local_model_service.enable()
+        elif command_name == "DisableLocalModel":
+            result = self._local_model_service.disable()
         elif command_name == "ExportDiagnostics":
             if self._diagnostic_recorder is None:
                 raise ApplicationContractError("FINANCE_DIAGNOSTICS_DISABLED")
@@ -1442,6 +1474,8 @@ class FinanceApplicationService:
             "RepairLocalStore",
             "ValidateStoreIntegrity",
             "DetectInvestmentFundingRelations",
+            "EnableLocalModel",
+            "DisableLocalModel",
         } else "UnsupportedCommand"
         try:
             result = self._execute_command(command_name, payload)

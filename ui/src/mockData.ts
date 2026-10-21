@@ -293,6 +293,7 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
     GetStoreIntegrity: envelope({ status: "VALID", checked_at: "2026-07-20T21:42:03Z", store_schema_version: 2, event_count: 892, last_event_sequence: 892, import_file_count: 6, storage_encryption: "FERNET_AUTHENTICATED" }),
     GetKeyStatus: envelope({ database_key: { strategy: "KeychainKeyProvider", status: "AVAILABLE", fingerprint: "7f4a8bc2e19dd431" }, archive_key: { strategy: "KeychainKeyProvider", status: "AVAILABLE", fingerprint: "b9a0c14e383fed80", independent_from_store: true } }),
     GetMigrationStatus: envelope({ current_store_schema_version: 3, supported_store_schema_version: 3, status: "CURRENT", history: [{ migration_id: "store_v2_to_v3", from_version: 2, to_version: 3, applied_at: "2026-07-20T21:40:00Z", application_version: "0.9.0" }], downgrade_protection: "ENABLED" }),
+    GetLocalModelStatus: envelope({ status: "DISABLED", available: false, runtime: "llama.cpp", model: null, trust_zone: "PRIVATE_LOCAL", processing_location: "LOCAL_DEVICE", network_egress: "DENY", network_ingress: "DENY", import_mapping: false, category_suggestions: false, automatic_classification: false, error_code: null }),
   };
   return responses[name] ?? envelope(null, "EMPTY");
 }

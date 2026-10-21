@@ -19,6 +19,8 @@ const INITIALIZATION_SCRIPT: &str = r#"
   const core = window.__TAURI__.core;
   const bridge = Object.freeze({
     selectImportFile: () => core.invoke("select_import_file"),
+    selectLocalModelFile: () => core.invoke("select_local_model_file"),
+    selectLocalModelManifest: () => core.invoke("select_local_model_manifest"),
     invoke: (operation, payload) => core.invoke("finance_invoke", { operation, payload }),
     getRuntimeStatus: () => core.invoke("get_runtime_status")
   });
@@ -108,6 +110,81 @@ async fn select_import_file(
 }
 
 #[tauri::command]
+async fn select_local_model_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<Option<SelectedImportFile>, HostError> {
+    select_registered_file(
+        app,
+        state,
+        "Lokales GGUF-Modell auswählen",
+        "GGUF-Modell",
+        &["gguf"],
+        true,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn select_local_model_manifest(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<Option<SelectedImportFile>, HostError> {
+    select_registered_file(
+        app,
+        state,
+        "Modellmanifest auswählen",
+        "JSON-Manifest",
+        &["json"],
+        false,
+    )
+    .await
+}
+
+async fn select_registered_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    title: &str,
+    filter_name: &str,
+    extensions: &[&str],
+    model: bool,
+) -> Result<Option<SelectedImportFile>, HostError> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title(title)
+        .add_filter(filter_name, extensions)
+        .pick_file(move |selected| {
+            let _ = sender.send(selected);
+        });
+    let selected = receiver
+        .await
+        .map_err(|_| HostError::SafeCode("LOCAL_MODEL_FILE_DIALOG_FAILED".into()))?;
+    let Some(FilePath::Path(path)) = selected else {
+        return Ok(None);
+    };
+    let (canonical, size_bytes) = if model {
+        state.path_policy.validate_model(&path)
+    } else {
+        state.path_policy.validate_model_manifest(&path)
+    }
+    .map_err(|error| HostError::SafeCode(error.to_string()))?;
+    let display_name = canonical
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| HostError::SafeCode("LOCAL_MODEL_FILE_INVALID".into()))?
+        .to_owned();
+    Ok(Some(
+        state
+            .files
+            .lock()
+            .map_err(|_| HostError::SafeCode("DESKTOP_STATE_UNAVAILABLE".into()))?
+            .register(canonical, display_name, size_bytes),
+    ))
+}
+
+#[tauri::command]
 fn finance_invoke(
     operation: String,
     mut payload: Value,
@@ -123,6 +200,7 @@ fn finance_invoke(
             .lock()
             .map_err(|_| HostError::SafeCode("DESKTOP_STATE_UNAVAILABLE".into()))?;
         resolve_import_reference(&mut payload, &mut registry)?;
+        resolve_model_references(&mut payload, &mut registry)?;
     }
 
     let response = state
@@ -131,6 +209,41 @@ fn finance_invoke(
         .map_err(|_| HostError::SafeCode("DESKTOP_APPLICATION_PROCESS_UNAVAILABLE".into()))?
         .send(&operation, payload)?;
     Ok(response)
+}
+
+fn resolve_model_references(
+    payload: &mut Value,
+    registry: &mut FileRegistry,
+) -> Result<(), HostError> {
+    if payload.get("name").and_then(Value::as_str) != Some("RegisterLocalModel") {
+        return Ok(());
+    }
+    let body = payload
+        .get_mut("payload")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| HostError::SafeCode("DESKTOP_OPERATION_PAYLOAD_INVALID".into()))?;
+    let model_ref = body
+        .remove("model_file_reference")
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .ok_or_else(|| HostError::SafeCode("LOCAL_MODEL_FILE_REFERENCE_INVALID".into()))?;
+    let manifest_ref = body
+        .remove("manifest_file_reference")
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .ok_or_else(|| HostError::SafeCode("LOCAL_MODEL_FILE_REFERENCE_INVALID".into()))?;
+    let (model_path, manifest_path) = registry
+        .take_pair(&model_ref, &manifest_ref)
+        .ok_or_else(|| HostError::SafeCode("LOCAL_MODEL_FILE_REFERENCE_INVALID".into()))?;
+    body.remove("model_path");
+    body.remove("manifest_path");
+    body.insert(
+        "model_path".into(),
+        Value::String(model_path.to_string_lossy().into_owned()),
+    );
+    body.insert(
+        "manifest_path".into(),
+        Value::String(manifest_path.to_string_lossy().into_owned()),
+    );
+    Ok(())
 }
 
 fn resolve_import_reference(
@@ -257,6 +370,8 @@ pub fn run() {
     {
         builder = builder.invoke_handler(tauri::generate_handler![
             select_import_file,
+            select_local_model_file,
+            select_local_model_manifest,
             finance_invoke,
             get_runtime_status,
             register_test_fixture
@@ -266,6 +381,8 @@ pub fn run() {
     {
         builder = builder.invoke_handler(tauri::generate_handler![
             select_import_file,
+            select_local_model_file,
+            select_local_model_manifest,
             finance_invoke,
             get_runtime_status
         ]);

@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 pub const DEFAULT_MAX_IMPORT_BYTES: u64 = 50 * 1024 * 1024;
+pub const DEFAULT_MAX_MODEL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+pub const MAX_MODEL_MANIFEST_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PathPolicyError {
@@ -44,6 +46,23 @@ impl PathPolicy {
     }
 
     pub fn validate_csv(&self, input: &Path) -> Result<(PathBuf, u64), PathPolicyError> {
+        self.validate_file(input, "csv", self.max_bytes)
+    }
+
+    pub fn validate_model(&self, input: &Path) -> Result<(PathBuf, u64), PathPolicyError> {
+        self.validate_file(input, "gguf", DEFAULT_MAX_MODEL_BYTES)
+    }
+
+    pub fn validate_model_manifest(&self, input: &Path) -> Result<(PathBuf, u64), PathPolicyError> {
+        self.validate_file(input, "json", MAX_MODEL_MANIFEST_BYTES)
+    }
+
+    fn validate_file(
+        &self,
+        input: &Path,
+        expected_extension: &str,
+        max_bytes: u64,
+    ) -> Result<(PathBuf, u64), PathPolicyError> {
         reject_symlink_component(input)?;
         let canonical = input
             .canonicalize()
@@ -55,12 +74,12 @@ impl PathPolicy {
         if canonical
             .extension()
             .and_then(|value| value.to_str())
-            .map(|value| value.eq_ignore_ascii_case("csv"))
+            .map(|value| value.eq_ignore_ascii_case(expected_extension))
             != Some(true)
         {
             return Err(PathPolicyError::NotCsv);
         }
-        if metadata.len() > self.max_bytes {
+        if metadata.len() > max_bytes {
             return Err(PathPolicyError::TooLarge);
         }
         if is_within(&canonical, &self.repository_root) {

@@ -63,6 +63,8 @@ function ipcFor(
   const commands: Array<[string, Record<string, unknown>]> = [];
   const ipc: DesktopFinanceIPC = {
     selectImportFile: vi.fn(async () => ({ file_ref: "file_token_01", display_name: "Juli.csv", size_bytes: 2048 })),
+    selectLocalModelFile: vi.fn(async () => null),
+    selectLocalModelManifest: vi.fn(async () => null),
     getRuntimeStatus: vi.fn(async () => ({
       request_id: "req_runtime", operation: "runtime_status" as const, contract_version: "1.3.0",
       status: "OK" as const, result: { preview: false },

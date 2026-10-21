@@ -59,9 +59,20 @@ class ApplicationServiceTests(unittest.TestCase):
         self.assertTrue(capabilities["forecasting"])
         self.assertTrue(capabilities["wealth"])
         self.assertTrue(capabilities["accounts"])
+        self.assertFalse(capabilities["local_ai"])
+        self.assertFalse(response["data"]["local_ai"]["automatic_classification"])
+        self.assertEqual(response["data"]["local_ai"]["network_egress"], "DENY")
         for hidden in ("tax", "receipts", "cloud_sync", "external_models"):
             self.assertFalse(capabilities[hidden])
         self._validate(response, "capability_manifest.response.schema.json")
+
+    def test_local_model_status_is_non_blocking_and_offline(self) -> None:
+        response = self.application.query("GetLocalModelStatus")
+
+        self.assertEqual(response["data"]["status"], "DISABLED")
+        self.assertFalse(response["data"]["available"])
+        self.assertEqual(response["data"]["runtime"], "llama.cpp")
+        self.assertEqual(response["data"]["processing_location"], "LOCAL_DEVICE")
 
     def test_projection_queries_do_not_append_events(self) -> None:
         before = len(self.store.events())
@@ -278,7 +289,7 @@ class ApplicationServiceTests(unittest.TestCase):
             )
 
         manifest = self.application.query("GetCapabilityManifest")["data"]
-        self.assertEqual(manifest["product_version"], "1.4.0")
+        self.assertEqual(manifest["product_version"], "1.5.0")
         self.assertEqual(manifest["contract_version"], "1.4.0")
         self.assertEqual(manifest["ui_contract_version"], "1.4.0")
         self.assertEqual(manifest["store_schema_version"], 3)

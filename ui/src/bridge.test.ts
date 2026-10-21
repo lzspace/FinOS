@@ -10,6 +10,8 @@ import {
 
 const successfulIpc = (): DesktopFinanceIPC => ({
   selectImportFile: vi.fn(async () => null),
+  selectLocalModelFile: vi.fn(async () => null),
+  selectLocalModelManifest: vi.fn(async () => null),
   getRuntimeStatus: vi.fn(async (): Promise<DesktopResponse> => ({
     request_id: "req_status",
     operation: "runtime_status",

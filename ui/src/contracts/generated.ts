@@ -33,7 +33,29 @@ export interface CapabilityManifest {
   ui_contract_version?: string;
   schema_version: string;
   capabilities: Record<string, boolean>;
+  local_ai?: LocalModelStatus;
   projection_versions?: Record<string, string>;
+}
+
+export interface LocalModelStatus {
+  status: "DISABLED" | "LOADING_MODEL" | "READY" | "AI_UNAVAILABLE";
+  available: boolean;
+  runtime: "llama.cpp";
+  model: {
+    model_id: string;
+    model_version: string;
+    runtime: string;
+    format: string;
+    purposes: string[];
+  } | null;
+  trust_zone: "PRIVATE_LOCAL";
+  processing_location: "LOCAL_DEVICE";
+  network_egress: "DENY";
+  network_ingress: "DENY";
+  import_mapping: boolean;
+  category_suggestions: boolean;
+  automatic_classification: false;
+  error_code: string | null;
 }
 
 export type PeriodMode = "MONTH" | "YEAR" | "CUSTOM_RANGE";
