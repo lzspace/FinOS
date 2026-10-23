@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/ai_import_mapping.response.schema.json",
+  "title": "Local AI import mapping query response 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "state", "projection_sequence", "event_store_sequence", "projection_version", "freshness_status", "generated_at", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "state": { "enum": ["READY", "EMPTY", "STALE", "ERROR"] },
+    "projection_sequence": { "type": "integer", "minimum": 0 },
+    "event_store_sequence": { "type": "integer", "minimum": 0 },
+    "projection_version": { "const": "1.0.0" },
+    "freshness_status": { "enum": ["CURRENT", "STALE", "INVALID"] },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "data": {}
+  }
+}

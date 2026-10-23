@@ -43,7 +43,9 @@ def _compare_schema(old: Any, new: Any, path: str, changes: list[ContractChange]
     if old.get("type") != new.get("type"):
         changes.append(ContractChange("MAJOR", f"{path}/type", "type changed"))
     if "const" in old and old.get("const") != new.get("const"):
-        changes.append(ContractChange("MAJOR", f"{path}/const", "constant changed"))
+        level = "MINOR" if path.endswith("/properties/contract_version") else "MAJOR"
+        reason = "contract version advanced" if level == "MINOR" else "constant changed"
+        changes.append(ContractChange(level, f"{path}/const", reason))
     old_enum = set(old.get("enum", []))
     new_enum = set(new.get("enum", []))
     if old_enum - new_enum:

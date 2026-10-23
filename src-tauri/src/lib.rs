@@ -21,8 +21,9 @@ const INITIALIZATION_SCRIPT: &str = r#"
     selectImportFile: () => core.invoke("select_import_file"),
     selectLocalModelFile: () => core.invoke("select_local_model_file"),
     selectLocalModelManifest: () => core.invoke("select_local_model_manifest"),
-    invoke: (operation, payload) => core.invoke("finance_invoke", { operation, payload }),
-    getRuntimeStatus: () => core.invoke("get_runtime_status")
+    selectLocalAIRuntime: () => core.invoke("select_local_ai_runtime"),
+    invoke: (requestId, operation, payload) => core.invoke("finance_invoke", { requestId, operation, payload }),
+    getRuntimeStatus: (requestId) => core.invoke("get_runtime_status", { requestId })
   });
   Object.defineProperty(window, "__FINANCE_IPC__", {
     value: bridge,
@@ -141,6 +142,43 @@ async fn select_local_model_manifest(
     .await
 }
 
+#[tauri::command]
+async fn select_local_ai_runtime(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<Option<SelectedImportFile>, HostError> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("llama.cpp Runtime auswählen")
+        .pick_file(move |selected| {
+            let _ = sender.send(selected);
+        });
+    let selected = receiver
+        .await
+        .map_err(|_| HostError::SafeCode("LOCAL_AI_RUNTIME_NOT_FOUND".into()))?;
+    let Some(FilePath::Path(path)) = selected else {
+        return Ok(None);
+    };
+    let (canonical, size_bytes) = state
+        .path_policy
+        .validate_runtime(&path)
+        .map_err(|error| HostError::SafeCode(error.to_string()))?;
+    let display_name = canonical
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| HostError::SafeCode("LOCAL_AI_RUNTIME_INCOMPATIBLE".into()))?
+        .to_owned();
+    Ok(Some(
+        state
+            .files
+            .lock()
+            .map_err(|_| HostError::SafeCode("DESKTOP_STATE_UNAVAILABLE".into()))?
+            .register_runtime(canonical, display_name, size_bytes),
+    ))
+}
+
 async fn select_registered_file(
     app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
@@ -186,29 +224,66 @@ async fn select_registered_file(
 
 #[tauri::command]
 fn finance_invoke(
+    request_id: String,
     operation: String,
     mut payload: Value,
     state: tauri::State<'_, DesktopState>,
-) -> Result<ResponseEnvelope, HostError> {
+) -> ResponseEnvelope {
     if operation != "query" && operation != "command" {
-        return Err(HostError::SafeCode("DESKTOP_OPERATION_UNSUPPORTED".into()));
+        return ResponseEnvelope::error(request_id, operation, "DESKTOP_OPERATION_FAILED");
     }
 
     if operation == "command" {
-        let mut registry = state
+        let resolved = state
             .files
             .lock()
-            .map_err(|_| HostError::SafeCode("DESKTOP_STATE_UNAVAILABLE".into()))?;
-        resolve_import_reference(&mut payload, &mut registry)?;
-        resolve_model_references(&mut payload, &mut registry)?;
+            .map_err(|_| HostError::SafeCode("DESKTOP_OPERATION_FAILED".into()))
+            .and_then(|mut registry| {
+                resolve_import_reference(&mut payload, &mut registry)?;
+                resolve_model_references(&mut payload, &mut registry)?;
+                resolve_runtime_reference(&mut payload, &mut registry)
+            });
+        if let Err(error) = resolved {
+            return ResponseEnvelope::error(request_id, operation, &error.to_string());
+        }
     }
 
-    let response = state
-        .application
-        .lock()
-        .map_err(|_| HostError::SafeCode("DESKTOP_APPLICATION_PROCESS_UNAVAILABLE".into()))?
-        .send(&operation, payload)?;
-    Ok(response)
+    let mut application = match state.application.lock() {
+        Ok(application) => application,
+        Err(_) => {
+            return ResponseEnvelope::error(request_id, operation, "DESKTOP_WORKER_UNAVAILABLE")
+        }
+    };
+    match application.send(&request_id, &operation, payload) {
+        Ok(response) => response,
+        Err(error) => ResponseEnvelope::error(request_id, operation, &error.to_string()),
+    }
+}
+
+fn resolve_runtime_reference(
+    payload: &mut Value,
+    registry: &mut FileRegistry,
+) -> Result<(), HostError> {
+    if payload.get("name").and_then(Value::as_str) != Some("RegisterLocalAIRuntime") {
+        return Ok(());
+    }
+    let body = payload
+        .get_mut("payload")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| HostError::SafeCode("DESKTOP_OPERATION_PAYLOAD_INVALID".into()))?;
+    let runtime_ref = body
+        .remove("runtime_file_reference")
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .ok_or_else(|| HostError::SafeCode("LOCAL_AI_RUNTIME_NOT_FOUND".into()))?;
+    let runtime_path = registry
+        .take(&runtime_ref)
+        .ok_or_else(|| HostError::SafeCode("LOCAL_AI_RUNTIME_NOT_FOUND".into()))?;
+    body.remove("runtime_path");
+    body.insert(
+        "runtime_path".into(),
+        Value::String(runtime_path.to_string_lossy().into_owned()),
+    );
+    Ok(())
 }
 
 fn resolve_model_references(
@@ -225,14 +300,14 @@ fn resolve_model_references(
     let model_ref = body
         .remove("model_file_reference")
         .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .ok_or_else(|| HostError::SafeCode("LOCAL_MODEL_FILE_REFERENCE_INVALID".into()))?;
+        .ok_or_else(|| HostError::SafeCode("LOCAL_MODEL_REFERENCE_EXPIRED".into()))?;
     let manifest_ref = body
         .remove("manifest_file_reference")
         .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .ok_or_else(|| HostError::SafeCode("LOCAL_MODEL_FILE_REFERENCE_INVALID".into()))?;
+        .ok_or_else(|| HostError::SafeCode("LOCAL_MODEL_REFERENCE_EXPIRED".into()))?;
     let (model_path, manifest_path) = registry
         .take_pair(&model_ref, &manifest_ref)
-        .ok_or_else(|| HostError::SafeCode("LOCAL_MODEL_FILE_REFERENCE_INVALID".into()))?;
+        .map_err(|_| HostError::SafeCode("LOCAL_MODEL_REFERENCE_EXPIRED".into()))?;
     body.remove("model_path");
     body.remove("manifest_path");
     body.insert(
@@ -253,7 +328,10 @@ fn resolve_import_reference(
     let Some(command) = payload.get("name").and_then(Value::as_str) else {
         return Ok(());
     };
-    if command != "AnalyzeImportFile" && command != "ImportTransactions" {
+    if command != "AnalyzeImportFile"
+        && command != "AnalyzeUnknownImportFormat"
+        && command != "ImportTransactions"
+    {
         return Ok(());
     }
     let body = payload
@@ -277,14 +355,23 @@ fn resolve_import_reference(
 
 #[tauri::command]
 fn get_runtime_status(
+    request_id: String,
     state: tauri::State<'_, DesktopState>,
-) -> Result<ResponseEnvelope, HostError> {
-    state
-        .application
-        .lock()
-        .map_err(|_| HostError::SafeCode("DESKTOP_APPLICATION_PROCESS_UNAVAILABLE".into()))?
-        .send("runtime_status", json!({}))
-        .map_err(Into::into)
+) -> ResponseEnvelope {
+    let mut application = match state.application.lock() {
+        Ok(application) => application,
+        Err(_) => {
+            return ResponseEnvelope::error(
+                request_id,
+                "runtime_status",
+                "DESKTOP_WORKER_UNAVAILABLE",
+            )
+        }
+    };
+    match application.send(&request_id, "runtime_status", json!({})) {
+        Ok(response) => response,
+        Err(error) => ResponseEnvelope::error(request_id, "runtime_status", &error.to_string()),
+    }
 }
 
 #[cfg(feature = "e2e-fixtures")]
@@ -355,6 +442,34 @@ fn configured_worker() -> (PathBuf, Vec<String>) {
     (PathBuf::from("finance-desktop-worker"), Vec::new())
 }
 
+fn configured_runtime(executable_directory: &Path) -> PathBuf {
+    let bundled = bundled_runtime(executable_directory);
+    if bundled.is_file() {
+        return bundled;
+    }
+    if cfg!(debug_assertions) {
+        if let Some(program) = std::env::var_os("FINANCE_LLAMA_CPP_EXECUTABLE") {
+            let configured = PathBuf::from(program);
+            if configured.is_absolute() {
+                return configured;
+            }
+        }
+    }
+    bundled
+}
+
+fn bundled_runtime(executable_directory: &Path) -> PathBuf {
+    let direct = executable_directory.join("llama-cli");
+    if direct.is_file() {
+        return direct;
+    }
+    let resource = executable_directory.join("../Resources/llama.cpp/llama-cli");
+    if resource.is_file() {
+        return resource;
+    }
+    executable_directory.join("../Resources/llama-cli")
+}
+
 fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
     if let Some(override_path) = std::env::var_os("FINANCE_DESKTOP_DATA_DIR") {
         return Ok(PathBuf::from(override_path));
@@ -372,6 +487,7 @@ pub fn run() {
             select_import_file,
             select_local_model_file,
             select_local_model_manifest,
+            select_local_ai_runtime,
             finance_invoke,
             get_runtime_status,
             register_test_fixture
@@ -383,6 +499,7 @@ pub fn run() {
             select_import_file,
             select_local_model_file,
             select_local_model_manifest,
+            select_local_ai_runtime,
             finance_invoke,
             get_runtime_status
         ]);
@@ -396,9 +513,16 @@ pub fn run() {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(DEFAULT_MAX_IMPORT_BYTES);
             let (worker, mut worker_args) = configured_worker();
+            let executable_directory = std::env::current_exe()?
+                .parent()
+                .ok_or("desktop executable directory missing")?
+                .to_path_buf();
+            let runtime = configured_runtime(&executable_directory);
             worker_args.extend([
                 "--data-dir".into(),
                 store_root.to_string_lossy().into_owned(),
+                "--llama-cpp-executable".into(),
+                runtime.to_string_lossy().into_owned(),
             ]);
             if cfg!(feature = "e2e-fixtures")
                 && std::env::var("FINANCE_DESKTOP_E2E").as_deref() == Ok("1")
@@ -466,5 +590,112 @@ mod tests {
                 .to_string(),
             "FINANCE_IMPORT_FILE_REFERENCE_INVALID"
         );
+    }
+
+    #[test]
+    fn resolves_unknown_format_reference_inside_host() {
+        let mut registry = FileRegistry::default();
+        let selected = registry.register(
+            PathBuf::from("/private/tmp/unknown.csv"),
+            "unknown.csv".into(),
+            24,
+        );
+        let mut payload = json!({
+            "name": "AnalyzeUnknownImportFormat",
+            "payload": {
+                "source_file_reference": selected.file_ref,
+                "bank_identifier": "example-bank"
+            }
+        });
+
+        resolve_import_reference(&mut payload, &mut registry).unwrap();
+
+        assert_eq!(
+            payload["payload"]["source_file_path"],
+            Value::String("/private/tmp/unknown.csv".into())
+        );
+        assert!(payload["payload"].get("source_file_reference").is_none());
+    }
+
+    #[test]
+    fn model_references_remain_valid_together_and_expire_with_stable_code() {
+        let mut registry = FileRegistry::default();
+        let model = registry.register(
+            PathBuf::from("/private/tmp/model.gguf"),
+            "model.gguf".into(),
+            12,
+        );
+        let manifest = registry.register(
+            PathBuf::from("/private/tmp/model.json"),
+            "model.json".into(),
+            12,
+        );
+        let mut payload = json!({"name": "RegisterLocalModel", "payload": {
+            "model_file_reference": model.file_ref,
+            "manifest_file_reference": manifest.file_ref,
+        }});
+        resolve_model_references(&mut payload, &mut registry).unwrap();
+        assert_eq!(payload["payload"]["model_path"], "/private/tmp/model.gguf");
+        assert_eq!(
+            payload["payload"]["manifest_path"],
+            "/private/tmp/model.json"
+        );
+
+        let mut replay = json!({"name": "RegisterLocalModel", "payload": {
+            "model_file_reference": model.file_ref,
+            "manifest_file_reference": manifest.file_ref,
+        }});
+        assert_eq!(
+            resolve_model_references(&mut replay, &mut registry)
+                .unwrap_err()
+                .to_string(),
+            "LOCAL_MODEL_REFERENCE_EXPIRED"
+        );
+    }
+
+    #[test]
+    fn bundled_runtime_resolution_never_uses_shell_path() {
+        let executable_directory = Path::new("/Applications/Agent OS Finance.app/Contents/MacOS");
+        assert_eq!(
+            bundled_runtime(executable_directory),
+            PathBuf::from(
+                "/Applications/Agent OS Finance.app/Contents/MacOS/../Resources/llama-cli"
+            )
+        );
+    }
+
+    #[test]
+    fn runtime_reference_is_resolved_only_for_registration() {
+        let mut registry = FileRegistry::default();
+        let selected = registry.register_runtime(
+            PathBuf::from("/private/tmp/llama-cli"),
+            "llama-cli".into(),
+            12,
+        );
+        let mut payload = json!({"name": "RegisterLocalAIRuntime", "payload": {
+            "runtime_file_reference": selected.file_ref,
+            "runtime_path": "/untrusted/frontend/path"
+        }});
+        resolve_runtime_reference(&mut payload, &mut registry).unwrap();
+        assert_eq!(payload["payload"]["runtime_path"], "/private/tmp/llama-cli");
+        assert!(payload["payload"].get("runtime_file_reference").is_none());
+
+        let mut replay = json!({"name": "RegisterLocalAIRuntime", "payload": {
+            "runtime_file_reference": selected.file_ref
+        }});
+        assert_eq!(
+            resolve_runtime_reference(&mut replay, &mut registry)
+                .unwrap_err()
+                .to_string(),
+            "LOCAL_AI_RUNTIME_NOT_FOUND"
+        );
+    }
+
+    #[test]
+    fn existing_bundled_runtime_is_preferred() {
+        let root = tempfile::tempdir().unwrap();
+        let bundled = root.path().join("llama-cli");
+        std::fs::write(&bundled, b"bundled").unwrap();
+        assert_eq!(configured_runtime(root.path()), bundled);
     }
 }

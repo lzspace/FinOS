@@ -1,4 +1,4 @@
-"""Wheel-contained end-to-end acceptance scenario for the 1.2.0 release."""
+"""Wheel-contained end-to-end acceptance scenario for the 1.5.0 release."""
 
 from __future__ import annotations
 
@@ -222,7 +222,7 @@ def run_acceptance(
     require_installed_wheel: bool = False,
     wheel_sha256: str | None = None,
 ) -> dict[str, Any]:
-    if __version__ != "1.2.0":
+    if __version__ != "1.5.0":
         raise AssertionError("FINANCE_ACCEPTANCE_VERSION_MISMATCH")
     source_kind = "INSTALLED_WHEEL" if "site-packages" in Path(__file__).parts else "SOURCE_TREE"
     if require_installed_wheel and source_kind != "INSTALLED_WHEEL":

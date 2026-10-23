@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
 from .accounts import accounts
+from .classification import active_classifications
 from .multi_account_import import (
     analyses,
     closing_balances,
@@ -45,6 +47,31 @@ def import_history(store: LocalFinanceStore) -> list[dict[str, Any]]:
         event["aggregate_id"]: event["occurred_at"]
         for event in store.events("ImportFileAnalyzed")
     }
+    completed_at: dict[str, str] = {}
+    for event in store.events("ImportSectionCompleted"):
+        export_id = event["payload"].get("export_id")
+        if export_id:
+            completed_at[str(export_id)] = event["occurred_at"]
+    account_names = {
+        account_id: value["display_name"]
+        for account_id, value in accounts(store).items()
+    }
+    balance_reviews = list(imported_period_reconciliations(store).values())
+    position_reviews = list(imported_security_position_reconciliations(store).values())
+    relation_reviews = investment_funding_relation_contexts(store)
+    classifications = active_classifications(store)
+    unclassified_by_export: dict[str, int] = {}
+    for event in store.events("TransactionNormalized"):
+        payload = event["payload"]
+        export_id = payload.get("export_id")
+        classification = classifications.get(payload["transaction_id"])
+        if export_id and (
+            not classification
+            or classification["event_type"] != "TransactionClassificationConfirmed"
+        ):
+            unclassified_by_export[str(export_id)] = (
+                unclassified_by_export.get(str(export_id), 0) + 1
+            )
     rows: list[dict[str, Any]] = []
     for export_id in reversed(list(analyses(store))):
         analysis = get_import_analysis(store, export_id)
@@ -55,14 +82,43 @@ def import_history(store: LocalFinanceStore) -> list[dict[str, Any]]:
             section["import_status"] in SUCCESSFUL_SECTION_STATUSES
             for section in sections
         )
+        mapped_accounts = sorted(
+            {
+                str(section["mapped_account_id"])
+                for section in sections
+                if section.get("mapped_account_id")
+            }
+        )
+        open_review_count = sum(
+            item.get("export_id") == export_id and item.get("status") != "MATCHED"
+            for item in balance_reviews
+        ) + sum(
+            item.get("export_id") == export_id and item.get("status") != "MATCHED"
+            for item in position_reviews
+        ) + sum(
+            item.get("export_id") == export_id and item.get("status") == "PROPOSED"
+            for item in relation_reviews
+        ) + unclassified_by_export.get(export_id, 0)
         rows.append(
             {
                 "export_id": export_id,
                 "bank_identifier": analysis["bank_identifier"],
                 "report_month": analysis["report_month"],
                 "imported_at": analyzed_at[export_id],
+                "completed_at": completed_at.get(export_id),
+                "period_start": analysis["period_start"],
+                "period_end": analysis["period_end"],
                 "section_count": len(sections),
                 "completed_section_count": completed,
+                "record_count": sum(
+                    int(section.get("record_count", 0)) for section in sections
+                ),
+                "account_count": len(mapped_accounts),
+                "account_names": [
+                    account_names.get(account_id, account_id)
+                    for account_id in mapped_accounts
+                ],
+                "open_review_count": open_review_count,
                 "status": analysis["status"],
                 "import_profile": analysis["import_profile"],
                 "profile_version": analysis["profile_version"],
@@ -222,6 +278,89 @@ def import_history_detail(
     wizard = import_wizard_state(store, export_id)
     if not wizard:
         return None
+    execution = wizard.get("execution_result") or import_execution_result(store, export_id)
+    execution = execution or {
+        "section_results": [], "relations": [], "balance_reconciliations": [],
+        "position_reconciliations": [], "import_batch_ids": [],
+    }
+    batch_ids = set(execution.get("import_batch_ids", []))
+    account_names = {
+        account_id: value["display_name"]
+        for account_id, value in accounts(store).items()
+    }
+    classifications = active_classifications(store)
+    transactions = []
+    for event in store.events("TransactionNormalized"):
+        payload = event["payload"]
+        if (
+            payload.get("export_id") != export_id
+            and payload.get("import_batch_id") not in batch_ids
+        ):
+            continue
+        classification = classifications.get(payload["transaction_id"])
+        category_code = "UNCLASSIFIED"
+        classification_status = "UNCLASSIFIED"
+        if classification:
+            classification_status = str(classification["payload"].get("status", "UNCLASSIFIED"))
+            if classification["event_type"] == "TransactionClassificationConfirmed":
+                category_code = str(
+                    classification["payload"].get("category_code", "UNCLASSIFIED")
+                )
+        transactions.append({
+            "transaction_id": payload["transaction_id"],
+            "section_id": payload.get("section_id"),
+            "account_id": payload["account_id"],
+            "account_name": account_names.get(payload["account_id"], payload["account_id"]),
+            "booking_date": payload["booking_date"],
+            "value_date": payload.get("value_date"),
+            "counterparty": payload.get("counterparty", ""),
+            "description": payload.get("normalized_description", ""),
+            "amount": payload["amount"],
+            "currency": payload["currency"],
+            "direction": payload["direction"],
+            "transaction_type": payload.get("transaction_type"),
+            "category_code": category_code,
+            "classification_status": classification_status,
+        })
+    transactions.sort(
+        key=lambda item: (item["booking_date"], item["transaction_id"]),
+        reverse=True,
+    )
+    securities = []
+    for payload in security_transactions(store).values():
+        if payload.get("import_batch_id") not in batch_ids:
+            continue
+        securities.append({
+            **payload,
+            "account_name": account_names.get(payload["account_id"], payload["account_id"]),
+        })
+    securities.sort(
+        key=lambda item: (item.get("trade_date", ""), item["transaction_id"]),
+        reverse=True,
+    )
+    open_balance = [
+        item
+        for item in execution.get("balance_reconciliations", [])
+        if item.get("status") != "MATCHED"
+    ]
+    open_positions = [
+        item
+        for item in execution.get("position_reconciliations", [])
+        if item.get("status") != "MATCHED"
+    ]
+    open_relations = [
+        item
+        for item in execution.get("relations", [])
+        if item.get("status") == "PROPOSED"
+    ]
+    unclassified = sum(item["category_code"] == "UNCLASSIFIED" for item in transactions)
+    review_summary = {
+        "unclassified_transaction_count": unclassified,
+        "open_relation_count": len(open_relations),
+        "balance_review_count": len(open_balance),
+        "position_review_count": len(open_positions),
+        "total_open_count": unclassified + len(open_relations) + len(open_balance) + len(open_positions),
+    }
     audit_types = {
         "ImportFileAnalyzed",
         "ImportSectionMapped",
@@ -248,6 +387,18 @@ def import_history_detail(
         for section in wizard["analysis"]["sections"]
         if section.get("mapped_account_id")
     }
+    period_start = date.fromisoformat(wizard["analysis"]["period_start"])
+    period_end = date.fromisoformat(wizard["analysis"]["period_end"])
+    opening_date = (period_start - timedelta(days=1)).isoformat()
+
+    def account_event_in_period(payload: dict[str, Any]) -> bool:
+        if payload.get("account_id") not in related_accounts:
+            return False
+        event_date = payload.get("balance_date") or payload.get("valuation_date")
+        if not isinstance(event_date, str):
+            return False
+        return opening_date <= event_date <= period_end.isoformat()
+
     audit = []
     for event in store.events():
         payload = event["payload"]
@@ -255,10 +406,11 @@ def import_history_detail(
             continue
         if not (
             event["aggregate_id"] == export_id
+            or event["aggregate_id"] in batch_ids
             or payload.get("export_id") == export_id
             or payload.get("analysis_id") == export_id
             or payload.get("section_id") in related_section_ids
-            or payload.get("account_id") in related_accounts
+            or account_event_in_period(payload)
         ):
             continue
         audit.append(
@@ -278,6 +430,10 @@ def import_history_detail(
         )
     return {
         **wizard,
+        "execution_result": execution,
+        "transactions": transactions,
+        "security_transactions": securities,
+        "review_summary": review_summary,
         "section_previews": [
             get_import_section_preview(store, export_id, section["section_id"])
             for section in wizard["analysis"]["sections"]

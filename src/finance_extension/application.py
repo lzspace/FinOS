@@ -38,13 +38,13 @@ from .account_workspace import (
     account_balance_ledger,
     account_imports,
     account_overview_for_period,
+    account_open_reviews,
     account_period_summary,
     account_positions,
     account_position_history,
     account_reconciliations_for_period,
     account_review_counts,
     account_transactions_for_period,
-    derive_overview_status,
 )
 from .classification import (
     active_classifications,
@@ -54,7 +54,31 @@ from .classification import (
     create_rule,
     reject_classification,
 )
-from .categories import CATEGORY_CODES
+from .category_shadow import (
+    cancel_category_evaluation_run,
+    category_evaluation_summary,
+    category_shadow_status,
+    category_suggestion_review_summary,
+    confirm_category_suggestion,
+    correct_category_suggestion,
+    create_classification_rule_from_suggestion,
+    disable_category_shadow_mode,
+    enable_category_shadow_mode,
+    evaluate_category_suggestions,
+    generate_visible_category_suggestions,
+    get_category_evaluation_run,
+    get_category_suggestion_detail,
+    get_transaction_category_suggestion,
+    list_category_suggestions,
+    list_classification_rules_with_origin,
+    list_category_evaluation_runs,
+    pause_category_evaluation_run,
+    preview_category_evaluation_run,
+    resume_category_evaluation_run,
+    reject_category_suggestion,
+    start_category_evaluation_run,
+)
+from .categories import categories, create_category, rename_category, set_category_archived
 from .crypto import KeyProvider, KeychainKeyProvider
 from .diagnostics import LocalDiagnosticRecorder
 from .forecasting import (
@@ -72,6 +96,17 @@ from .forecasting import (
     update_recurring_pattern,
 )
 from .importer import import_csv, normalize_batch
+from .ai_import_mapping import (
+    analyze_unknown_import_format,
+    confirm_import_mapping,
+    get_import_format_status,
+    get_import_mapping_proposal,
+    get_import_profile,
+    get_import_profile_history,
+    list_import_profiles,
+    reject_import_mapping,
+    validate_mapping_for_proposal,
+)
 from .multi_account_import import (
     analyze_import_file,
     break_investment_funding_relation,
@@ -128,6 +163,7 @@ from .reconciliation import (
     reject_transfer,
     relation_review,
 )
+from .review_inbox import review_inbox
 from .recovery import (
     create_backup,
     delete_backup,
@@ -155,8 +191,8 @@ from .storage_policy import validate_runtime_path
 from .workspace_lock import inspect_workspace_lock
 
 PRODUCT_VERSION = "1.5.0"
-CONTRACT_VERSION = "1.4.0"
-UI_CONTRACT_VERSION = "1.4.0"
+CONTRACT_VERSION = "1.5.0"
+UI_CONTRACT_VERSION = "1.5.0"
 PROJECTION_VERSIONS: dict[str, str] = {
     "account_overview": "1.0.0",
     "account_detail": "1.0.0",
@@ -170,6 +206,12 @@ PROJECTION_VERSIONS: dict[str, str] = {
     "account_audit_trail": "1.0.0",
     "available_periods": "1.0.0",
     "financial_time_series": "1.0.0",
+    "import_format_status": "1.0.0",
+    "import_mapping_proposal": "1.0.0",
+    "import_profiles": "1.0.0",
+    "category_model_evaluation": "1.0.0",
+    "category_suggestion_review": "1.0.0",
+    "review_inbox": "1.0.0",
 }
 
 
@@ -180,6 +222,10 @@ class ApplicationContractError(ValueError):
 COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "ImportTransactions": ("source_file_path", "account_id"),
     "AnalyzeImportFile": ("requested_profile",),
+    "AnalyzeUnknownImportFormat": ("bank_identifier",),
+    "ValidateImportMapping": ("proposal_id", "mapping"),
+    "ConfirmImportMapping": ("proposal_id", "final_mapping", "validation_result_id"),
+    "RejectImportMapping": ("proposal_id",),
     "MapImportSections": ("analysis_id", "section_mappings"),
     "ImportMappedSections": (
         "analysis_id",
@@ -245,6 +291,10 @@ COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "ConfirmClassification": ("transaction_id", "category_code"),
     "RejectClassification": ("transaction_id",),
     "CreateClassificationRule": ("field", "operator", "value", "category_code", "priority"),
+    "CreateCategory": ("display_name", "category_type"),
+    "RenameCategory": ("category_code", "display_name"),
+    "ArchiveCategory": ("category_code",),
+    "RestoreCategory": ("category_code",),
     "ConfirmDuplicate": ("relation_id",),
     "RejectDuplicate": ("relation_id",),
     "ConfirmTransfer": ("outgoing_id", "incoming_id"),
@@ -296,7 +346,15 @@ COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "DeleteBackup": ("archive_id",),
     "ImportFinanceArchive": ("archive_path",),
     "ExportDiagnostics": ("destination_path", "confirmed"),
+    "RegisterLocalAIRuntime": ("runtime_path",),
     "RegisterLocalModel": ("model_path", "manifest_path"),
+    "PauseCategoryEvaluationRun": ("run_id",),
+    "ResumeCategoryEvaluationRun": ("run_id",),
+    "CancelCategoryEvaluationRun": ("run_id",),
+    "ConfirmCategorySuggestion": ("suggestion_id",),
+    "CorrectCategorySuggestion": ("suggestion_id", "selected_category"),
+    "RejectCategorySuggestion": ("suggestion_id",),
+    "CreateClassificationRuleFromSuggestion": ("suggestion_id",),
 }
 
 
@@ -360,7 +418,14 @@ class FinanceApplicationService:
             "data": data,
         }
 
-    def query(self, query_name: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    def query(
+        self,
+        query_name: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        del request_id  # Correlation context; deliberately excluded from domain payloads/events.
         payload = payload or {}
         queries: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "GetCapabilityManifest": self._capabilities,
@@ -390,6 +455,7 @@ class FinanceApplicationService:
             "GetAssetAllocation": self._asset_allocation,
             "GetProjectedMonthEndBalance": self._projected_balance,
             "ListAccountReviews": self._account_reviews,
+            "GetReviewInbox": self._review_inbox,
             "GetCategoryBreakdown": self._category_breakdown,
             "ListCategories": self._categories,
             "ListClassificationReviews": self._classification_reviews,
@@ -424,6 +490,26 @@ class FinanceApplicationService:
             "GetKeyStatus": self._key_status,
             "GetMigrationStatus": self._migration_status,
             "GetLocalModelStatus": self._local_model_status,
+            "GetImportFormatStatus": self._import_format_status,
+            "GetImportMappingProposal": self._import_mapping_proposal,
+            "GetImportMappingValidation": self._import_mapping_validation,
+            "ListImportProfiles": self._import_profiles,
+            "GetImportProfile": self._import_profile,
+            "GetImportProfileHistory": self._import_profile_history,
+            "GetFormatChangeDetails": self._format_change_details,
+            "GetCategoryShadowStatus": self._category_shadow_status,
+            "PreviewCategoryEvaluationRun": self._category_evaluation_preview,
+            "GetCategoryEvaluationSummary": self._category_evaluation_summary,
+            "GetCategoryEvaluationByCategory": self._category_evaluation_by_category,
+            "GetCategoryEvaluationThresholds": self._category_evaluation_thresholds,
+            "GetCategoryEvaluationRun": self._category_evaluation_run,
+            "ListCategoryEvaluationRuns": self._category_evaluation_runs,
+            "GetCategorySuggestionDetail": self._category_suggestion_detail,
+            "GetCategorySuggestion": self._category_suggestion_detail,
+            "GetTransactionCategorySuggestion": self._transaction_category_suggestion,
+            "ListPendingCategorySuggestions": self._pending_category_suggestions,
+            "GetCategorySuggestionReviewSummary": self._category_suggestion_review_summary,
+            "ListClassificationRules": self._classification_rules,
         }
         if query_name not in queries:
             raise ApplicationContractError("FINANCE_QUERY_UNSUPPORTED")
@@ -508,6 +594,7 @@ class FinanceApplicationService:
                     "security_transactions": True,
                     "classification": True,
                     "reconciliation": True,
+                    "review_inbox": True,
                     "recurring_patterns": True,
                     "forecasting": True,
                     "forecast_evaluation": True,
@@ -528,7 +615,13 @@ class FinanceApplicationService:
                     "external_models": False,
                     "local_ai": local_ai["available"],
                     "local_ai_import_mapping": local_ai["import_mapping"],
+                    "ai_import_mapping": True,
+                    "import_format_fingerprints": True,
+                    "user_import_profiles": True,
                     "local_ai_category_suggestions": local_ai["category_suggestions"],
+                    "local_ai_category_suggestion_review": True,
+                    "local_ai_category_shadow_mode": True,
+                    "local_ai_category_evaluation_replay": True,
                     "local_ai_automatic_classification": False,
                 },
                 "local_ai": local_ai,
@@ -595,24 +688,7 @@ class FinanceApplicationService:
         liquidity = liquidity_overview(self._store)
         worth = net_worth_overview(self._store)
         projected = projected_month_end_balance(self._store, month)
-        reviews = (
-            len(classification_review(self._store))
-            + sum(
-                len(relation_review(self._store, kind))
-                for kind in ("duplicates", "transfers", "refunds")
-            )
-            + sum(
-                1
-                for item in recurring_patterns(self._store).values()
-                if item["status"] == "PROPOSED"
-            )
-            + sum(
-                1
-                for item in expected_transactions(self._store).values()
-                if item["status"] == "MISSED"
-            )
-            + len(account_reviews(self._store))
-        )
+        reviews = review_inbox(self._store)["total_open"]
         income = cashflow["effective_income"]
         savings_rate = (
             (cashflow["net_cashflow"] / income * 100).quantize(Decimal("0.01"))
@@ -807,7 +883,9 @@ class FinanceApplicationService:
         row = next(
             (
                 item
-                for item in account_overview(self._store, period["end_date"])
+                for item in account_overview_for_period(
+                    self._store, period, include_closed=True
+                )
                 if item["account_id"] == account_id
             ),
             None,
@@ -817,16 +895,17 @@ class FinanceApplicationService:
         summary = account_period_summary(self._store, account_id, period)
         data = {
             "account": row,
-            "overview_status": derive_overview_status(row),
+            "overview_status": row["overview_status"],
             "period": period,
             "period_summary": summary,
             "balance_history": account_balance_ledger(self._store, account_id, period),
             "reconciliation": balance_reconciliations(self._store).get(account_id),
             "open_review_count": account_review_counts(self._store).get(account_id, 0),
+            "open_reviews": account_open_reviews(self._store, account_id),
         }
         return self._envelope(
             data,
-            status="STALE" if row["freshness"] == "STALE" else "READY",
+            status="STALE" if row["data_freshness"] == "STALE" else "READY",
             projection_version=PROJECTION_VERSIONS["account_detail"],
         )
 
@@ -945,6 +1024,14 @@ class FinanceApplicationService:
         rows = account_reviews(self._store, payload.get("as_of"))
         return self._envelope({"reviews": rows}, status="EMPTY" if not rows else "READY")
 
+    def _review_inbox(self, _: dict[str, Any]) -> dict[str, Any]:
+        data = review_inbox(self._store)
+        return self._envelope(
+            data,
+            status="EMPTY" if data["total_open"] == 0 else "READY",
+            projection_version=PROJECTION_VERSIONS["review_inbox"],
+        )
+
     def _category_breakdown(self, payload: dict[str, Any]) -> dict[str, Any]:
         month = _require_month(payload)
         result = reconciled_category_breakdown(self._store, month)
@@ -954,18 +1041,7 @@ class FinanceApplicationService:
         return self._envelope(result, status="EMPTY" if not result["categories"] else "READY")
 
     def _categories(self, _: dict[str, Any]) -> dict[str, Any]:
-        custom = {
-            str(event["payload"].get("category_code", ""))
-            for event in self._store.events()
-            if event["event_type"]
-            in {
-                "TransactionClassificationConfirmed",
-                "ClassificationRuleCreated",
-            }
-            and str(event["payload"].get("category_code", "")).startswith("CUSTOM_")
-        }
-        codes = [*CATEGORY_CODES, *sorted(custom)]
-        return self._envelope({"categories": [{"category_code": code} for code in codes]})
+        return self._envelope({"categories": categories(self._store)})
 
     def _classification_reviews(self, _: dict[str, Any]) -> dict[str, Any]:
         rows = classification_review(self._store)
@@ -1232,6 +1308,146 @@ class FinanceApplicationService:
     def _local_model_status(self, _: dict[str, Any]) -> dict[str, Any]:
         return self._envelope(self._local_model_service.status())
 
+    def _import_format_status(self, payload: dict[str, Any]) -> dict[str, Any]:
+        analysis_id = _require_identifier(payload, "analysis_id")
+        row = get_import_format_status(self._store, analysis_id)
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
+    def _import_mapping_proposal(self, payload: dict[str, Any]) -> dict[str, Any]:
+        proposal_id = _require_identifier(payload, "proposal_id")
+        row = get_import_mapping_proposal(self._store, proposal_id)
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
+    def _import_mapping_validation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        proposal_id = _require_identifier(payload, "proposal_id")
+        row = next(
+            (
+                event["payload"]
+                for event in reversed(self._store.events("ImportMappingValidationCompleted"))
+                if event["aggregate_id"] == proposal_id
+            ),
+            None,
+        )
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
+    def _import_profiles(self, _: dict[str, Any]) -> dict[str, Any]:
+        rows = list_import_profiles(self._store)
+        return self._envelope(
+            {"profiles": rows}, status="READY" if rows else "EMPTY"
+        )
+
+    def _import_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        profile_id = _require_identifier(payload, "profile_id")
+        row = get_import_profile(self._store, profile_id)
+        return self._envelope(row, status="READY" if row else "EMPTY")
+
+    def _import_profile_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        profile_id = _require_identifier(payload, "profile_id")
+        rows = get_import_profile_history(self._store, profile_id)
+        return self._envelope(
+            {"profile_id": profile_id, "events": rows},
+            status="READY" if rows else "EMPTY",
+        )
+
+    def _format_change_details(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._import_format_status(payload)
+
+    def _category_shadow_status(self, _: dict[str, Any]) -> dict[str, Any]:
+        data = category_shadow_status(self._store)
+        data["local_model"] = self._local_model_service.status()
+        return self._envelope(data, projection_version="1.0.0")
+
+    def _category_evaluation_preview(self, _: dict[str, Any]) -> dict[str, Any]:
+        return self._envelope(preview_category_evaluation_run(self._store))
+
+    def _category_evaluation_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        filters = {
+            key: str(payload[key])
+            for key in ("model_id", "model_version", "policy_version", "taxonomy_version")
+            if payload.get(key)
+        }
+        return self._envelope(
+            category_evaluation_summary(self._store, filters),
+            projection_version="1.0.0",
+        )
+
+    def _category_evaluation_by_category(self, payload: dict[str, Any]) -> dict[str, Any]:
+        summary = self._category_evaluation_summary(payload)
+        summary["data"] = {
+            "categories": summary["data"]["categories"],
+            "minimum_sample": summary["data"]["minimum_sample"],
+            "filters": summary["data"]["filters"],
+        }
+        return summary
+
+    def _category_evaluation_thresholds(self, payload: dict[str, Any]) -> dict[str, Any]:
+        summary = self._category_evaluation_summary(payload)
+        summary["data"] = {
+            "thresholds": summary["data"]["thresholds"],
+            "confidence_kind": summary["data"]["confidence_kind"],
+            "minimum_sample": summary["data"]["minimum_sample"],
+            "filters": summary["data"]["filters"],
+        }
+        return summary
+
+    def _category_evaluation_run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        run_id = _require_identifier(payload, "run_id")
+        return self._envelope(get_category_evaluation_run(self._store, run_id))
+
+    def _category_evaluation_runs(self, _: dict[str, Any]) -> dict[str, Any]:
+        return self._envelope({"runs": list_category_evaluation_runs(self._store)})
+
+    def _category_suggestion_detail(self, payload: dict[str, Any]) -> dict[str, Any]:
+        suggestion_id = _require_identifier(payload, "suggestion_id")
+        data = get_category_suggestion_detail(self._store, suggestion_id)
+        return self._envelope(
+            data,
+            status="READY" if data else "EMPTY",
+            projection_version=PROJECTION_VERSIONS["category_suggestion_review"],
+        )
+
+    def _transaction_category_suggestion(self, payload: dict[str, Any]) -> dict[str, Any]:
+        transaction_id = _require_identifier(payload, "transaction_id")
+        data = get_transaction_category_suggestion(self._store, transaction_id)
+        return self._envelope(
+            data,
+            status="READY" if data else "EMPTY",
+            projection_version=PROJECTION_VERSIONS["category_suggestion_review"],
+        )
+
+    def _pending_category_suggestions(self, payload: dict[str, Any]) -> dict[str, Any]:
+        filters = {
+            key: payload[key]
+            for key in (
+                "account_id",
+                "period",
+                "category_code",
+                "confidence_min",
+                "confidence_max",
+                "status",
+            )
+            if payload.get(key) is not None
+        }
+        filters.setdefault("status", "PENDING")
+        rows = list_category_suggestions(self._store, filters)
+        return self._envelope(
+            {"suggestions": rows},
+            status="READY" if rows else "EMPTY",
+            projection_version=PROJECTION_VERSIONS["category_suggestion_review"],
+        )
+
+    def _category_suggestion_review_summary(self, _: dict[str, Any]) -> dict[str, Any]:
+        return self._envelope(
+            category_suggestion_review_summary(self._store),
+            projection_version=PROJECTION_VERSIONS["category_suggestion_review"],
+        )
+
+    def _classification_rules(self, _: dict[str, Any]) -> dict[str, Any]:
+        rows = list_classification_rules_with_origin(self._store)
+        return self._envelope(
+            {"rules": rows}, status="READY" if rows else "EMPTY"
+        )
+
     def _execute_command(self, command_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         required = COMMAND_REQUIRED_FIELDS.get(command_name, ())
         if any(field not in payload for field in required):
@@ -1255,6 +1471,40 @@ class FinanceApplicationService:
                 source_path,
                 payload["requested_profile"],
                 payload.get("confirmed_bank_identifier"),
+            )
+        elif command_name == "AnalyzeUnknownImportFormat":
+            source_path = payload.get("source_file_path")
+            source_reference = payload.get("source_file_reference")
+            if source_path is None and source_reference and self._import_file_resolver:
+                source_path = self._import_file_resolver(source_reference)
+            if source_path is None:
+                raise ApplicationContractError("FINANCE_IMPORT_FILE_REFERENCE_INVALID")
+            result = analyze_unknown_import_format(
+                self._store,
+                self._local_model_service,
+                source_path,
+                bank_identifier=payload["bank_identifier"],
+                regenerate=bool(payload.get("regenerate", False)),
+            )
+        elif command_name == "ValidateImportMapping":
+            result = validate_mapping_for_proposal(
+                self._store,
+                payload["proposal_id"],
+                payload["mapping"],
+                persist=True,
+            )
+        elif command_name == "ConfirmImportMapping":
+            result = confirm_import_mapping(
+                self._store,
+                payload["proposal_id"],
+                payload["final_mapping"],
+                validation_result_id=payload["validation_result_id"],
+                confirmation_comment=payload.get("confirmation_comment"),
+                compatibility_rules=payload.get("compatibility_rules"),
+            )
+        elif command_name == "RejectImportMapping":
+            result = reject_import_mapping(
+                self._store, payload["proposal_id"], payload.get("reason")
             )
         elif command_name == "MapImportSections":
             result = map_import_sections(
@@ -1304,14 +1554,34 @@ class FinanceApplicationService:
             )
         elif command_name == "ClassifyTransactions":
             result = classify_transactions(self._store, payload.get("month"))
+            try:
+                generate_visible_category_suggestions(
+                    self._store, self._local_model_service
+                )
+            except Exception:
+                # Shadow inference is never a Finance-Core availability boundary.
+                pass
         elif command_name == "ConfirmClassification":
             result = confirm_classification(
                 self._store, payload["transaction_id"], payload["category_code"]
             )
+            try:
+                evaluate_category_suggestions(self._store, payload["transaction_id"])
+            except Exception:
+                # A failed evaluation must not roll back the user classification.
+                pass
         elif command_name == "RejectClassification":
             result = reject_classification(self._store, payload["transaction_id"])
         elif command_name == "CreateClassificationRule":
             result = create_rule(self._store, **payload)
+        elif command_name == "CreateCategory":
+            result = create_category(self._store, **payload)
+        elif command_name == "RenameCategory":
+            result = rename_category(self._store, payload["category_code"], payload["display_name"])
+        elif command_name == "ArchiveCategory":
+            result = set_category_archived(self._store, payload["category_code"], True)
+        elif command_name == "RestoreCategory":
+            result = set_category_archived(self._store, payload["category_code"], False)
         elif command_name == "Reconcile":
             result = reconcile(self._store, payload.get("month"))
         elif command_name == "DetectDuplicates":
@@ -1437,6 +1707,8 @@ class FinanceApplicationService:
             result = repair_local_store(self._store)
         elif command_name == "ValidateStoreIntegrity":
             result = validate_store_integrity(self._store)
+        elif command_name == "RegisterLocalAIRuntime":
+            result = self._local_model_service.register_runtime(payload["runtime_path"])
         elif command_name == "RegisterLocalModel":
             result = self._local_model_service.register(
                 payload["model_path"], payload["manifest_path"]
@@ -1445,6 +1717,38 @@ class FinanceApplicationService:
             result = self._local_model_service.enable()
         elif command_name == "DisableLocalModel":
             result = self._local_model_service.disable()
+        elif command_name == "EnableCategoryShadowMode":
+            result = enable_category_shadow_mode(self._store)
+        elif command_name == "DisableCategoryShadowMode":
+            result = disable_category_shadow_mode(self._store)
+        elif command_name == "StartCategoryEvaluationRun":
+            result = start_category_evaluation_run(
+                self._store,
+                self._local_model_service,
+                max_batch_size=int(payload.get("max_batch_size", 500)),
+            )
+        elif command_name == "PauseCategoryEvaluationRun":
+            result = pause_category_evaluation_run(self._store, payload["run_id"])
+        elif command_name == "ResumeCategoryEvaluationRun":
+            result = resume_category_evaluation_run(
+                self._store, self._local_model_service, payload["run_id"]
+            )
+        elif command_name == "CancelCategoryEvaluationRun":
+            result = cancel_category_evaluation_run(self._store, payload["run_id"])
+        elif command_name == "ConfirmCategorySuggestion":
+            result = confirm_category_suggestion(self._store, payload["suggestion_id"])
+        elif command_name == "CorrectCategorySuggestion":
+            result = correct_category_suggestion(
+                self._store, payload["suggestion_id"], payload["selected_category"]
+            )
+        elif command_name == "RejectCategorySuggestion":
+            result = reject_category_suggestion(self._store, payload["suggestion_id"])
+        elif command_name == "CreateClassificationRuleFromSuggestion":
+            result = create_classification_rule_from_suggestion(
+                self._store,
+                payload["suggestion_id"],
+                field=str(payload.get("field", "counterparty")),
+            )
         elif command_name == "ExportDiagnostics":
             if self._diagnostic_recorder is None:
                 raise ApplicationContractError("FINANCE_DIAGNOSTICS_DISABLED")
@@ -1460,7 +1764,14 @@ class FinanceApplicationService:
             "event_store_sequence": self._sequence(),
         }
 
-    def command(self, command_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def command(
+        self,
+        command_name: str,
+        payload: dict[str, Any],
+        *,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        correlation_id = request_id or "req_unavailable"
         started = monotonic()
         safe_name = command_name if command_name in COMMAND_REQUIRED_FIELDS or command_name in {
             "ClassifyTransactions",
@@ -1476,29 +1787,55 @@ class FinanceApplicationService:
             "DetectInvestmentFundingRelations",
             "EnableLocalModel",
             "DisableLocalModel",
+            "EnableCategoryShadowMode",
+            "DisableCategoryShadowMode",
+            "StartCategoryEvaluationRun",
         } else "UnsupportedCommand"
         try:
             result = self._execute_command(command_name, payload)
         except Exception as exc:
             if self._diagnostic_recorder:
                 raw_code = str(exc).split(":", 1)[0]
-                code = raw_code if raw_code.startswith("FINANCE_") else "FINANCE_COMMAND_FAILED"
+                if command_name in {"RegisterLocalAIRuntime", "RegisterLocalModel"}:
+                    code = (
+                        raw_code
+                        if raw_code.startswith(("LOCAL_MODEL_", "LOCAL_AI_"))
+                        else "DESKTOP_OPERATION_FAILED"
+                    )
+                    self._diagnostic_recorder.record_local_model_operation(
+                        request_id=correlation_id,
+                        operation=command_name,
+                        error_code=code,
+                    )
+                else:
+                    code = raw_code if raw_code.startswith("FINANCE_") else "FINANCE_COMMAND_FAILED"
+                    self._diagnostic_recorder.record(
+                        operation_kind="COMMAND",
+                        operation_name=safe_name,
+                        duration_ms=round((monotonic() - started) * 1000),
+                        error_code=code,
+                        component_status="FAILED",
+                    )
+            raise
+        if self._diagnostic_recorder:
+            if command_name in {"RegisterLocalAIRuntime", "RegisterLocalModel"}:
+                registration = result.get("result", {})
+                model_id = registration.get("model_id") if isinstance(registration, dict) else None
+                runtime_id = registration.get("runtime_id") if isinstance(registration, dict) else None
+                self._diagnostic_recorder.record_local_model_operation(
+                    request_id=correlation_id,
+                    operation=command_name,
+                    model_id=model_id if isinstance(model_id, str) else None,
+                    runtime_id=runtime_id if isinstance(runtime_id, str) else "llama.cpp",
+                )
+            else:
                 self._diagnostic_recorder.record(
                     operation_kind="COMMAND",
                     operation_name=safe_name,
                     duration_ms=round((monotonic() - started) * 1000),
-                    error_code=code,
-                    component_status="FAILED",
+                    event_count=result["event_store_sequence"],
+                    component_status="PASSED",
                 )
-            raise
-        if self._diagnostic_recorder:
-            self._diagnostic_recorder.record(
-                operation_kind="COMMAND",
-                operation_name=safe_name,
-                duration_ms=round((monotonic() - started) * 1000),
-                event_count=result["event_store_sequence"],
-                component_status="PASSED",
-            )
         return result
 
 

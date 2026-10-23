@@ -112,6 +112,16 @@ to synthetic test data. Cashflow treats every positive amount as income and
 every negative amount as an expense; transfers, investments and refunds are
 not yet distinguished.
 
+### Local llama.cpp runtime
+
+The desktop app never resolves `llama-cli` through the shell `PATH`. Development
+builds can use `FINANCE_LLAMA_CPP_EXECUTABLE` or register an external runtime in
+**Einstellungen → Lokale AI → llama.cpp wählen**. Release builds require a
+self-contained runtime distribution staged at
+`src-tauri/resources/llama.cpp/llama-cli`; Tauri includes that directory in the
+signed application bundle and the bundled runtime takes precedence over an
+external registration. React receives only an opaque, one-time file reference.
+
 Version 1.4.0 unifies period control and the account workspace. `finance
 account overview`/`finance account detail` and the `ListAccountOverviews` /
 `GetAccountDetail` queries accept an explicit `MONTH`, `YEAR` or

@@ -50,6 +50,22 @@ class DiagnosticTests(unittest.TestCase):
         self.assertTrue(result["exported"])
         self.assertNotIn("amount", destination.read_text())
 
+    def test_local_model_log_contains_only_safe_correlation_metadata(self) -> None:
+        self.recorder.record_local_model_operation(
+            request_id="req_1234567890abcdef",
+            operation="RegisterLocalModel",
+            error_code="LOCAL_MODEL_HASH_MISMATCH",
+            model_id="finance-small",
+        )
+        record = self.recorder.records()[0]
+        self.assertEqual(
+            set(record),
+            {"recorded_at", "request_id", "operation", "component", "error_code", "model_id", "runtime_id"},
+        )
+        serialized = str(record)
+        self.assertNotIn("path", serialized.casefold())
+        self.assertNotIn("prompt", serialized.casefold())
+
     def test_error_catalog_never_allows_payload_context(self) -> None:
         definition = error_definition("FINANCE_STORE_DECRYPTION_FAILED")
         self.assertEqual(definition["severity"], "BLOCKING")

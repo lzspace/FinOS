@@ -53,7 +53,7 @@
           "type": "string"
         },
         "contract_version": {
-          "const": "1.4.0"
+          "const": "1.5.0"
         },
         "store_schema_version": {
           "type": "integer",
@@ -74,11 +74,27 @@
         "local_ai": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["status", "available", "runtime", "model", "trust_zone", "processing_location", "network_egress", "network_ingress", "import_mapping", "category_suggestions", "automatic_classification", "error_code"],
+          "required": ["status", "available", "runtime", "runtime_details", "model", "trust_zone", "processing_location", "network_egress", "network_ingress", "import_mapping", "category_suggestions", "automatic_classification", "error_code"],
           "properties": {
             "status": { "enum": ["DISABLED", "LOADING_MODEL", "READY", "AI_UNAVAILABLE"] },
             "available": { "type": "boolean" },
             "runtime": { "const": "llama.cpp" },
+            "runtime_details": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["runtime_id", "provider", "version", "binary_sha256", "capabilities", "registered_at", "source", "integrity_status"],
+              "properties": {
+                "runtime_id": { "type": ["string", "null"] },
+                "provider": { "const": "LLAMA_CPP" },
+                "version": { "type": ["string", "null"] },
+                "binary_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+                "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+                "registered_at": { "type": ["string", "null"], "format": "date-time" },
+                "source": { "enum": ["BUNDLED", "EXTERNAL", null] },
+                "integrity_status": { "enum": ["VALID", "INVALID", "MISSING"] },
+                "error_code": { "type": ["string", "null"] }
+              }
+            },
             "model": { "type": ["object", "null"] },
             "trust_zone": { "const": "PRIVATE_LOCAL" },
             "processing_location": { "const": "LOCAL_DEVICE" },

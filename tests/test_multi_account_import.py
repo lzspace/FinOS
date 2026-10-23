@@ -867,7 +867,7 @@ class GermanMultiAccountImportTests(unittest.TestCase):
             "MATCHED",
         )
         manifest = application.query("GetCapabilityManifest")["data"]
-        self.assertEqual(manifest["contract_version"], "1.4.0")
+        self.assertEqual(manifest["contract_version"], "1.5.0")
         self.assertTrue(manifest["capabilities"]["position_reconciliation_capability"])
         wizard = application.query(
             "GetImportWizardState", {"export_id": analyzed["export_id"]}
@@ -942,12 +942,34 @@ class GermanMultiAccountImportTests(unittest.TestCase):
         detail = application.query(
             "GetImportHistoryDetail", {"export_id": analyzed["export_id"]}
         )["data"]
+        self.assertEqual(len(detail["transactions"]), 4)
+        self.assertEqual(len(detail["security_transactions"]), 1)
+        self.assertEqual(
+            {item["account_name"] for item in detail["transactions"]},
+            {"Synthetisches Girokonto"},
+        )
+        self.assertEqual(
+            detail["review_summary"]["unclassified_transaction_count"], 4
+        )
+        self.assertIn("section_results", detail["execution_result"])
         self.assertTrue(
             any(
                 event["event_type"] == "BalanceDifferenceDocumented"
                 for event in detail["audit_history"]
             )
         )
+        history_row = application.query("GetImportHistory")["data"]["imports"][0]
+        self.assertEqual(history_row["record_count"], 5)
+        self.assertEqual(history_row["account_count"], 3)
+        self.assertEqual(
+            set(history_row["account_names"]),
+            {
+                "Synthetisches Girokonto",
+                "Synthetisches Tagesgeld",
+                "Synthetisches Depot",
+            },
+        )
+        self.assertIsNotNone(history_row["completed_at"])
 
         period = {"mode": "MONTH", "year": 2024, "month": 12}
         overviews = application.query("ListAccountOverviews", {"period": period})["data"]

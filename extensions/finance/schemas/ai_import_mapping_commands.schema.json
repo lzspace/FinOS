@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/ai_import_mapping_commands.schema.json",
+  "title": "Local AI import mapping commands 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "command_id", "command_type", "idempotency_key", "payload"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "command_id": { "type": "string", "minLength": 1 },
+    "command_type": { "enum": ["AnalyzeUnknownImportFormat", "ValidateImportMapping", "ConfirmImportMapping", "RejectImportMapping"] },
+    "idempotency_key": { "type": "string", "minLength": 8 },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "command_type": { "const": "AnalyzeUnknownImportFormat" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/Analyze" } } } },
+    { "if": { "properties": { "command_type": { "const": "ValidateImportMapping" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/Validate" } } } },
+    { "if": { "properties": { "command_type": { "const": "ConfirmImportMapping" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/Confirm" } } } },
+    { "if": { "properties": { "command_type": { "const": "RejectImportMapping" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/Reject" } } } }
+  ],
+  "$defs": {
+    "Analyze": { "type": "object", "additionalProperties": false, "required": ["bank_identifier"], "anyOf": [{ "required": ["source_file_path"] }, { "required": ["source_file_reference"] }], "properties": { "source_file_path": { "type": "string", "minLength": 1 }, "source_file_reference": { "type": "string", "minLength": 1 }, "bank_identifier": { "type": "string", "minLength": 1, "maxLength": 128 }, "regenerate": { "type": "boolean" } } },
+    "FieldMapping": { "type": "object", "additionalProperties": false, "required": ["source_column", "target_field", "confidence"], "properties": { "source_column": { "type": "string", "minLength": 1 }, "target_field": { "enum": ["booking_date", "value_date", "transaction_type_raw", "counterparty", "description", "amount", "currency"] }, "confidence": { "type": "number", "minimum": 0, "maximum": 1 } } },
+    "Transformation": { "type": "object", "additionalProperties": false, "required": ["target_field", "type", "parameters"], "properties": { "target_field": { "enum": ["booking_date", "value_date", "transaction_type_raw", "counterparty", "description", "amount", "currency"] }, "type": { "enum": ["PARSE_DATE", "PARSE_DECIMAL", "NORMALIZE_CURRENCY", "TRIM", "CONCATENATE", "CONSTANT", "SIGN_NORMALIZATION"] }, "parameters": { "type": "object" } } },
+    "Mapping": { "type": "object", "additionalProperties": false, "required": ["section_type", "field_mappings", "transformations", "constants", "ignored_columns", "confidence", "warnings"], "properties": { "section_type": { "enum": ["CHECKING", "SAVINGS", "BROKERAGE", "UNKNOWN"] }, "field_mappings": { "type": "array", "items": { "$ref": "#/$defs/FieldMapping" } }, "transformations": { "type": "array", "items": { "$ref": "#/$defs/Transformation" } }, "constants": { "type": "object", "additionalProperties": false, "properties": { "currency": { "type": "string", "pattern": "^[A-Z]{3}$" } } }, "ignored_columns": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }, "confidence": { "type": "number", "minimum": 0, "maximum": 1 }, "warnings": { "type": "array", "items": { "type": "string" } } } },
+    "Validate": { "type": "object", "additionalProperties": false, "required": ["proposal_id", "mapping"], "properties": { "proposal_id": { "type": "string", "minLength": 1 }, "mapping": { "$ref": "#/$defs/Mapping" } } },
+    "Confirm": { "type": "object", "additionalProperties": false, "required": ["proposal_id", "final_mapping", "validation_result_id"], "properties": { "proposal_id": { "type": "string", "minLength": 1 }, "final_mapping": { "$ref": "#/$defs/Mapping" }, "validation_result_id": { "type": "string", "minLength": 1 }, "confirmation_comment": { "type": ["string", "null"] }, "compatibility_rules": { "type": "array", "uniqueItems": true, "items": { "enum": ["ALLOW_ADDITIONAL_COLUMNS", "ALLOW_SECTION_TITLE_CHANGE"] } } } },
+    "Reject": { "type": "object", "additionalProperties": false, "required": ["proposal_id"], "properties": { "proposal_id": { "type": "string", "minLength": 1 }, "reason": { "type": ["string", "null"] } } }
+  }
+}

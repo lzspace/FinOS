@@ -27,6 +27,12 @@ pub enum PathPolicyError {
     Store,
     #[error("FINANCE_IMPORT_FILE_UNREADABLE")]
     Unreadable,
+    #[error("LOCAL_AI_RUNTIME_NOT_FOUND")]
+    RuntimeNotFound,
+    #[error("LOCAL_AI_RUNTIME_NOT_EXECUTABLE")]
+    RuntimeNotExecutable,
+    #[error("LOCAL_AI_RUNTIME_INCOMPATIBLE")]
+    RuntimeIncompatible,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +61,31 @@ impl PathPolicy {
 
     pub fn validate_model_manifest(&self, input: &Path) -> Result<(PathBuf, u64), PathPolicyError> {
         self.validate_file(input, "json", MAX_MODEL_MANIFEST_BYTES)
+    }
+
+    pub fn validate_runtime(&self, input: &Path) -> Result<(PathBuf, u64), PathPolicyError> {
+        reject_symlink_component(input).map_err(|_| PathPolicyError::RuntimeIncompatible)?;
+        let canonical = input
+            .canonicalize()
+            .map_err(|_| PathPolicyError::RuntimeNotFound)?;
+        let metadata = fs::metadata(&canonical).map_err(|_| PathPolicyError::RuntimeNotFound)?;
+        if !metadata.file_type().is_file() {
+            return Err(PathPolicyError::RuntimeIncompatible);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                return Err(PathPolicyError::RuntimeNotExecutable);
+            }
+        }
+        if is_within(&canonical, &self.repository_root)
+            || is_within(&canonical, &self.store_root)
+            || is_nonlocal_volume(&canonical)
+        {
+            return Err(PathPolicyError::RuntimeIncompatible);
+        }
+        Ok((canonical, metadata.len()))
     }
 
     fn validate_file(
@@ -225,6 +256,29 @@ mod tests {
         assert_eq!(
             policy.validate_csv(&directory),
             Err(PathPolicyError::NotRegular)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_must_be_regular_and_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, policy) = fixture();
+        let runtime = root.path().join("llama-cli");
+        fs::write(&runtime, b"binary").unwrap();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            policy.validate_runtime(&runtime),
+            Err(PathPolicyError::RuntimeNotExecutable)
+        );
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(policy.validate_runtime(&runtime).unwrap().1, 6);
+
+        let directory = root.path().join("runtime-directory");
+        fs::create_dir(&directory).unwrap();
+        assert_eq!(
+            policy.validate_runtime(&directory),
+            Err(PathPolicyError::RuntimeIncompatible)
         );
     }
 

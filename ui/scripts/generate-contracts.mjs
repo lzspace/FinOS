@@ -13,6 +13,7 @@ const required = [
   "transaction_list.response.schema.json",
   "transaction_detail.response.schema.json",
   "review_queue.response.schema.json",
+  "review_inbox.response.schema.json",
   "recurring_pattern_list.response.schema.json",
   "forecast.response.schema.json",
   "forecast_evaluation.response.schema.json",
@@ -45,6 +46,8 @@ const required = [
   "account_position_list.response.schema.json",
   "account_position_history.response.schema.json",
   "account_audit_trail.response.schema.json",
+  "ai_import_mapping.response.schema.json",
+  "category_list.response.schema.json",
 ];
 
 for (const name of required) {

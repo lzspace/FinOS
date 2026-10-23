@@ -9,11 +9,13 @@ from cryptography.fernet import Fernet
 from jsonschema import Draft202012Validator, FormatChecker
 
 from finance_extension.accounts import (
+    close_account,
     create_account,
     record_balance_snapshot,
     reconcile_account_balance,
 )
 from finance_extension.application import ApplicationContractError, FinanceApplicationService
+from finance_extension.classification import confirm_classification
 from finance_extension.crypto import StaticKeyProvider
 from finance_extension.importer import import_csv, normalize_batch
 from finance_extension.schema_validation import SCHEMA_ROOT
@@ -30,6 +32,7 @@ class ApplicationServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
+        self.root = root
         source = root / "synthetic.csv"
         source.write_text(CSV)
         self.store = LocalFinanceStore(
@@ -74,6 +77,26 @@ class ApplicationServiceTests(unittest.TestCase):
         self.assertEqual(response["data"]["runtime"], "llama.cpp")
         self.assertEqual(response["data"]["processing_location"], "LOCAL_DEVICE")
 
+    def test_runtime_registration_returns_only_opaque_metadata(self) -> None:
+        runtime = self.root / "llama-cli"
+        runtime.write_text(
+            "#!/bin/sh\necho 'llama.cpp b11794-f84909536'\n",
+            encoding="utf-8",
+        )
+        runtime.chmod(0o700)
+
+        response = self.application.command(
+            "RegisterLocalAIRuntime",
+            {"runtime_path": str(runtime)},
+            request_id="req_runtime_test",
+        )
+        encoded = json.dumps(response)
+
+        self.assertEqual(response["result"]["provider"], "LLAMA_CPP")
+        self.assertEqual(response["result"]["integrity_status"], "VALID")
+        self.assertNotIn(str(runtime), encoded)
+        self.assertNotIn("runtime_path", encoded)
+
     def test_projection_queries_do_not_append_events(self) -> None:
         before = len(self.store.events())
         dashboard = self.application.query("GetDashboard", {"month": "2026-07"})
@@ -88,6 +111,42 @@ class ApplicationServiceTests(unittest.TestCase):
         self._validate(dashboard, "dashboard.response.schema.json")
         self._validate(transactions, "transaction_list.response.schema.json")
         self._validate(details, "transaction_detail.response.schema.json")
+
+    def test_review_inbox_is_derived_and_rebuilds_deterministically(self) -> None:
+        before = len(self.store.events())
+        first = self.application.query("GetReviewInbox")
+        self.assertEqual(len(self.store.events()), before)
+        self.assertEqual(first["data"]["total_open"], len(first["data"]["items"]))
+        self.assertEqual(
+            first["data"]["total_open"],
+            sum(first["data"]["items_by_type"].values()),
+        )
+        self.assertGreater(first["data"]["items_by_type"]["CATEGORY"], 0)
+        self._validate(first, "review_inbox.response.schema.json")
+
+        transaction_id = next(
+            item["entity_id"]
+            for item in first["data"]["items"]
+            if item["review_type"] == "CATEGORY"
+        )
+        category_before = first["data"]["items_by_type"]["CATEGORY"]
+        confirm_classification(self.store, transaction_id, "OTHER_EXPENSE")
+        resolved = self.application.query("GetReviewInbox")["data"]
+        self.assertEqual(resolved["items_by_type"]["CATEGORY"], category_before - 1)
+
+        expected = resolved
+        key_provider = self.store.key_provider
+        self.store.close()
+        self.store = LocalFinanceStore(
+            self.root / "data", key_provider
+        ).open()
+        self.application = FinanceApplicationService(
+            self.store,
+            archive_key_provider=self.archive_key,
+            backup_directory=self.root / "backups",
+            export_directory=self.root / "exports",
+        )
+        self.assertEqual(self.application.query("GetReviewInbox")["data"], expected)
 
     def test_security_states_and_sequence_are_dynamic(self) -> None:
         response = self.application.query("GetRuntimeSecurityStatus")
@@ -132,11 +191,39 @@ class ApplicationServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(response["status"], "COMPLETED")
-        self.assertIn(
-            {"category_code": "CUSTOM_HAUSTIERE"},
-            categories["data"]["categories"],
+        custom = next(
+            item for item in categories["data"]["categories"]
+            if item["category_code"] == "CUSTOM_HAUSTIERE"
         )
+        self.assertEqual(custom["display_name"], "Haustiere")
+        self.assertTrue(custom["legacy"])
         self.assertEqual(details["data"]["category_code"], "CUSTOM_HAUSTIERE")
+        self.application.command(
+            "RenameCategory",
+            {"category_code": "CUSTOM_HAUSTIERE", "display_name": "Tierbedarf"},
+        )
+        renamed = next(
+            item for item in self.application.query("ListCategories")["data"]["categories"]
+            if item["category_code"] == "CUSTOM_HAUSTIERE"
+        )
+        self.assertEqual(renamed["display_name"], "Tierbedarf")
+
+    def test_category_commands_create_rename_archive_and_restore(self) -> None:
+        created = self.application.command(
+            "CreateCategory", {"display_name": "Haustiere", "category_type": "EXPENSE"}
+        )["result"]
+        self.application.command(
+            "RenameCategory", {"category_code": created["category_code"], "display_name": "Tierbedarf"}
+        )
+        self.application.command("ArchiveCategory", {"category_code": created["category_code"]})
+        archived = next(
+            item for item in self.application.query("ListCategories")["data"]["categories"]
+            if item["category_code"] == created["category_code"]
+        )
+        self.assertEqual(archived["display_name"], "Tierbedarf")
+        self.assertEqual(archived["status"], "ARCHIVED")
+        self.application.command("RestoreCategory", {"category_code": created["category_code"]})
+        self._validate(self.application.query("ListCategories"), "category_list.response.schema.json")
 
     def test_account_and_net_worth_queries_use_versioned_projection_contracts(self) -> None:
         create_account(
@@ -244,6 +331,14 @@ class ApplicationServiceTests(unittest.TestCase):
 
         self.assertEqual(overviews["data"]["accounts"][0]["overview_status"], "MATCHED")
         self.assertEqual(detail["data"]["account"]["account_id"], "acc_main")
+        self.assertEqual(
+            detail["data"]["open_review_count"],
+            len(detail["data"]["open_reviews"]),
+        )
+        inbox_ids = {item["review_id"] for item in self.application.query("GetReviewInbox")["data"]["items"]}
+        self.assertTrue(
+            {item["review_id"] for item in detail["data"]["open_reviews"]}.issubset(inbox_ids)
+        )
         self.assertEqual(positions["data"]["positions"], [])
         for response in (
             overviews,
@@ -270,6 +365,18 @@ class ApplicationServiceTests(unittest.TestCase):
         self._validate(positions, "account_position_list.response.schema.json")
         self._validate(audit_trail, "account_audit_trail.response.schema.json")
 
+        close_account(self.store, "acc_main", "2026-07-31")
+        active_only = self.application.query("ListAccountOverviews", {"period": period})
+        including_closed = self.application.query(
+            "ListAccountOverviews", {"period": period, "include_closed": True}
+        )
+        closed_detail = self.application.query(
+            "GetAccountDetail", {"account_id": "acc_main", "period": period}
+        )
+        self.assertFalse(any(item["account_id"] == "acc_main" for item in active_only["data"]["accounts"]))
+        self.assertEqual(including_closed["data"]["accounts"][0]["overview_status"], "CLOSED")
+        self.assertEqual(closed_detail["data"]["account"]["status"], "CLOSED")
+
         with self.assertRaisesRegex(ApplicationContractError, "FINANCE_ACCOUNT_NOT_FOUND"):
             self.application.query("GetAccountDetail", {"account_id": "does_not_exist"})
         with self.assertRaisesRegex(Exception, "FINANCE_PERIOD_SELECTION_INVALID"):
@@ -290,8 +397,8 @@ class ApplicationServiceTests(unittest.TestCase):
 
         manifest = self.application.query("GetCapabilityManifest")["data"]
         self.assertEqual(manifest["product_version"], "1.5.0")
-        self.assertEqual(manifest["contract_version"], "1.4.0")
-        self.assertEqual(manifest["ui_contract_version"], "1.4.0")
+        self.assertEqual(manifest["contract_version"], "1.5.0")
+        self.assertEqual(manifest["ui_contract_version"], "1.5.0")
         self.assertEqual(manifest["store_schema_version"], 3)
         self.assertIn("account_overview", manifest["projection_versions"])
         self.assertTrue(manifest["capabilities"]["period_control"])

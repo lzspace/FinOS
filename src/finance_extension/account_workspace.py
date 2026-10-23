@@ -16,10 +16,10 @@ from typing import Any
 from .accounts import (
     account_balance_history,
     account_overview,
-    account_reviews,
     accounts,
     balance_reconciliations,
 )
+from .classification import active_classifications
 from .multi_account_import import (
     PARSER_VERSION,
     PROFILE_VERSION,
@@ -27,11 +27,13 @@ from .multi_account_import import (
     balance_difference_documentations,
     closing_security_positions,
     imported_period_reconciliations,
+    imported_security_position_reconciliations,
     opening_security_positions,
     security_positions,
     security_transactions,
 )
 from .reconciliation import reconciled_transactions
+from .review_inbox import review_inbox
 from .store import LocalFinanceStore
 
 OVERVIEW_STATUSES = (
@@ -66,7 +68,32 @@ ACCOUNT_AUDIT_EVENT_TYPES = {
     "InvestmentFundingRelationConfirmed",
     "InvestmentFundingRelationRejected",
     "InvestmentFundingRelationBroken",
+    "TransactionNormalized",
+    "TransactionClassificationProposed",
+    "TransactionClassificationConfirmed",
+    "TransactionClassificationRejected",
+    "DuplicateTransactionDetected",
+    "DuplicateTransactionConfirmed",
+    "DuplicateTransactionRejected",
+    "TransferMatchProposed",
+    "TransferMatchConfirmed",
+    "TransferMatchRejected",
+    "TransferMatchBroken",
+    "RefundRelationProposed",
+    "RefundRelationConfirmed",
+    "RefundRelationRejected",
 }
+
+TRANSACTION_REFERENCE_FIELDS = (
+    "transaction_id",
+    "primary_transaction_id",
+    "duplicate_transaction_id",
+    "outgoing_transaction_id",
+    "incoming_transaction_id",
+    "refund_transaction_id",
+    "original_transaction_id",
+    "cash_transaction_id",
+)
 
 
 def _in_period(value: str | None, period: dict[str, Any] | None) -> bool:
@@ -93,11 +120,19 @@ def _in_period_with_carry_forward_tolerance(value: str | None, period: dict[str,
 
 def account_review_counts(store: LocalFinanceStore) -> dict[str, int]:
     counts: dict[str, int] = {}
-    for review in account_reviews(store):
-        account_id = review.get("account_id")
-        if account_id:
+    for review in review_inbox(store)["items"]:
+        for account_id in review["account_ids"]:
             counts[account_id] = counts.get(account_id, 0) + 1
     return counts
+
+
+def account_open_reviews(store: LocalFinanceStore, account_id: str) -> list[dict[str, Any]]:
+    """Return an account-specific view of the canonical review inbox."""
+
+    return [
+        item for item in review_inbox(store)["items"]
+        if account_id in item["account_ids"]
+    ]
 
 
 def account_last_import(store: LocalFinanceStore, account_id: str) -> dict[str, Any] | None:
@@ -219,7 +254,25 @@ def account_overview_for_period(
             row["acquisition_value"] = str(
                 sum((Decimal(item["market_value"]) for item in opening if item.get("market_value")), Decimal("0"))
             ) if opening else None
-        row["overview_status"] = derive_overview_status(base)
+            position_reconciliations = [
+                item for item in imported_security_position_reconciliations(store).values()
+                if item["account_id"] == base["account_id"]
+            ]
+            if position_reconciliations:
+                latest_position_reconciliation = max(
+                    position_reconciliations,
+                    key=lambda item: (item.get("period_end") or "", item["reconciliation_id"]),
+                )
+                position_status = latest_position_reconciliation["status"]
+                row["position_reconciliation_status"] = position_status
+                row["reconciliation_status"] = position_status
+                row["overview_status"] = "MATCHED" if position_status == "MATCHED" else "DIFFERENCE"
+            else:
+                row["position_reconciliation_status"] = "NOT_RECONCILED"
+                row["overview_status"] = "REVIEW_REQUIRED"
+        else:
+            row["position_reconciliation_status"] = None
+            row["overview_status"] = derive_overview_status(base)
         if status and row["overview_status"] != status:
             continue
         rows.append(row)
@@ -261,6 +314,7 @@ def account_transactions_for_period(
     if account_id not in accounts(store):
         raise ValueError("FINANCE_ACCOUNT_NOT_FOUND")
     projected = reconciled_transactions(store)
+    classifications = active_classifications(store)
     rows: list[dict[str, Any]] = []
     for event in store.events("TransactionNormalized"):
         item = event["payload"]
@@ -274,9 +328,16 @@ def account_transactions_for_period(
         if direction and direction != direction_value:
             continue
         view = projected[item["transaction_id"]]
+        classification = classifications.get(item["transaction_id"])
         rows.append(
             {
                 **item,
+                "category_code": (
+                    classification["payload"]["category_code"]
+                    if classification
+                    and classification["event_type"] == "TransactionClassificationConfirmed"
+                    else "UNCLASSIFIED"
+                ),
                 "direction": direction_value,
                 "duplicate_status": view["duplicate_status"],
                 "transfer_status": view["transfer_status"],
@@ -369,6 +430,14 @@ def account_balance_ledger(
                     "sequence_number": event["sequence_number"],
                 }
             )
+    source_reconciliations = imported_period_reconciliations(store)
+    for row in rows:
+        source_id = row.get("carry_forward_source_reconciliation_id")
+        source = source_reconciliations.get(source_id) if source_id else None
+        row["carry_forward_source_period_end"] = source.get("period_end") if source else None
+        row["carry_forward_source_reported_balance"] = (
+            source.get("reported_closing_balance") if source else None
+        )
     if period is not None:
         rows = [
             row for row in rows if _in_period_with_carry_forward_tolerance(row["balance_date"], period)
@@ -536,11 +605,22 @@ def account_audit_trail(
     if account_id not in accounts(store):
         raise ValueError("FINANCE_ACCOUNT_NOT_FOUND")
     rows: list[dict[str, Any]] = []
+    account_transaction_ids = {
+        str(event["payload"]["transaction_id"])
+        for event in store.events("TransactionNormalized")
+        if event["payload"]["account_id"] == account_id
+    }
     for event in store.events():
         if event["event_type"] not in ACCOUNT_AUDIT_EVENT_TYPES:
             continue
         payload = event["payload"]
-        if payload.get("account_id") != account_id:
+        related_transaction_ids = [
+            str(payload[field]) for field in TRANSACTION_REFERENCE_FIELDS if payload.get(field)
+        ]
+        belongs_to_account = payload.get("account_id") == account_id or any(
+            transaction_id in account_transaction_ids for transaction_id in related_transaction_ids
+        )
+        if not belongs_to_account:
             continue
         if period is not None and not _in_period(event["occurred_at"][:10], period):
             continue
@@ -556,6 +636,10 @@ def account_audit_trail(
                 "related_import_id": payload.get("export_id") or payload.get("import_batch_id"),
                 "related_balance_id": (
                     payload.get("snapshot_id") or payload.get("reconciliation_id") or payload.get("balance_id")
+                ),
+                "related_transaction_id": next(
+                    (value for value in related_transaction_ids if value in account_transaction_ids),
+                    None,
                 ),
                 "payload": payload,
             }

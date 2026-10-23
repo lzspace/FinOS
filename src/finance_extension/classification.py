@@ -216,6 +216,8 @@ def confirm_classification(
     *,
     create_rule_from: str | None = None,
     priority: int = 200,
+    confirmed_by: str = "USER",
+    suggestion_id: str | None = None,
 ) -> int:
     require_category(category_code)
     normalized = next(
@@ -230,8 +232,24 @@ def confirm_classification(
         raise StoreInvariantError("FINANCE_TRANSACTION_NOT_FOUND")
     if create_rule_from and create_rule_from not in {"counterparty", "normalized_description"}:
         raise StoreInvariantError("FINANCE_RULE_FIELD_UNSUPPORTED")
+    if confirmed_by not in {
+        "USER",
+        "LOCAL_LLM_CONFIRMED_BY_USER",
+        "LOCAL_LLM_CORRECTED_BY_USER",
+    }:
+        raise StoreInvariantError("FINANCE_CLASSIFICATION_SOURCE_UNSUPPORTED")
     command_id = _id("cmd")
     version = store.next_aggregate_version("Transaction", transaction_id)
+    decision_payload = {
+        "transaction_id": transaction_id,
+        "normalized_event_id": normalized["event_id"],
+        "category_code": category_code,
+        "status": "CONFIRMED",
+        "confirmed_by": confirmed_by,
+        "policy_version": CLASSIFICATION_POLICY_VERSION,
+    }
+    if suggestion_id is not None:
+        decision_payload["suggestion_id"] = suggestion_id
     events = [
         _event(
             "TransactionClassificationConfirmed",
@@ -239,14 +257,7 @@ def confirm_classification(
             transaction_id,
             version,
             command_id,
-            {
-                "transaction_id": transaction_id,
-                "normalized_event_id": normalized["event_id"],
-                "category_code": category_code,
-                "status": "CONFIRMED",
-                "confirmed_by": "USER",
-                "policy_version": CLASSIFICATION_POLICY_VERSION,
-            },
+            decision_payload,
         )
     ]
     if create_rule_from:

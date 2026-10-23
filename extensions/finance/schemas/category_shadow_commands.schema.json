@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/category_shadow_commands.schema.json",
+  "title": "Local AI category shadow-mode commands 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "command_id", "command_type", "idempotency_key", "payload"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "command_id": { "type": "string", "minLength": 1 },
+    "command_type": { "enum": ["EnableCategoryShadowMode", "DisableCategoryShadowMode", "StartCategoryEvaluationRun", "PauseCategoryEvaluationRun", "ResumeCategoryEvaluationRun", "CancelCategoryEvaluationRun", "ConfirmCategorySuggestion", "CorrectCategorySuggestion", "RejectCategorySuggestion", "CreateClassificationRuleFromSuggestion"] },
+    "idempotency_key": { "type": "string", "minLength": 8 },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "command_type": { "enum": ["EnableCategoryShadowMode", "DisableCategoryShadowMode"] } } }, "then": { "properties": { "payload": { "type": "object", "additionalProperties": false, "maxProperties": 0 } } } },
+    { "if": { "properties": { "command_type": { "const": "StartCategoryEvaluationRun" } } }, "then": { "properties": { "payload": { "type": "object", "additionalProperties": false, "properties": { "max_batch_size": { "type": "integer", "minimum": 1, "maximum": 500 } } } } } },
+    { "if": { "properties": { "command_type": { "enum": ["PauseCategoryEvaluationRun", "ResumeCategoryEvaluationRun", "CancelCategoryEvaluationRun"] } } }, "then": { "properties": { "payload": { "type": "object", "additionalProperties": false, "required": ["run_id"], "properties": { "run_id": { "type": "string", "pattern": "^cer_[a-f0-9]{32}$" } } } } } },
+    { "if": { "properties": { "command_type": { "enum": ["ConfirmCategorySuggestion", "RejectCategorySuggestion"] } } }, "then": { "properties": { "payload": { "type": "object", "additionalProperties": false, "required": ["suggestion_id"], "properties": { "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" } } } } } },
+    { "if": { "properties": { "command_type": { "const": "CorrectCategorySuggestion" } } }, "then": { "properties": { "payload": { "type": "object", "additionalProperties": false, "required": ["suggestion_id", "selected_category"], "properties": { "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" }, "selected_category": { "type": "string", "minLength": 1 } } } } } },
+    { "if": { "properties": { "command_type": { "const": "CreateClassificationRuleFromSuggestion" } } }, "then": { "properties": { "payload": { "type": "object", "additionalProperties": false, "required": ["suggestion_id"], "properties": { "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" }, "field": { "enum": ["counterparty", "normalized_description"] } } } } } }
+  ]
+}

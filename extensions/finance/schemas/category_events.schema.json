@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/category_events.schema.json",
+  "title": "Finance category catalogue events",
+  "oneOf": [
+    { "$ref": "#/$defs/CategoryCreated" }, { "$ref": "#/$defs/CategoryRenamed" },
+    { "$ref": "#/$defs/CategoryArchived" }, { "$ref": "#/$defs/CategoryRestored" }
+  ],
+  "$defs": {
+    "Code": { "type": "string", "pattern": "^CUSTOM_[A-Z0-9_]{1,48}$" },
+    "Base": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "event_id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "occurred_at", "correlation_id", "causation_id", "payload"],
+      "properties": {
+        "schema_version": { "const": "1.0.0" }, "event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "event_type": { "type": "string" }, "aggregate_type": { "const": "Category" }, "aggregate_id": { "$ref": "#/$defs/Code" },
+        "aggregate_version": { "type": "integer", "minimum": 1 }, "occurred_at": { "type": "string", "format": "date-time" },
+        "correlation_id": { "type": "string", "pattern": "^cmd_[a-f0-9]{32}$" }, "causation_id": { "type": "string", "pattern": "^cmd_[a-f0-9]{32}$" },
+        "payload": { "type": "object" }
+      }
+    },
+    "CreatePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["category_code", "display_name", "category_type", "status", "system_category", "parent_category_code", "color", "icon", "policy_version"],
+      "properties": {
+        "category_code": { "$ref": "#/$defs/Code" }, "display_name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "category_type": { "enum": ["INCOME", "EXPENSE", "TRANSFER", "INVESTMENT"] }, "status": { "const": "ACTIVE" },
+        "system_category": { "const": false }, "parent_category_code": { "anyOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }] },
+        "color": { "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 32 }] }, "icon": { "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 32 }] },
+        "policy_version": { "const": "categories@1.0.0" }
+      }
+    },
+    "RenamePayload": {
+      "type": "object", "additionalProperties": false, "required": ["category_code", "display_name", "policy_version"],
+      "properties": { "category_code": { "$ref": "#/$defs/Code" }, "display_name": { "type": "string", "minLength": 1, "maxLength": 80 }, "policy_version": { "const": "categories@1.0.0" } }
+    },
+    "StatusPayload": {
+      "type": "object", "additionalProperties": false, "required": ["category_code", "status", "policy_version"],
+      "properties": { "category_code": { "$ref": "#/$defs/Code" }, "status": { "enum": ["ACTIVE", "ARCHIVED"] }, "policy_version": { "const": "categories@1.0.0" } }
+    },
+    "CategoryCreated": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "CategoryCreated" }, "payload": { "$ref": "#/$defs/CreatePayload" } } }] },
+    "CategoryRenamed": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "CategoryRenamed" }, "payload": { "$ref": "#/$defs/RenamePayload" } } }] },
+    "CategoryArchived": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "CategoryArchived" }, "payload": { "$ref": "#/$defs/StatusPayload" } } }] },
+    "CategoryRestored": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "CategoryRestored" }, "payload": { "$ref": "#/$defs/StatusPayload" } } }] }
+  }
+}

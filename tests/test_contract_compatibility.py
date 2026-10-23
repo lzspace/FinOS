@@ -15,6 +15,27 @@ def catalog(schema: dict[str, object]) -> dict[str, object]:
 
 
 class ContractCompatibilityTests(unittest.TestCase):
+    def test_contract_version_discriminator_advance_is_declared_minor(self) -> None:
+        old = catalog(
+            {
+                "type": "object",
+                "properties": {"contract_version": {"const": "1.4.0"}},
+            }
+        )
+        new = catalog(
+            {
+                "type": "object",
+                "properties": {"contract_version": {"const": "1.5.0"}},
+            }
+        )
+
+        result = reject_undeclared_breaking_change(
+            old, new, previous_version="1.4.0", current_version="1.5.0"
+        )
+
+        self.assertEqual(result["classification"], "MINOR")
+        self.assertTrue(result["compatible"])
+
     def test_optional_field_is_minor_and_description_is_patch(self) -> None:
         old = catalog({"type": "object", "properties": {"id": {"type": "string"}}})
         documented = catalog(

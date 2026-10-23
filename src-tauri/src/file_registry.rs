@@ -31,9 +31,28 @@ impl FileRegistry {
         display_name: String,
         size_bytes: u64,
     ) -> SelectedImportFile {
+        self.register_with_prefix(path, display_name, size_bytes, "file")
+    }
+
+    pub fn register_runtime(
+        &mut self,
+        path: PathBuf,
+        display_name: String,
+        size_bytes: u64,
+    ) -> SelectedImportFile {
+        self.register_with_prefix(path, display_name, size_bytes, "runtime")
+    }
+
+    fn register_with_prefix(
+        &mut self,
+        path: PathBuf,
+        display_name: String,
+        size_bytes: u64,
+        prefix: &str,
+    ) -> SelectedImportFile {
         self.expire();
         let selected = SelectedImportFile {
-            file_ref: format!("file_{}", uuid::Uuid::new_v4().simple()),
+            file_ref: format!("{}_{}", prefix, uuid::Uuid::new_v4().simple()),
             display_name,
             size_bytes,
         };
@@ -52,17 +71,17 @@ impl FileRegistry {
         self.entries.remove(file_ref).map(|entry| entry.path)
     }
 
-    pub fn take_pair(&mut self, first: &str, second: &str) -> Option<(PathBuf, PathBuf)> {
+    pub fn take_pair(&mut self, first: &str, second: &str) -> Result<(PathBuf, PathBuf), ()> {
         self.expire();
         if first == second
             || !self.entries.contains_key(first)
             || !self.entries.contains_key(second)
         {
-            return None;
+            return Err(());
         }
-        let first_path = self.entries.remove(first)?.path;
-        let second_path = self.entries.remove(second)?.path;
-        Some((first_path, second_path))
+        let first_path = self.entries.remove(first).ok_or(())?.path;
+        let second_path = self.entries.remove(second).ok_or(())?.path;
+        Ok((first_path, second_path))
     }
 
     fn expire(&mut self) {
@@ -101,13 +120,33 @@ mod tests {
             "manifest.json".into(),
             12,
         );
-        assert!(registry.take_pair(&model.file_ref, "missing").is_none());
+        assert!(registry.take_pair(&model.file_ref, "missing").is_err());
+        assert_eq!(
+            registry.take(&model.file_ref),
+            Some(PathBuf::from("/private/tmp/model.gguf"))
+        );
+        let model = registry.register(
+            PathBuf::from("/private/tmp/model.gguf"),
+            "model.gguf".into(),
+            12,
+        );
         assert_eq!(
             registry.take_pair(&model.file_ref, &manifest.file_ref),
-            Some((
+            Ok((
                 PathBuf::from("/private/tmp/model.gguf"),
                 PathBuf::from("/private/tmp/manifest.json")
             ))
         );
+    }
+
+    #[test]
+    fn runtime_reference_has_dedicated_opaque_namespace() {
+        let mut registry = FileRegistry::default();
+        let path = PathBuf::from("/private/tmp/llama-cli");
+        let selected = registry.register_runtime(path.clone(), "llama-cli".into(), 42);
+        let serialized = serde_json::to_string(&selected).unwrap();
+        assert!(selected.file_ref.starts_with("runtime_"));
+        assert!(!serialized.contains("/private/tmp"));
+        assert_eq!(registry.take(&selected.file_ref), Some(path));
     }
 }

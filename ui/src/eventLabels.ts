@@ -41,6 +41,26 @@ export const EVENT_CATEGORY_TITLES: Record<EventCategory, string> = {
 };
 
 const EVENT_LABELS: Record<string, EventLabel> = {
+  CategoryCreated: {
+    title: "Eigene Kategorie angelegt",
+    description: "Eine neue benutzerdefinierte Kategorie wurde mit stabilem internem Code angelegt.",
+    category: "OTHER",
+  },
+  CategoryRenamed: {
+    title: "Kategorie umbenannt",
+    description: "Der sichtbare Name wurde geändert; bestehende Buchungszuordnungen bleiben erhalten.",
+    category: "OTHER",
+  },
+  CategoryArchived: {
+    title: "Kategorie archiviert",
+    description: "Die Kategorie wird für neue Zuordnungen ausgeblendet; historische Buchungen bleiben unverändert.",
+    category: "OTHER",
+  },
+  CategoryRestored: {
+    title: "Kategorie wieder aktiviert",
+    description: "Die archivierte Kategorie steht wieder für neue Zuordnungen zur Verfügung.",
+    category: "OTHER",
+  },
   // Datei und Abschnitte
   ImportFileAnalyzed: {
     title: "Datei lokal analysiert",
@@ -52,6 +72,21 @@ const EVENT_LABELS: Record<string, EventLabel> = {
     title: "Kontoabschnitt übersprungen",
     description:
       "Ein Kontoabschnitt wurde ausdrücklich vom Import ausgeschlossen und bleibt unberücksichtigt.",
+    category: "FILE",
+  },
+  ImportFormatFingerprintCreated: {
+    title: "Importformat erkannt",
+    description: "Die technische Struktur des Exports wurde ohne Finanzinhalte als reproduzierbarer Fingerabdruck erfasst.",
+    category: "FILE",
+  },
+  UnknownImportFormatDetected: {
+    title: "Unbekanntes Importformat erkannt",
+    description: "Für diesen Datei- und Abschnittsaufbau ist noch kein bestätigtes Importprofil vorhanden.",
+    category: "FILE",
+  },
+  ImportFormatChangeDetected: {
+    title: "Änderung des Importformats erkannt",
+    description: "Die Exportstruktur unterscheidet sich von der bestätigten Version und muss erneut geprüft werden.",
     category: "FILE",
   },
 
@@ -66,6 +101,41 @@ const EVENT_LABELS: Record<string, EventLabel> = {
     title: "Dauerhafte Kontozuordnung bestätigt",
     description:
       "Die Zuordnung von Bank, Kontoabschnitt und lokalem Konto wurde dauerhaft gespeichert und wird künftigen Importen erneut vorgeschlagen.",
+    category: "MAPPING",
+  },
+  ImportMappingProposed: {
+    title: "Importzuordnung vorgeschlagen",
+    description: "Das lokale Modell hat einen bearbeitbaren Vorschlag erzeugt; es wurden keine Finanzdaten importiert.",
+    category: "MAPPING",
+  },
+  ImportMappingValidationCompleted: {
+    title: "Importzuordnung geprüft",
+    description: "Die Zuordnung wurde deterministisch gegen sämtliche Datensätze des Abschnitts geprüft.",
+    category: "MAPPING",
+  },
+  ImportMappingConfirmed: {
+    title: "Importzuordnung bestätigt",
+    description: "Das geprüfte Mapping wurde ausdrücklich bestätigt und darf als Profil gespeichert werden.",
+    category: "MAPPING",
+  },
+  ImportMappingRejected: {
+    title: "Importzuordnung verworfen",
+    description: "Der Vorschlag wurde verworfen und wird nicht produktiv verwendet.",
+    category: "MAPPING",
+  },
+  ImportProfileCreated: {
+    title: "Importprofil erstellt",
+    description: "Aus der bestätigten Zuordnung wurde ein versioniertes, deterministisches Profil erstellt.",
+    category: "MAPPING",
+  },
+  ImportProfileReused: {
+    title: "Importprofil wiederverwendet",
+    description: "Ein bestätigtes Profil wurde ohne erneuten AI-Aufruf auf den Export angewendet.",
+    category: "MAPPING",
+  },
+  ImportProfileSuperseded: {
+    title: "Importprofil ersetzt",
+    description: "Eine neue Profilversion wurde aktiviert; die ältere Version bleibt für historische Importe erhalten.",
     category: "MAPPING",
   },
 
@@ -385,6 +455,91 @@ const EVENT_LABELS: Record<string, EventLabel> = {
   ForecastSuperseded: {
     title: "Prognose ersetzt",
     description: "Eine Prognose wurde durch eine neu berechnete Version abgelöst.",
+    category: "OTHER",
+  },
+  CategoryShadowModeEnabled: {
+    title: "Kategorie-Shadow-Mode aktiviert",
+    description: "Das lokale Modell darf geeignete Transaktionen ausschließlich zur lokalen Qualitätsmessung bewerten.",
+    category: "OTHER",
+  },
+  CategoryShadowModeDisabled: {
+    title: "Kategorie-Shadow-Mode deaktiviert",
+    description: "Neue lokale Kategorievorhersagen wurden deaktiviert; vorhandene Evaluationen bleiben erhalten.",
+    category: "OTHER",
+  },
+  CategoryEvaluationRunStarted: {
+    title: "Historische Kategorie-Evaluation gestartet",
+    description: "Bestätigte historische Kategorien werden lokal und ohne Übergabe der Ground Truth ausgewertet.",
+    category: "OTHER",
+  },
+  CategoryEvaluationRunProgressed: {
+    title: "Historische Kategorie-Evaluation fortgeschritten",
+    description: "Der lokale Evaluationslauf hat einen weiteren Datensatz verarbeitet.",
+    category: "OTHER",
+  },
+  CategoryEvaluationRunPaused: {
+    title: "Kategorie-Evaluation pausiert",
+    description: "Der lokale Evaluationslauf wurde angehalten und kann manuell fortgesetzt werden.",
+    category: "OTHER",
+  },
+  CategoryEvaluationRunResumed: {
+    title: "Kategorie-Evaluation fortgesetzt",
+    description: "Ein angehaltener lokaler Evaluationslauf wurde manuell fortgesetzt.",
+    category: "OTHER",
+  },
+  CategoryEvaluationRunCompleted: {
+    title: "Kategorie-Evaluation abgeschlossen",
+    description: "Der lokale Evaluationslauf wurde vollständig verarbeitet.",
+    category: "OTHER",
+  },
+  CategoryEvaluationRunCancelled: {
+    title: "Kategorie-Evaluation abgebrochen",
+    description: "Der lokale Evaluationslauf wurde beendet; bereits erzeugte Ergebnisse bleiben erhalten.",
+    category: "OTHER",
+  },
+  CategorySuggestionGenerated: {
+    title: "Kategorie vorgeschlagen",
+    description: "Das lokale Modell hat eine Kategorie vorgeschlagen. Die Zuordnung ist noch nicht fachlich wirksam.",
+    category: "OTHER",
+  },
+  CategorySuggestionConfirmed: {
+    title: "Kategorie bestätigt",
+    description: "Der lokale AI-Vorschlag wurde vom Benutzer bestätigt und als reguläre Klassifikation gespeichert.",
+    category: "OTHER",
+  },
+  CategorySuggestionCorrected: {
+    title: "Kategorie korrigiert",
+    description: "Der lokale AI-Vorschlag wurde vom Benutzer geändert und die ausgewählte Kategorie bestätigt.",
+    category: "OTHER",
+  },
+  CategorySuggestionRejected: {
+    title: "Kategorie-Vorschlag abgelehnt",
+    description: "Der lokale AI-Vorschlag wurde verworfen; daraus entstand keine fachliche Klassifikation.",
+    category: "OTHER",
+  },
+  CategorySuggestionSuperseded: {
+    title: "Kategorie-Vorschlag ersetzt",
+    description: "Eine neue lokale Inferenz hat den offenen Vorschlag versioniert ersetzt.",
+    category: "OTHER",
+  },
+  ClassificationRuleCreatedFromSuggestion: {
+    title: "Regel aus Kategorieentscheidung erstellt",
+    description: "Der Benutzer hat ausdrücklich eine deterministische Regel aus einem geprüften AI-Vorschlag erstellt.",
+    category: "OTHER",
+  },
+  CategorySuggestionValidationFailed: {
+    title: "Shadow-Vorhersage verworfen",
+    description: "Eine Modellantwort hat die technische oder fachliche Validierung nicht bestanden.",
+    category: "OTHER",
+  },
+  CategorySuggestionEvaluated: {
+    title: "Shadow-Vorhersage ausgewertet",
+    description: "Die Vorhersage wurde gegen eine bestätigte Nutzerentscheidung verglichen.",
+    category: "OTHER",
+  },
+  CategorySuggestionEvaluationSuperseded: {
+    title: "Kategorie-Evaluation ersetzt",
+    description: "Eine spätere Nutzerkorrektur hat eine neue, versionierte Evaluation erzeugt.",
     category: "OTHER",
   },
 };

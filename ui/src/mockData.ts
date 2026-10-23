@@ -29,11 +29,11 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
   const month = String(payload.month ?? "2026-07");
   const responses: Record<string, Envelope<unknown>> = {
     GetCapabilityManifest: envelope({
-      extension_version: "1.2.0",
-      product_version: "1.4.0",
-      contract_version: "1.4.0",
+      extension_version: "1.5.0",
+      product_version: "1.5.0",
+      contract_version: "1.5.0",
       store_schema_version: 3,
-      ui_contract_version: "1.4.0",
+      ui_contract_version: "1.5.0",
       schema_version: "1.0.0",
       capabilities: {
         imports: true,
@@ -44,6 +44,7 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
         investment_funding_capability: true,
         classification: true,
         reconciliation: true,
+        review_inbox: true,
         recurring_patterns: true,
         forecasting: true,
         forecast_evaluation: true,
@@ -106,12 +107,25 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
       remaining_expected_income: "320.00",
       remaining_expected_expenses: "603.40",
       savings_rate: "39.85",
-      open_reviews: 7,
+      open_reviews: 6,
       liquid_balance: "18420.00",
       liquid_balance_as_of: "2026-07-20",
       projected_month_end_balance: "18136.60",
       net_worth: "86420.00",
       net_worth_as_of: "2026-07-20",
+    }),
+    GetReviewInbox: envelope({
+      total_open: 6,
+      items_by_type: { CATEGORY: 1, AI_SUGGESTION: 1, BALANCE: 1, IMPORT: 1, RELATION: 1, FORMAT_CHANGE: 1 },
+      severity: { ERROR: 1, WARNING: 4, INFO: 1 },
+      items: [
+        { review_id: "review:category:txn_104", review_type: "CATEGORY", severity: "WARNING", entity_id: "txn_104", entity_type: "TRANSACTION", account_ids: ["acc_main"], title: "Kategorie für Markthalle Süd festlegen", description: "Diese Buchung besitzt noch keine bestätigte Kategorie.", action_target: { page: "transactions", view: "detail", entity_id: "txn_104" }, created_at: "2026-07-18T10:24:01Z" },
+        { review_id: "review:ai:csg_1", review_type: "AI_SUGGESTION", severity: "INFO", entity_id: "csg_11111111111111111111111111111111", entity_type: "CATEGORY_SUGGESTION", account_ids: ["acc_main"], title: "AI-Vorschlag für Café Morgen", description: "Der lokale Kategorievorschlag wartet auf Bestätigung oder Korrektur.", action_target: { page: "categories", view: "suggestions", entity_id: "csg_11111111111111111111111111111111" }, created_at: "2026-07-20T10:00:00Z" },
+        { review_id: "review:balance:acc_card", review_type: "BALANCE", severity: "WARNING", entity_id: "acc_card:difference", entity_type: "ACCOUNT", account_ids: ["acc_card"], title: "Saldenabweichung prüfen: Kreditkarte", description: "Der Kontostand benötigt eine fachliche Prüfung oder Aktualisierung.", action_target: { page: "accounts", view: "detail", entity_id: "acc_card" }, created_at: "2026-07-20T10:00:00Z" },
+        { review_id: "review:import:export_july", review_type: "IMPORT", severity: "ERROR", entity_id: "export_july", entity_type: "IMPORT", account_ids: ["acc_main"], title: "Import Juli prüfen", description: "Der Import wurde nicht vollständig abgeschlossen.", action_target: { page: "imports", view: "detail", entity_id: "export_july" }, created_at: "2026-07-20T10:00:00Z" },
+        { review_id: "review:relation:rel_1", review_type: "RELATION", severity: "WARNING", entity_id: "rel_1", entity_type: "TRANSACTION_RELATION", account_ids: ["acc_main"], title: "Mögliche Dublette prüfen", description: "Die vorgeschlagene Beziehung ist noch offen.", action_target: { page: "transactions", view: "duplicates", entity_id: "txn_104" }, created_at: "2026-07-20T10:00:00Z" },
+        { review_id: "review:format:analysis_1", review_type: "FORMAT_CHANGE", severity: "WARNING", entity_id: "analysis_1", entity_type: "IMPORT_FORMAT", account_ids: [], title: "Geändertes Importformat prüfen", description: "Die erkannten Spalten benötigen eine bestätigte Zuordnung.", action_target: { page: "imports", view: "format_mapping", entity_id: "analysis_1" }, created_at: "2026-07-20T10:00:00Z" },
+      ],
     }),
     ListAccounts: envelope({ accounts: [
       { account_id: "acc_main", display_name: "Girokonto", account_type: "CHECKING", institution: "Lokale Bank", currency: "EUR", status: "ACTIVE", include_in_cashflow: true, include_in_liquidity: true, include_in_net_worth: true, opened_at: "2022-03-01", closed_at: null, masked_reference: "•••• 4821", latest_balance: "6420.00", available_balance: "6180.00", balance_date: "2026-07-20", balance_source: "IMPORT_SOURCE", reconciliation_status: "MATCHED", freshness: "CURRENT" },
@@ -134,9 +148,9 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
     ListAccountOverviews: envelope({
       period: MOCK_PERIOD,
       accounts: [
-        { account_id: "acc_main", display_name: "Girokonto", account_type: "CHECKING", institution: "Lokale Bank", currency: "EUR", status: "ACTIVE", reported_balance: "6420.00", reported_balance_date: "2026-07-20", calculated_balance: "6420.00", calculated_balance_date: "2026-07-20", balance_difference: "0.00", reconciliation_status: "MATCHED", period_income: "4320.00", period_expenses: "2598.40", period_net_cashflow: "1721.60", last_import_month: "2026-07", last_import_status: "IMPORTED", open_review_count: 0, data_freshness: "CURRENT", position_count: null, acquisition_value: null, open_investment_funding_relations: 0, overview_status: "MATCHED" },
-        { account_id: "acc_savings", display_name: "Rücklage", account_type: "SAVINGS", institution: "Lokale Bank", currency: "EUR", status: "ACTIVE", reported_balance: "12000.00", reported_balance_date: "2026-07-18", calculated_balance: null, calculated_balance_date: null, balance_difference: null, reconciliation_status: "NOT_RECONCILED", period_income: "0.00", period_expenses: "0.00", period_net_cashflow: "0.00", last_import_month: null, last_import_status: null, open_review_count: 1, data_freshness: "CURRENT", position_count: null, acquisition_value: null, open_investment_funding_relations: 0, overview_status: "REVIEW_REQUIRED" },
-        { account_id: "acc_depot", display_name: "Wertpapierdepot", account_type: "BROKERAGE", institution: "Direktbank", currency: "EUR", status: "ACTIVE", reported_balance: "72500.00", reported_balance_date: "2026-07-01", calculated_balance: "72500.00", calculated_balance_date: "2026-07-01", balance_difference: "0.00", reconciliation_status: "MATCHED", period_income: "0.00", period_expenses: "0.00", period_net_cashflow: "0.00", last_import_month: "2026-07", last_import_status: "IMPORTED", open_review_count: 0, data_freshness: "CURRENT", position_count: 2, acquisition_value: "68000.00", open_investment_funding_relations: 0, overview_status: "MATCHED" },
+        { account_id: "acc_main", display_name: "Girokonto", account_type: "CHECKING", institution: "Lokale Bank", currency: "EUR", status: "ACTIVE", reported_balance: "6420.00", reported_balance_date: "2026-07-20", calculated_balance: "6420.00", calculated_balance_date: "2026-07-20", balance_difference: "0.00", reconciliation_status: "MATCHED", period_income: "4320.00", period_expenses: "2598.40", period_net_cashflow: "1721.60", last_import_month: "2026-07", last_import_status: "IMPORTED", open_review_count: 4, data_freshness: "CURRENT", position_count: null, acquisition_value: null, open_investment_funding_relations: 0, overview_status: "MATCHED" },
+        { account_id: "acc_savings", display_name: "Rücklage", account_type: "SAVINGS", institution: "Lokale Bank", currency: "EUR", status: "ACTIVE", reported_balance: "12000.00", reported_balance_date: "2026-07-18", calculated_balance: null, calculated_balance_date: null, balance_difference: null, reconciliation_status: "NOT_RECONCILED", period_income: "0.00", period_expenses: "0.00", period_net_cashflow: "0.00", last_import_month: null, last_import_status: null, open_review_count: 0, data_freshness: "CURRENT", position_count: null, acquisition_value: null, open_investment_funding_relations: 0, overview_status: "REVIEW_REQUIRED" },
+        { account_id: "acc_depot", display_name: "Wertpapierdepot", account_type: "BROKERAGE", institution: "Direktbank", currency: "EUR", status: "ACTIVE", reported_balance: "72500.00", reported_balance_date: "2026-07-01", calculated_balance: "72500.00", calculated_balance_date: "2026-07-01", balance_difference: "0.00", reconciliation_status: "MATCHED", position_reconciliation_status: "MATCHED", period_income: "0.00", period_expenses: "0.00", period_net_cashflow: "0.00", last_import_month: "2026-07", last_import_status: "IMPORTED", open_review_count: 0, data_freshness: "CURRENT", position_count: 2, acquisition_value: "68000.00", open_investment_funding_relations: 0, overview_status: "MATCHED" },
         { account_id: "acc_card", display_name: "Kreditkarte", account_type: "CREDIT_CARD", institution: "Kartenbank", currency: "EUR", status: "ACTIVE", reported_balance: "-2480.00", reported_balance_date: "2026-05-31", calculated_balance: "-2437.20", calculated_balance_date: "2026-05-31", balance_difference: "-42.80", reconciliation_status: "REVIEW_REQUIRED", period_income: "0.00", period_expenses: "0.00", period_net_cashflow: "0.00", last_import_month: "2026-05", last_import_status: "IMPORTED", open_review_count: 1, data_freshness: "STALE", position_count: null, acquisition_value: null, open_investment_funding_relations: 0, overview_status: "STALE" },
       ],
     }, "STALE"),
@@ -146,12 +160,13 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
       period: MOCK_PERIOD,
       period_summary: { account_id: String(payload.account_id ?? "acc_main"), period: MOCK_PERIOD, period_income: "4320.00", period_expenses: "2598.40", period_net_cashflow: "1721.60", transaction_count: 5, balance_point_count: 2 },
       balance_history: [
-        { balance_type: "OPENING", balance_date: "2026-06-30", reported_value: "5200.00", calculated_value: "5200.00", currency: "EUR", source: "MANUAL_ENTRY", confirmation_status: "CONFIRMED", correction_status: "AS_SUGGESTED", adjustment_reason: null, carry_forward_source_reconciliation_id: "balrec_prev", sequence_number: 810 },
+        { balance_type: "OPENING", balance_date: "2026-06-30", reported_value: "5200.00", calculated_value: "5200.00", currency: "EUR", source: "MANUAL_ENTRY", confirmation_status: "CONFIRMED", correction_status: "AS_SUGGESTED", adjustment_reason: null, carry_forward_source_reconciliation_id: "balrec_prev", carry_forward_source_period_end: "2026-06-30", carry_forward_source_reported_balance: "5200.00", sequence_number: 810 },
         { balance_type: "CLOSING", balance_date: "2026-07-20", reported_value: "6420.00", calculated_value: null, currency: "EUR", source: "IMPORT_SOURCE", confirmation_status: "CONFIRMED", correction_status: "MANUAL", adjustment_reason: null, carry_forward_source_reconciliation_id: null, sequence_number: 891 },
         { balance_type: "CALCULATED", balance_date: "2026-07-20", reported_value: "6420.00", calculated_value: "6420.00", currency: "EUR", source: "RECONCILED", confirmation_status: "CONFIRMED", correction_status: "MATCHED", adjustment_reason: null, carry_forward_source_reconciliation_id: null, sequence_number: 892 },
       ],
       reconciliation: { status: "MATCHED", calculated_balance: "6420.00", reported_balance: "6420.00", balance_difference: "0.00" },
-      open_review_count: 0,
+      open_review_count: 4,
+      open_reviews: [],
     }),
     GetAccountPeriodSummary: envelope({ account_id: String(payload.account_id ?? "acc_main"), period: MOCK_PERIOD, period_income: "4320.00", period_expenses: "2598.40", period_net_cashflow: "1721.60", transaction_count: 5, balance_point_count: 2 }),
     ListAccountTransactions: envelope({
@@ -249,8 +264,24 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
         "FOOD_GROCERIES", "FOOD_RESTAURANTS", "MOBILITY_PUBLIC_TRANSPORT",
         "MOBILITY_FUEL", "HEALTH", "INSURANCE", "LEISURE", "SUBSCRIPTIONS",
         "EDUCATION", "FEES", "TAXES", "OTHER_EXPENSE", "UNCLASSIFIED",
-      ].map((category_code) => ({ category_code })),
+      ].map((category_code) => ({
+        category_code,
+        display_name: category_code === "FOOD_GROCERIES" ? "Lebensmittel" : category_code === "UNCLASSIFIED" ? "Nicht kategorisiert" : category_code.toLowerCase().replaceAll("_", " ").replace(/(^|\s)\S/g, (value) => value.toUpperCase()),
+        category_type: category_code.startsWith("INCOME_") ? "INCOME" : "EXPENSE",
+        status: "ACTIVE", system_category: true, parent_category_code: null,
+        color: null, icon: null, legacy: false,
+      })),
     }),
+    GetCategorySuggestionReviewSummary: envelope({ unclassified_count: 2, pending_count: 2, confirmed_today_count: 1, corrected_count: 1, stale_count: 0, automatic_acceptance: false }),
+    ListPendingCategorySuggestions: envelope({ suggestions: [
+      { suggestion_id: "csg_11111111111111111111111111111111", transaction_id: "txn_108", category_code: "FOOD_RESTAURANTS", status: "PENDING", raw_confidence: 0.982, confidence_kind: "MODEL_SELF_REPORTED_CONFIDENCE", alternatives: [{ category_code: "FOOD_GROCERIES", confidence: 0.012 }, { category_code: "OTHER_EXPENSE", confidence: 0.006 }], reason_codes: ["MERCHANT_SEMANTICS", "DESCRIPTION_SEMANTICS"], model_id: "finance-assistant-small", model_version: "1.0.0", merchant: "Café Morgen", description: "Kartenzahlung", amount: "-11.80", currency: "EUR", historical_accuracy: null },
+      { suggestion_id: "csg_22222222222222222222222222222222", transaction_id: "txn_109", category_code: "SUBSCRIPTIONS", status: "PENDING", raw_confidence: 0.913, confidence_kind: "MODEL_SELF_REPORTED_CONFIDENCE", alternatives: [{ category_code: "LEISURE", confidence: 0.061 }, { category_code: "OTHER_EXPENSE", confidence: 0.026 }], reason_codes: ["KNOWN_SERVICE_TYPE", "RECURRING_PATTERN"], model_id: "finance-assistant-small", model_version: "1.0.0", merchant: "Digital Services", description: "Monatlicher Dienst", amount: "-8.99", currency: "EUR", historical_accuracy: null },
+    ] }),
+    GetCategorySuggestion: envelope(null, "EMPTY"),
+    GetTransactionCategorySuggestion: envelope(null, "EMPTY"),
+    ListClassificationRules: envelope({ rules: [
+      { rule_id: "rule_rewe", field: "counterparty", operator: "EQUALS", value: "REWE", category_code: "FOOD_GROCERIES", priority: 250, source: "USER_FROM_AI_SUGGESTION", suggestion_id: "csg_11111111111111111111111111111111" },
+    ] }),
     ListClassificationReviews: envelope({ reviews: [
       { transaction_id: "txn_108", counterparty: "Café Morgen", amount: "-11.80", proposed_category: "FOOD_RESTAURANTS", confidence: "MEDIUM" },
       { transaction_id: "txn_109", counterparty: "Digital Services", amount: "-8.99", proposed_category: "SUBSCRIPTIONS", confidence: "LOW" },
@@ -293,7 +324,10 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
     GetStoreIntegrity: envelope({ status: "VALID", checked_at: "2026-07-20T21:42:03Z", store_schema_version: 2, event_count: 892, last_event_sequence: 892, import_file_count: 6, storage_encryption: "FERNET_AUTHENTICATED" }),
     GetKeyStatus: envelope({ database_key: { strategy: "KeychainKeyProvider", status: "AVAILABLE", fingerprint: "7f4a8bc2e19dd431" }, archive_key: { strategy: "KeychainKeyProvider", status: "AVAILABLE", fingerprint: "b9a0c14e383fed80", independent_from_store: true } }),
     GetMigrationStatus: envelope({ current_store_schema_version: 3, supported_store_schema_version: 3, status: "CURRENT", history: [{ migration_id: "store_v2_to_v3", from_version: 2, to_version: 3, applied_at: "2026-07-20T21:40:00Z", application_version: "0.9.0" }], downgrade_protection: "ENABLED" }),
-    GetLocalModelStatus: envelope({ status: "DISABLED", available: false, runtime: "llama.cpp", model: null, trust_zone: "PRIVATE_LOCAL", processing_location: "LOCAL_DEVICE", network_egress: "DENY", network_ingress: "DENY", import_mapping: false, category_suggestions: false, automatic_classification: false, error_code: null }),
+    GetLocalModelStatus: envelope({ status: "DISABLED", available: false, runtime: "llama.cpp", runtime_details: { runtime_id: null, provider: "LLAMA_CPP", version: null, binary_sha256: null, capabilities: [], registered_at: null, source: null, integrity_status: "MISSING", error_code: "LOCAL_AI_RUNTIME_NOT_FOUND" }, model: null, trust_zone: "PRIVATE_LOCAL", processing_location: "LOCAL_DEVICE", network_egress: "DENY", network_ingress: "DENY", import_mapping: false, category_suggestions: false, automatic_classification: false, error_code: null }),
+    GetCategoryShadowStatus: envelope({ enabled: false, mode: "SHADOW_ONLY", predictions: 0, evaluated: 0, pending_ground_truth: 0, max_concurrent_inferences: 1, classification_side_effects: "FORBIDDEN", local_model: { status: "DISABLED", available: false } }),
+    PreviewCategoryEvaluationRun: envelope({ eligible_transaction_count: 0, processing_location: "LOCAL_DEVICE", network_egress: "DENY", max_concurrent_inferences: 1 }),
+    GetCategoryEvaluationSummary: envelope({ prediction_count: 0, evaluated_count: 0, pending_ground_truth_count: 0, correct_count: 0, incorrect_count: 0, overall_accuracy: null, overall_status: "INSUFFICIENT_DATA", coverage: 0, invalid_output_rate: 0, timeout_rate: 0, thresholds: { "0.90": { sample_count: 0, accuracy: null, status: "INSUFFICIENT_DATA" }, "0.95": { sample_count: 0, accuracy: null, status: "INSUFFICIENT_DATA" }, "0.97": { sample_count: 0, accuracy: null, status: "INSUFFICIENT_DATA" }, "0.99": { sample_count: 0, accuracy: null, status: "INSUFFICIENT_DATA" } }, categories: [], confidence_kind: "MODEL_SELF_REPORTED_CONFIDENCE", minimum_sample: 30 }),
   };
   return responses[name] ?? envelope(null, "EMPTY");
 }

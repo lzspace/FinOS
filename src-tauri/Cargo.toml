@@ -1,6 +1,6 @@
 [package]
 name = "agent-os-finance-desktop"
-version = "1.2.0"
+version = "1.5.0"
 description = "Local-only Tauri host for Agent OS Finance"
 authors = ["Agent OS Finance"]
 edition = "2021"

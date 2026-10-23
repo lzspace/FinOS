@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/category_list.response.schema.json",
+  "title": "Finance category catalogue response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "state", "projection_sequence", "event_store_sequence", "projection_version", "freshness_status", "generated_at", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "state": { "enum": ["READY", "EMPTY", "STALE"] },
+    "projection_sequence": { "type": "integer", "minimum": 0 },
+    "event_store_sequence": { "type": "integer", "minimum": 0 },
+    "projection_version": { "type": "string" },
+    "freshness_status": { "enum": ["CURRENT", "STALE", "INVALID"] },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "data": {
+      "type": "object", "additionalProperties": false, "required": ["categories"],
+      "properties": { "categories": { "type": "array", "items": { "$ref": "#/$defs/Category" } } }
+    }
+  },
+  "$defs": {
+    "Category": {
+      "type": "object", "additionalProperties": true,
+      "required": ["category_code", "display_name", "category_type", "status", "system_category", "parent_category_code", "color", "icon", "legacy"],
+      "properties": {
+        "category_code": { "type": "string" }, "display_name": { "type": "string" },
+        "category_type": { "enum": ["INCOME", "EXPENSE", "TRANSFER", "INVESTMENT"] },
+        "status": { "enum": ["ACTIVE", "ARCHIVED"] }, "system_category": { "type": "boolean" },
+        "parent_category_code": { "type": ["string", "null"] }, "color": { "type": ["string", "null"] },
+        "icon": { "type": ["string", "null"] }, "legacy": { "type": "boolean" }
+      }
+    }
+  }
+}

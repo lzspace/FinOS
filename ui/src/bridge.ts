@@ -23,8 +23,9 @@ export interface DesktopFinanceIPC {
   selectImportFile(): Promise<SelectedImportFile | null>;
   selectLocalModelFile(): Promise<SelectedImportFile | null>;
   selectLocalModelManifest(): Promise<SelectedImportFile | null>;
-  invoke(operation: "query" | "command", payload: Record<string, unknown>): Promise<DesktopResponse>;
-  getRuntimeStatus(): Promise<DesktopResponse>;
+  selectLocalAIRuntime(): Promise<SelectedImportFile | null>;
+  invoke(requestId: string, operation: "query" | "command", payload: Record<string, unknown>): Promise<DesktopResponse>;
+  getRuntimeStatus(requestId: string): Promise<DesktopResponse>;
   /** Present only on the synthetic Vite development bridge. */
   readonly preview?: boolean;
 }
@@ -36,7 +37,8 @@ declare global {
 }
 
 const supportedCommands = new Set([
-  "ImportTransactions", "AnalyzeImportFile", "MapImportSections",
+  "ImportTransactions", "AnalyzeImportFile", "AnalyzeUnknownImportFormat",
+  "ValidateImportMapping", "ConfirmImportMapping", "RejectImportMapping", "MapImportSections",
   "ImportMappedSections", "RecordOpeningBalance", "RecordClosingBalance",
   "RecordOpeningSecurityPosition", "ConfirmEmptyOpeningSecurityPositions",
   "RecordClosingSecurityPosition", "ReconcileImportedPeriodBalance",
@@ -45,7 +47,8 @@ const supportedCommands = new Set([
   "DetectInvestmentFundingRelations", "ConfirmInvestmentFundingRelation",
   "RejectInvestmentFundingRelation", "BreakInvestmentFundingRelation",
   "ClassifyTransactions", "ConfirmClassification",
-  "RejectClassification", "CreateClassificationRule", "DetectDuplicates",
+  "RejectClassification", "CreateClassificationRule", "CreateCategory",
+  "RenameCategory", "ArchiveCategory", "RestoreCategory", "DetectDuplicates",
   "ConfirmDuplicate", "RejectDuplicate", "DetectTransfers", "ConfirmTransfer",
   "RejectTransfer", "BreakTransferMatch", "DetectRefunds", "ConfirmRefund",
   "RejectRefund", "DetectRecurringPatterns", "ConfirmRecurringPattern",
@@ -57,15 +60,19 @@ const supportedCommands = new Set([
   "CreateBackup", "VerifyBackup", "RestoreBackup", "DeleteBackup",
   "ExportFinanceData", "ImportFinanceArchive", "RotateEncryptionKey",
   "RepairLocalStore", "ValidateStoreIntegrity", "ExportDiagnostics",
-  "RegisterLocalModel", "EnableLocalModel", "DisableLocalModel",
+  "RegisterLocalAIRuntime", "RegisterLocalModel", "EnableLocalModel", "DisableLocalModel",
+  "EnableCategoryShadowMode", "DisableCategoryShadowMode",
+  "StartCategoryEvaluationRun", "PauseCategoryEvaluationRun",
+  "ResumeCategoryEvaluationRun", "CancelCategoryEvaluationRun",
+  "ConfirmCategorySuggestion", "CorrectCategorySuggestion",
+  "RejectCategorySuggestion", "CreateClassificationRuleFromSuggestion",
 ]);
 
 let previewRequest = 0;
 
-function previewResponse(operation: DesktopOperation, result: unknown): DesktopResponse {
-  previewRequest += 1;
+function previewResponse(requestId: string, operation: DesktopOperation, result: unknown): DesktopResponse {
   return {
-    request_id: `preview_${previewRequest}`,
+    request_id: requestId,
     operation,
     contract_version: DESKTOP_CONTRACT_VERSION,
     status: "OK",
@@ -90,22 +97,35 @@ export function installDevelopmentPreviewBridge(): void {
     async selectLocalModelManifest() {
       return null;
     },
+    async selectLocalAIRuntime() {
+      return null;
+    },
     async invoke(
+      requestId: string,
       operation: "query" | "command",
       payload: Record<string, unknown>,
     ) {
       if (operation === "query") {
-        return previewResponse("query", mockQuery(String(payload.name), asPayload(payload.payload)));
+        return previewResponse(requestId, "query", mockQuery(String(payload.name), asPayload(payload.payload)));
       }
       await new Promise((resolve) => window.setTimeout(resolve, 20));
-      return previewResponse("command", {
+      if (payload.name === "CreateCategory") {
+        const commandPayload = asPayload(payload.payload);
+        const displayName = String(commandPayload.display_name ?? "Neue Kategorie");
+        const slug = displayName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48);
+        return previewResponse(requestId, "command", {
+          schema_version: "1.0.0", status: "COMPLETED",
+          result: { category_code: `CUSTOM_${slug}`, display_name: displayName, category_type: commandPayload.category_type ?? "EXPENSE", status: "ACTIVE", system_category: false, parent_category_code: null, color: null, icon: null, legacy: false },
+        });
+      }
+      return previewResponse(requestId, "command", {
         schema_version: "1.0.0",
         status: "COMPLETED",
         result: 1,
       });
     },
-    async getRuntimeStatus() {
-      return previewResponse("runtime_status", {
+    async getRuntimeStatus(requestId: string) {
+      return previewResponse(requestId, "runtime_status", {
         preview: true,
         synthetic_fixtures_only: true,
         network_egress_disabled: true,
@@ -124,24 +144,75 @@ function asPayload(value: unknown): Record<string, unknown> {
 function unwrapDesktopResponse<T>(
   response: DesktopResponse,
   expectedOperation: DesktopOperation,
+  expectedRequestId: string,
 ): T {
   if (!response || typeof response !== "object") throw new DesktopResponseError();
   if (response.contract_version !== DESKTOP_CONTRACT_VERSION) {
     throw new DesktopContractCompatibilityError(response.contract_version);
   }
-  if (response.operation !== expectedOperation || !response.request_id) {
+  if (response.operation !== expectedOperation || response.request_id !== expectedRequestId) {
     throw new DesktopResponseError();
   }
   if (response.status === "ERROR") {
     throw new DesktopOperationError(
       response.error?.code ?? "DESKTOP_OPERATION_FAILED",
-      response.error?.message ?? "Der lokale Desktop-Vorgang ist fehlgeschlagen.",
+      userMessage(response.error?.code ?? "DESKTOP_OPERATION_FAILED"),
+      response.request_id,
     );
   }
   if (response.status !== "OK" || !Object.hasOwn(response, "result")) {
     throw new DesktopResponseError();
   }
   return response.result as T;
+}
+
+function requestId(): string {
+  const random = globalThis.crypto?.randomUUID?.().replaceAll("-", "");
+  previewRequest += 1;
+  return `req_${random ?? previewRequest.toString(16).padStart(32, "0")}`;
+}
+
+function userMessage(code: string): string {
+  const messages: Record<string, string> = {
+    LOCAL_MODEL_REFERENCE_EXPIRED: "Die Dateiauswahl ist abgelaufen. Bitte wähle Modell und Manifest erneut aus.",
+    LOCAL_MODEL_FILE_NOT_FOUND: "Eine ausgewählte Modelldatei ist nicht mehr vorhanden.",
+    LOCAL_MODEL_MANIFEST_INVALID: "Das Modellmanifest ist ungültig oder beschädigt.",
+    LOCAL_MODEL_MANIFEST_INCOMPATIBLE: "Das Modellmanifest ist mit dieser Anwendung nicht kompatibel.",
+    LOCAL_MODEL_HASH_MISMATCH: "Die GGUF-Datei stimmt nicht mit dem Hash im Manifest überein.",
+    LOCAL_MODEL_FORMAT_UNSUPPORTED: "Das gewählte Modellformat wird nicht unterstützt.",
+    LOCAL_MODEL_PURPOSE_UNSUPPORTED: "Das Modell ist nicht für die unterstützten lokalen Aufgaben freigegeben.",
+    LOCAL_MODEL_RUNTIME_NOT_FOUND: "Die lokale AI-Laufzeit wurde in der Anwendung nicht gefunden.",
+    LOCAL_MODEL_RUNTIME_NOT_EXECUTABLE: "Die lokale AI-Laufzeit kann nicht ausgeführt werden.",
+    LOCAL_MODEL_RUNTIME_INCOMPATIBLE: "Die lokale AI-Laufzeit ist nicht kompatibel.",
+    LOCAL_AI_RUNTIME_NOT_FOUND: "Die llama.cpp-Laufzeit wurde nicht gefunden. Bitte wähle sie erneut aus.",
+    LOCAL_AI_RUNTIME_NOT_EXECUTABLE: "Die gewählte llama.cpp-Datei ist nicht ausführbar.",
+    LOCAL_AI_RUNTIME_INCOMPATIBLE: "Die gewählte llama.cpp-Version ist nicht kompatibel.",
+    LOCAL_AI_RUNTIME_HASH_MISMATCH: "Die llama.cpp-Laufzeit wurde seit der Registrierung verändert.",
+    LOCAL_AI_RUNTIME_START_FAILED: "Die llama.cpp-Laufzeit konnte nicht sicher gestartet werden.",
+    LOCAL_MODEL_REGISTRATION_FAILED: "Das lokale Modell konnte nicht dauerhaft registriert werden.",
+    LOCAL_AI_GRAMMAR_INITIALIZATION_FAILED: "Die kontrollierte JSON-Ausgabe konnte nicht initialisiert werden.",
+    LOCAL_AI_INVALID_OUTPUT: "Die lokale AI hat eine ungültige Antwort erzeugt.",
+    LOCAL_AI_JSON_PARSE_FAILED: "Die lokale AI hat kein gültiges JSON erzeugt.",
+    LOCAL_AI_SCHEMA_VALIDATION_FAILED: "Die lokale AI-Antwort entspricht nicht dem erwarteten Schema.",
+    LOCAL_AI_SEMANTIC_VALIDATION_FAILED: "Die lokale AI-Antwort ist fachlich nicht gültig.",
+    LOCAL_AI_TIMEOUT: "Die lokale AI hat das Zeitlimit überschritten.",
+    CATEGORY_SHADOW_DISABLED: "Der Kategorie-Shadow-Mode ist deaktiviert.",
+    CATEGORY_TRANSACTION_NOT_ELIGIBLE: "Diese Transaktion ist für die lokale Kategorie-Evaluation nicht geeignet.",
+    CATEGORY_TAXONOMY_UNAVAILABLE: "Die aktive Kategorie-Taxonomie ist nicht verfügbar.",
+    CATEGORY_EVALUATION_ALREADY_RUNNING: "Es läuft bereits eine historische Kategorie-Evaluation.",
+    CATEGORY_EVALUATION_NOT_FOUND: "Der Evaluationslauf wurde nicht gefunden.",
+    CATEGORY_EVALUATION_INCOMPATIBLE_MODEL: "Der Evaluationslauf gehört zu einer anderen Modell- oder Policy-Version.",
+    CATEGORY_SUGGESTION_NOT_FOUND: "Der Kategorie-Vorschlag wurde nicht gefunden.",
+    CATEGORY_SUGGESTION_NOT_PENDING: "Der Kategorie-Vorschlag wurde bereits geprüft.",
+    CATEGORY_SUGGESTION_STALE: "Der Kategorie-Vorschlag ist nicht mehr aktuell und kann nicht bestätigt werden.",
+    CATEGORY_SUGGESTION_CATEGORY_INVALID: "Die gewählte Kategorie ist für diese Transaktion nicht zulässig.",
+    CATEGORY_SUGGESTION_DECISION_REQUIRED: "Erst nach einer Bestätigung oder Korrektur kann eine Regel erstellt werden.",
+    CATEGORY_SUGGESTION_RULE_VALUE_MISSING: "Für diese Transaktion kann keine passende Regel erstellt werden.",
+    CATEGORY_TRANSACTION_ALREADY_CLASSIFIED: "Die Transaktion ist bereits durch eine vorrangige Entscheidung kategorisiert.",
+    DESKTOP_WORKER_UNAVAILABLE: "Der lokale Hintergrunddienst ist nicht verfügbar.",
+    DESKTOP_WORKER_INVALID_RESPONSE: "Der lokale Hintergrunddienst hat ungültig geantwortet.",
+  };
+  return messages[code] ?? "Der lokale Vorgang konnte nicht ausgeführt werden.";
 }
 
 installDevelopmentPreviewBridge();
@@ -161,8 +232,9 @@ export class FinanceBridge {
   }
 
   async query<T>(name: string, payload: Record<string, unknown> = {}): Promise<Envelope<T>> {
-    const response = await this.ipc().invoke("query", { name, payload });
-    const envelope = unwrapDesktopResponse<Envelope<T>>(response, "query");
+    const id = requestId();
+    const response = await this.ipc().invoke(id, "query", { name, payload });
+    const envelope = unwrapDesktopResponse<Envelope<T>>(response, "query", id);
     if (!envelope || typeof envelope !== "object") throw new DesktopResponseError();
     if (envelope.schema_version !== CONTRACT_SCHEMA_VERSION) {
       throw new SchemaCompatibilityError(envelope.schema_version);
@@ -172,8 +244,9 @@ export class FinanceBridge {
 
   async command(name: string, payload: Record<string, unknown> = {}): Promise<unknown> {
     if (!supportedCommands.has(name)) throw new Error(`Nicht unterstützter Command: ${name}`);
-    const response = await this.ipc().invoke("command", { name, payload });
-    return unwrapDesktopResponse(response, "command");
+    const id = requestId();
+    const response = await this.ipc().invoke(id, "command", { name, payload });
+    return unwrapDesktopResponse(response, "command", id);
   }
 
   async selectImportFile(): Promise<SelectedImportFile | null> {
@@ -188,8 +261,22 @@ export class FinanceBridge {
     return this.ipc().selectLocalModelManifest();
   }
 
+  async selectLocalAIRuntime(): Promise<SelectedImportFile | null> {
+    const id = requestId();
+    try {
+      return await this.ipc().selectLocalAIRuntime();
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      const code = /^LOCAL_AI_RUNTIME_[A-Z0-9_]+$/.test(raw)
+        ? raw
+        : "DESKTOP_OPERATION_FAILED";
+      throw new DesktopOperationError(code, userMessage(code), id);
+    }
+  }
+
   async getRuntimeStatus<T = unknown>(): Promise<T> {
-    return unwrapDesktopResponse<T>(await this.ipc().getRuntimeStatus(), "runtime_status");
+    const id = requestId();
+    return unwrapDesktopResponse<T>(await this.ipc().getRuntimeStatus(id), "runtime_status", id);
   }
 }
 
@@ -201,9 +288,9 @@ export class DesktopBridgeUnavailableError extends Error {
 }
 
 export class DesktopResponseError extends Error {
-  readonly code = "DESKTOP_RESPONSE_INVALID";
+  readonly code = "DESKTOP_WORKER_INVALID_RESPONSE";
   constructor() {
-    super("DESKTOP_RESPONSE_INVALID");
+    super("DESKTOP_WORKER_INVALID_RESPONSE");
   }
 }
 
@@ -215,8 +302,8 @@ export class DesktopContractCompatibilityError extends Error {
 }
 
 export class DesktopOperationError extends Error {
-  constructor(readonly code: string, message: string) {
-    super(`${code}: ${message}`);
+  constructor(readonly code: string, message: string, readonly requestId: string) {
+    super(message);
   }
 }
 

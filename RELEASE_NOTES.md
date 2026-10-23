@@ -1,4 +1,84 @@
-# Agent OS Finance 1.4.0
+# Agent OS Finance 1.5.0
+
+The account area is now the central operational workspace. Money accounts
+show reported and calculated balances separately alongside income, expenses,
+net cashflow, last import and the account-specific slice of the canonical
+review inbox. Brokerage accounts instead lead with positions and their latest
+position reconciliation. Carry-forward balances expose their confirmed source
+period and any manual adjustment, while transactions, imports, balances,
+categories and audit events link to one another. Closed accounts remain
+available in an explicit read-only view.
+
+The Review Center consolidates unresolved categories, local AI suggestions,
+balance issues, incomplete imports, transaction and investment relations, and
+import-format changes in the rebuildable `GetReviewInbox` projection. The
+navigation badge, dashboard count, type summaries, and task list use that same
+projection; resolved decisions disappear without a second persisted source of
+truth. Each task carries a typed action target into the affected transaction,
+account, category suggestion, or import. Navigation is reduced to the primary
+finance workflows, and technical states now share one user-facing German
+status vocabulary while internal codes remain under technical details.
+
+Version 1.5.0 adds the offline AI import-mapping slice. Unknown tabular bank
+exports receive a content-free structural fingerprint; exact confirmed
+profiles are reused without an AI call, while relevant format changes are
+classified and audited. An optional, explicitly enabled compatibility rule can
+accept additive columns only after a successful full-file dry run.
+
+The local model receives only the detected structure and at most five
+deterministically selected, redacted sample rows. Its strictly structured
+proposal is limited to an allowlist of target fields and transformations. It
+cannot import, append events or create a profile. The UI exposes a fully
+editable mapping table, automatic local revalidation, explicit warning
+confirmation and manual mapping when the model is unavailable. Confirmation
+creates an immutable, versioned profile; proposal, validation, user diff,
+model, policy and fingerprint versions remain auditable across restart,
+backup and restore.
+
+Category Shadow Mode adds a strictly separate local evaluation layer for
+ordinary debit and credit transactions. It sends only redacted merchant and
+description text, direction, currency and an amount bucket to the registered
+local model. Predictions never change classifications, cashflow, reports,
+forecasts or rules. Historical user-confirmed categories can be evaluated in
+restart-safe, manually resumable runs; model, policy and taxonomy versions are
+kept in separate metric groups. Accuracy, precision, recall and confidence
+threshold metrics remain hidden as insufficient until at least 30 applicable
+samples exist. Shadow history and evaluation runs survive restart, backup and
+restore.
+
+Category Suggestion Review makes local-model proposals visible for genuinely
+unresolved transactions while preserving deterministic and user decisions as
+higher-priority sources. Suggestions remain non-effective until the user
+confirms or corrects them; rejection leaves the transaction unclassified and
+there is no confidence-based auto-accept. The category area now provides an
+explicit review queue, controlled reason codes, alternatives, model confidence,
+optional historically measured accuracy and an opt-in action for creating a
+deterministic rule from the decision. Pending suggestions are immutable,
+restart-safe and become stale or are versionedly superseded when their
+transaction, taxonomy, inference policy or model basis changes.
+
+Inference policy 1.1.0 changes the productive llama.cpp structured-output
+backend from the experimental `--json-schema` sampler to controlled GBNF.
+Reasoning is disabled for health checks and finance inference. GBNF only
+constrains the generated JSON shape: parsing, Draft 2020-12 validation and the
+finance semantic validator remain mandatory and authoritative. Grammar,
+parsing, schema, semantic and timeout failures retain stable error codes and
+fall back to manual import mapping without affecting the Finance Core.
+
+llama.cpp runtime discovery no longer depends on the shell `PATH`. A signed
+runtime bundled with the macOS application is preferred; development builds
+may use an explicitly configured binary, and users can register a controlled
+external fallback through the native file picker. The host passes only an
+opaque reference to React. File type, symlink status, executable permission,
+SHA-256, version and minimum compatible build are verified before use and on
+every restart. Missing or invalid runtimes disable only Local AI; all Finance
+Core functions remain available.
+
+The product and additive application/UI contracts are 1.5.0. The physical
+store schema remains 3 because the new state is represented by versioned
+events and existing encrypted import-file storage.
+
+## 1.4.0
 
 Version 1.4.0 unifies period selection and the account workspace. A central,
 typed period control (`MONTH`, `YEAR`, `CUSTOM_RANGE`) replaces the free month

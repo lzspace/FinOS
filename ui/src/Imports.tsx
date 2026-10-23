@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { financeBridge, SchemaCompatibilityError, type SelectedImportFile } from "./bridge";
 import type { Account, CapabilityManifest, Envelope, ViewState } from "./contracts/generated";
 import { EVENT_CATEGORY_ORDER, EVENT_CATEGORY_TITLES, eventLabel, type EventCategory } from "./eventLabels";
+import { statusLabel } from "./statusLabels";
 
 const OPENING_BALANCE_REASON_TEXT: Record<string, string> = {
   MISSING_CLOSING_BALANCE: "Der vorherige Monat besitzt keinen abschließend bestätigten Endsaldo.",
@@ -66,6 +67,50 @@ type HistoryRow = {
   parser_version: string;
   source_file_hash: string;
   resumable: boolean;
+  completed_at?: string | null;
+  period_start?: string;
+  period_end?: string;
+  record_count?: number;
+  account_count?: number;
+  account_names?: string[];
+  open_review_count?: number;
+};
+type MappingField = { source_column: string; target_field: string; confidence: number };
+type MappingTransformation = { target_field: string; type: string; parameters: Json };
+type EditableImportMapping = {
+  section_type: string;
+  field_mappings: MappingField[];
+  transformations: MappingTransformation[];
+  constants: Record<string, string>;
+  ignored_columns: string[];
+  confidence: number;
+  warnings: string[];
+};
+type MappingValidation = {
+  validation_result_id: string;
+  status: "VALID" | "VALID_WITH_WARNINGS" | "INVALID";
+  rows_total: number;
+  rows_valid: number;
+  rows_invalid: number;
+  errors: string[];
+  warnings: string[];
+};
+type MappingProposal = EditableImportMapping & {
+  proposal_id: string;
+  analysis_id: string;
+  model_id: string;
+  model_version: string;
+  validation: MappingValidation;
+};
+type UnknownFormatResult = {
+  status: string;
+  format_status?: string;
+  analysis_id: string;
+  ai_used?: boolean;
+  ai_error_code?: string;
+  source_structure?: { columns: string[]; encoding: string; delimiter: string; section_title: string };
+  proposal?: MappingProposal;
+  profile?: Json;
 };
 
 const steps = ["Datei analysieren", "Konten zuordnen", "Anfangswerte", "Vorschau", "Ergebnis"];
@@ -77,6 +122,12 @@ const requiredCapabilities = [
   "investment_funding_capability",
 ];
 const shortHash = (value: string) => value ? `${value.slice(0, 12)}…${value.slice(-8)}` : "–";
+const importStatus = statusLabel;
+const categoryName = (value: string) => ({
+  UNCLASSIFIED: "Nicht kategorisiert", FOOD_GROCERIES: "Lebensmittel",
+  FOOD_RESTAURANTS: "Restaurant", HOUSING_RENT: "Miete",
+  INCOME_SALARY: "Gehalt", SUBSCRIPTIONS: "Abonnements",
+}[value] ?? value.replace(/^CUSTOM_/, "").toLowerCase().replaceAll("_", " ").replace(/(^|\s)\S/g, (letter) => letter.toUpperCase()));
 const previousDay = (value: string) => {
   const current = new Date(`${value}T00:00:00Z`);
   current.setUTCDate(current.getUTCDate() - 1);
@@ -96,7 +147,7 @@ async function query<T>(name: string, payload: Json = {}): Promise<QueryState<T>
   }
 }
 
-export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: CapabilityManifest }) {
+export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMonth: string; manifest: CapabilityManifest; focusExportId?: string; focusView?: string }) {
   const [wizard, setWizard] = useState<QueryState<Wizard | null>>({ state: "LOADING" });
   const [history, setHistory] = useState<QueryState<{ imports: HistoryRow[] }>>({ state: "LOADING" });
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -119,6 +170,12 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
   const [result, setResult] = useState<Json | null>(null);
   const [detail, setDetail] = useState<Json | null>(null);
   const [newAccountName, setNewAccountName] = useState<Record<string, string>>({});
+  const [unknownFormat, setUnknownFormat] = useState<UnknownFormatResult | null>(null);
+  const [editableMapping, setEditableMapping] = useState<EditableImportMapping | null>(null);
+  const [mappingValidation, setMappingValidation] = useState<MappingValidation | null>(null);
+  const [mappingComment, setMappingComment] = useState("");
+  const [allowAdditionalColumns, setAllowAdditionalColumns] = useState(false);
+  const [openedFocus, setOpenedFocus] = useState<string | null>(null);
 
   const refresh = useCallback(async (exportId?: string) => {
     const [wizardResult, historyResult, accountResult] = await Promise.all([
@@ -210,6 +267,101 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Die lokale Dateiauswahl ist fehlgeschlagen.");
     }
+  };
+
+  const chooseUnknownFile = async () => {
+    if (!bankIdentifier.trim()) {
+      setMessage("Gib zuerst eine Bankkennung an, damit Formatänderungen sicher erkannt werden können.");
+      return;
+    }
+    try {
+      const selected = await financeBridge.selectImportFile();
+      if (!selected) return;
+      setSelectedFile(selected);
+      await run("VALIDATING", async () => {
+        const response = await financeBridge.command("AnalyzeUnknownImportFormat", {
+          source_file_reference: selected.file_ref,
+          bank_identifier: bankIdentifier.trim(),
+          regenerate: Boolean(unknownFormat),
+        }) as { result?: UnknownFormatResult };
+        if (!response.result) throw new Error("Die Formatanalyse lieferte kein Ergebnis.");
+        setUnknownFormat(response.result);
+        const proposal = response.result.proposal;
+        if (proposal) {
+          const mapping: EditableImportMapping = {
+            section_type: proposal.section_type,
+            field_mappings: proposal.field_mappings,
+            transformations: proposal.transformations,
+            constants: proposal.constants,
+            ignored_columns: proposal.ignored_columns,
+            confidence: proposal.confidence,
+            warnings: proposal.warnings,
+          };
+          setEditableMapping(mapping);
+          setMappingValidation(proposal.validation);
+        }
+        setMessage(response.result.status === "KNOWN_EXACT"
+          ? "Importformat erkannt. Das bestätigte Profil wird ohne AI wiederverwendet."
+          : response.result.ai_used
+            ? "Das lokale Modell hat einen bearbeitbaren Vorschlag erstellt. Noch wurde nichts importiert."
+            : "Lokale AI ist nicht verfügbar. Das Mapping kann vollständig manuell erstellt werden.");
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Die lokale Formatanalyse ist fehlgeschlagen.");
+    }
+  };
+
+  const validateEditedMapping = useCallback(async (mapping: EditableImportMapping) => {
+    if (!unknownFormat?.proposal) return;
+    try {
+      const response = await financeBridge.command("ValidateImportMapping", {
+        proposal_id: unknownFormat.proposal.proposal_id,
+        mapping,
+      }) as { result?: MappingValidation };
+      if (response.result) setMappingValidation(response.result);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Das Mapping konnte nicht validiert werden.");
+    }
+  }, [unknownFormat]);
+
+  useEffect(() => {
+    if (!editableMapping || !unknownFormat?.proposal) return;
+    const timer = window.setTimeout(() => { void validateEditedMapping(editableMapping); }, 350);
+    return () => window.clearTimeout(timer);
+  }, [editableMapping, unknownFormat, validateEditedMapping]);
+
+  const confirmEditedMapping = async () => {
+    if (!editableMapping || !unknownFormat?.proposal || !mappingValidation) return;
+    await run("EXECUTING", async () => {
+      const response = await financeBridge.command("ConfirmImportMapping", {
+        proposal_id: unknownFormat.proposal?.proposal_id,
+        final_mapping: editableMapping,
+        validation_result_id: mappingValidation.validation_result_id,
+        confirmation_comment: mappingComment.trim() || null,
+        compatibility_rules: allowAdditionalColumns ? ["ALLOW_ADDITIONAL_COLUMNS"] : [],
+      }) as { result?: { profile?: Json } };
+      setUnknownFormat((current) => current ? { ...current, status: "KNOWN_EXACT", profile: response.result?.profile } : current);
+      setMessage("Mapping bestätigt. Das versionierte Profil wird bei identischen Folgeexporten deterministisch und ohne AI verwendet.");
+    });
+  };
+
+  const updateEditableMapping = (value: EditableImportMapping) => {
+    setEditableMapping(value);
+    setMappingValidation(null);
+  };
+
+  const rejectEditedMapping = async () => {
+    if (!unknownFormat?.proposal) return;
+    await run("EXECUTING", async () => {
+      await financeBridge.command("RejectImportMapping", {
+        proposal_id: unknownFormat.proposal?.proposal_id,
+        reason: mappingComment.trim() || null,
+      });
+      setUnknownFormat(null);
+      setEditableMapping(null);
+      setMappingValidation(null);
+      setMessage("Der Mapping-Vorschlag wurde verworfen. Es wurden keine Finanzdaten importiert.");
+    });
   };
 
   const confirmAnalysis = () => {
@@ -403,24 +555,71 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
     setMessage(`Import ${row.report_month} wird an der gespeicherten Stelle fortgesetzt.`);
   };
 
-  if (incompatible.length || manifest.contract_version && manifest.contract_version !== "1.3.0") {
-    return <section className="panel import-blocker" role="alert"><h2>Import nicht kompatibel</h2><p>Die installierte lokale Extension stellt den vollständigen 1.2.0-Importvertrag nicht bereit.</p><code>{incompatible.join(", ") || `Vertrag ${manifest.contract_version}`}</code></section>;
+  useEffect(() => {
+    if (!focusExportId || openedFocus === focusExportId || !history.data) return;
+    if (focusView === "format_mapping") {
+      setOpenedFocus(focusExportId);
+      void (async () => {
+        const proposalResponse = await query<MappingProposal>("GetImportMappingProposal", { proposal_id: focusExportId });
+        const proposal = proposalResponse.data;
+        if (!proposal) return;
+        const formatResponse = await query<Json>("GetFormatChangeDetails", { analysis_id: proposal.analysis_id });
+        const fingerprint = (formatResponse.data?.fingerprint as Json | undefined) ?? {};
+        const sourceColumns = Array.from(new Set([
+          ...proposal.field_mappings.map((item) => item.source_column),
+          ...proposal.ignored_columns,
+        ]));
+        setUnknownFormat({
+          status: "PROPOSAL_READY",
+          format_status: String(formatResponse.data?.status ?? "FORMAT_CHANGED"),
+          analysis_id: proposal.analysis_id,
+          ai_used: proposal.model_id !== "manual",
+          source_structure: {
+            columns: sourceColumns,
+            encoding: String(fingerprint.encoding ?? "utf-8"),
+            delimiter: String(fingerprint.delimiter ?? ";"),
+            section_title: "Importabschnitt",
+          },
+          proposal,
+        });
+        setEditableMapping({
+          section_type: proposal.section_type,
+          field_mappings: proposal.field_mappings,
+          transformations: proposal.transformations,
+          constants: proposal.constants,
+          ignored_columns: proposal.ignored_columns,
+          confidence: proposal.confidence,
+          warnings: proposal.warnings,
+        });
+        setMappingValidation(proposal.validation);
+      })();
+      return;
+    }
+    const row = history.data.imports.find((item) => item.export_id === focusExportId);
+    if (!row) return;
+    setOpenedFocus(focusExportId);
+    void openHistory(row);
+  }, [focusExportId, focusView, history.data, openedFocus]);
+
+  if (incompatible.length || manifest.contract_version && !["1.3.0", "1.4.0", "1.5.0"].includes(manifest.contract_version)) {
+    return <section className="panel import-blocker" role="alert"><h2>Import nicht kompatibel</h2><p>Die installierte lokale Extension stellt den vollständigen 1.5.0-Importvertrag nicht bereit.</p><code>{incompatible.join(", ") || `Vertrag ${manifest.contract_version}`}</code></section>;
   }
 
   return <div className="imports-workspace">
     <section className="import-hero panel">
       <span className="import-icon" aria-hidden="true">⇩</span>
       <div><h2>Monatlichen Bankexport importieren</h2><p>Eine lokale Datei, eine Bank, ein Berichtsmonat – mehrere getrennt geprüfte Kontoabschnitte.</p></div>
-      <button className="primary" disabled={busy} onClick={chooseFile}>{selectedFile ? "Andere CSV wählen" : "CSV auswählen"}</button>
+      <div className="import-hero-actions"><button className="primary" disabled={busy} onClick={chooseFile}>{selectedFile ? "Andere CSV wählen" : "CSV auswählen"}</button><button className="secondary" disabled={busy || !bankIdentifier.trim()} onClick={chooseUnknownFile}>{unknownFormat ? "Vorschlag neu erzeugen" : "Unbekanntes Format analysieren"}</button></div>
     </section>
     <ol className="import-stepper" aria-label="Importfortschritt">
       {steps.map((title, index) => <li key={title} className={step === index + 1 ? "active" : step > index + 1 ? "complete" : ""} aria-current={step === index + 1 ? "step" : undefined}><span>{step > index + 1 ? "✓" : index + 1}</span><strong>{title}</strong>{index < steps.length - 1 && <i aria-hidden="true" />}</li>)}
     </ol>
     {operation !== "READY" && <div className="status-banner" role="status"><strong>{operation === "VALIDATING" ? "Lokale Prüfung läuft" : "Import wird verarbeitet"}</strong><span>Bitte diesen Arbeitsbereich geöffnet lassen.</span></div>}
     {message && <div className="toast" role="status" aria-live="polite">{message}</div>}
+    {unknownFormat && <ImportMappingEditor result={unknownFormat} mapping={editableMapping} validation={mappingValidation} comment={mappingComment} onComment={setMappingComment} allowAdditionalColumns={allowAdditionalColumns} onAllowAdditionalColumns={setAllowAdditionalColumns} onMapping={updateEditableMapping} onValidate={() => editableMapping && validateEditedMapping(editableMapping)} onConfirm={confirmEditedMapping} onReject={rejectEditedMapping} busy={busy} />}
     {wizard.state === "LOADING" && <section className="panel page-state"><span className="loader" /><p>Gespeicherten Importstand laden …</p></section>}
     {(wizard.state === "ERROR" || wizard.state === "INCOMPATIBLE_SCHEMA") && <section className="panel page-state error" role="alert"><h2>Importprojektion nicht verfügbar</h2><p>{wizard.error}</p><button className="secondary" onClick={() => refresh()}>Erneut versuchen</button></section>}
-    {!analysis && wizard.state !== "LOADING" && <section className="panel import-empty"><h2>Neuen Import beginnen</h2><p>Wähle einen monatlichen CSV-Export. React erhält nur eine kurzlebige Dateireferenz, niemals den lokalen Pfad.</p><label>Bankkennung, falls nicht im Export enthalten<input value={bankIdentifier} onChange={(event) => setBankIdentifier(event.target.value)} placeholder="z. B. BANK_A" /></label><button className="primary" onClick={chooseFile}>Lokale CSV auswählen</button></section>}
+    {!analysis && !unknownFormat && wizard.state !== "LOADING" && <section className="panel import-empty"><h2>Neuen Import beginnen</h2><p>Wähle einen monatlichen CSV-Export. React erhält nur eine kurzlebige Dateireferenz, niemals den lokalen Pfad.</p><label>Bankkennung, falls nicht im Export enthalten<input value={bankIdentifier} onChange={(event) => setBankIdentifier(event.target.value)} placeholder="z. B. BANK_A" /></label><div className="empty-actions"><button className="primary" onClick={chooseFile}>Lokale CSV auswählen</button><button className="secondary" disabled={!bankIdentifier.trim()} onClick={chooseUnknownFile}>Unbekanntes Format analysieren</button></div></section>}
     {analysis && <>
       {uiMonth !== analysis.report_month && <div className="status-banner"><strong>Abweichender Auswertungsmonat</strong><span>UI: {uiMonth} · Importdatei: {analysis.report_month}. Importiert wird ausschließlich der Dateizeitraum.</span></div>}
       {step === 1 && <AnalysisStep analysis={analysis} fileName={selectedFile?.display_name} bankIdentifier={bankIdentifier} onBankIdentifier={setBankIdentifier} onConfirm={confirmAnalysis} />}
@@ -432,6 +631,75 @@ export function Imports({ uiMonth, manifest }: { uiMonth: string; manifest: Capa
     <History result={history} onOpen={openHistory} onResume={resume} />
     {detail && <HistoryDetail detail={detail} onClose={() => setDetail(null)} />}
   </div>;
+}
+
+const mappingTargets = [
+  ["booking_date", "Buchungsdatum"], ["value_date", "Wertstellung"],
+  ["transaction_type_raw", "Vorgang"], ["counterparty", "Anbieter / Gegenpartei"],
+  ["description", "Beschreibung"], ["amount", "Betrag"], ["currency", "Währung"],
+] as const;
+
+function ImportMappingEditor({ result, mapping, validation, comment, onComment, allowAdditionalColumns, onAllowAdditionalColumns, onMapping, onValidate, onConfirm, onReject, busy }: {
+  result: UnknownFormatResult;
+  mapping: EditableImportMapping | null;
+  validation: MappingValidation | null;
+  comment: string;
+  onComment: (value: string) => void;
+  allowAdditionalColumns: boolean;
+  onAllowAdditionalColumns: (value: boolean) => void;
+  onMapping: (value: EditableImportMapping) => void;
+  onValidate: () => void;
+  onConfirm: () => void;
+  onReject: () => void;
+  busy: boolean;
+}) {
+  if (result.status === "KNOWN_EXACT" || result.status === "KNOWN_COMPATIBLE") {
+    return <section className="panel mapping-editor recognized-format"><span className="mapping-status success">✓</span><div><span className="eyebrow">IMPORTFORMAT ERKANNT</span><h2>{String(result.profile?.name ?? "Bestätigtes Importprofil")}</h2><p>Dieses Profil wird deterministisch verwendet. Die lokale AI wurde nicht aufgerufen.</p><small>Profilversion {String(result.profile?.profile_version ?? "–")} · Quelle {String(result.profile?.source ?? "USER_CONFIRMED")}</small></div></section>;
+  }
+  if (!mapping || !result.proposal) return null;
+  const columns = result.source_structure?.columns ?? Array.from(new Set([
+    ...mapping.field_mappings.map((item) => item.source_column), ...mapping.ignored_columns,
+  ]));
+  const updateColumn = (source: string, target: string) => {
+    const fields = mapping.field_mappings.filter((item) => item.source_column !== source);
+    const ignored = mapping.ignored_columns.filter((item) => item !== source);
+    if (!target) {
+      onMapping({ ...mapping, field_mappings: fields, transformations: mapping.transformations, ignored_columns: [...ignored, source] });
+      return;
+    }
+    const nextFields = [...fields, { source_column: source, target_field: target, confidence: 1 }];
+    const hasTransformation = mapping.transformations.some((item) => item.target_field === target);
+    const nextTransformations = hasTransformation ? mapping.transformations : [
+      ...mapping.transformations,
+      ...(target === "booking_date" || target === "value_date" ? [{ target_field: target, type: "PARSE_DATE", parameters: { format: "DD.MM.YYYY" } }] : []),
+      ...(target === "amount" ? [{ target_field: target, type: "PARSE_DECIMAL", parameters: { decimal_separator: ",", thousands_separator: "." } }] : []),
+    ];
+    onMapping({ ...mapping, field_mappings: nextFields, transformations: nextTransformations, ignored_columns: ignored });
+  };
+  const updateTransformation = (target: string, value: string) => {
+    const remaining = mapping.transformations.filter((item) => item.target_field !== target);
+    if (!value) return onMapping({ ...mapping, transformations: remaining });
+    const [type, preset] = value.split(":");
+    const parameters: Json = type === "PARSE_DATE" ? { format: preset }
+      : type === "PARSE_DECIMAL" ? { decimal_separator: preset === "DE" ? "," : ".", thousands_separator: preset === "DE" ? "." : "," }
+        : {};
+    onMapping({ ...mapping, transformations: [...remaining, { target_field: target, type, parameters }] });
+  };
+  const valid = validation?.status === "VALID" || validation?.status === "VALID_WITH_WARNINGS";
+  const warningConfirmationMissing = validation?.status === "VALID_WITH_WARNINGS" && !comment.trim();
+  return <section className="panel mapping-editor">
+    <header><div><span className="eyebrow">LOKALER MAPPING-ASSISTENT</span><h2>{result.format_status === "FORMAT_CHANGED" ? "Geändertes Importformat prüfen" : "Spaltenzuordnung prüfen"}</h2><p>{result.ai_used ? "Vorschlag des lokalen Modells – vollständig bearbeitbar und noch nicht bestätigt." : "Manuelles Mapping – Finance bleibt auch ohne lokales Modell verfügbar."}</p></div><span className={`mapping-status ${validation?.status === "VALID" ? "success" : validation?.status === "INVALID" ? "error" : "review"}`}>{validation?.status ?? "PRÜFUNG"}</span></header>
+    <div className="mapping-meta"><span>{result.source_structure?.section_title ?? "Tabellarischer Abschnitt"}</span><span>{result.source_structure?.encoding} · Trennzeichen „{result.source_structure?.delimiter}“</span><span>Modell: {result.ai_used ? `${result.proposal.model_id} ${result.proposal.model_version}` : "nicht verwendet"}</span></div>
+    <div className="mapping-options"><label>Abschnittstyp<select value={mapping.section_type} onChange={(event) => onMapping({ ...mapping, section_type: event.target.value })}><option value="CHECKING">Girokonto</option><option value="SAVINGS">Sparkonto</option><option value="BROKERAGE">Depot</option><option value="UNKNOWN">Unbekannt</option></select></label><label>Konstante Währung<input maxLength={3} placeholder="z. B. EUR" value={mapping.constants.currency ?? ""} onChange={(event) => onMapping({ ...mapping, constants: event.target.value ? { ...mapping.constants, currency: event.target.value.toUpperCase() } : {} })} /></label></div>
+    <div className="mapping-table" role="table" aria-label="Importzuordnung">
+      <div className="mapping-table-head" role="row"><span>Quellspalte</span><span>Zielfeld</span><span>Transformation</span><span>Status</span></div>
+      {columns.map((source) => { const field = mapping.field_mappings.find((item) => item.source_column === source); const transform = mapping.transformations.find((item) => item.target_field === field?.target_field); const transformValue = transform?.type === "PARSE_DATE" ? `${transform.type}:${String(transform.parameters.format)}` : transform?.type === "PARSE_DECIMAL" ? `${transform.type}:${transform.parameters.decimal_separator === "," ? "DE" : "EN"}` : transform?.type ?? ""; return <div className="mapping-table-row" role="row" key={source}><strong>{source}</strong><select aria-label={`Zielfeld für ${source}`} value={field?.target_field ?? ""} onChange={(event) => updateColumn(source, event.target.value)}><option value="">Spalte ignorieren</option>{mappingTargets.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><select aria-label={`Transformation für ${source}`} disabled={!field} value={transformValue} onChange={(event) => field && updateTransformation(field.target_field, event.target.value)}><option value="">Keine</option><option value="TRIM">Leerzeichen entfernen</option><option value="PARSE_DATE:DD.MM.YY">Datum DD.MM.YY</option><option value="PARSE_DATE:DD.MM.YYYY">Datum DD.MM.YYYY</option><option value="PARSE_DATE:YYYY-MM-DD">Datum YYYY-MM-DD</option><option value="PARSE_DECIMAL:DE">Dezimalzahl deutsch</option><option value="PARSE_DECIMAL:EN">Dezimalzahl international</option><option value="NORMALIZE_CURRENCY">Währung normalisieren</option></select><span className={field ? "row-valid" : "row-ignored"}>{field ? "zugeordnet" : "ignoriert"}</span></div>; })}
+    </div>
+    <div className={`mapping-validation ${validation?.status === "INVALID" ? "error" : "success"}`}><strong>{validation ? `${validation.rows_valid} / ${validation.rows_total} Datensätzen gültig` : "Validierung ausstehend"}</strong>{validation && <span>{validation.rows_invalid} fehlerhaft</span>}{validation?.errors.map((error) => <code key={error}>{error}</code>)}</div>
+    <label className="mapping-comment">Bestätigungskommentar {validation?.status === "VALID_WITH_WARNINGS" ? "(bei Warnungen erforderlich)" : "(optional)"}<textarea value={comment} onChange={(event) => onComment(event.target.value)} /></label>
+    <label className="mapping-compatibility"><input type="checkbox" checked={allowAdditionalColumns} onChange={(event) => onAllowAdditionalColumns(event.target.checked)} /> Künftig zusätzliche, nicht zugeordnete Spalten nach vollständigem Dry Run zulassen. Strukturänderungen werden weiterhin auditiert.</label>
+    <footer><div><button className="secondary" disabled={busy} onClick={() => onMapping({ section_type: result.proposal!.section_type, field_mappings: result.proposal!.field_mappings, transformations: result.proposal!.transformations, constants: result.proposal!.constants, ignored_columns: result.proposal!.ignored_columns, confidence: result.proposal!.confidence, warnings: result.proposal!.warnings })}>Vorschlag zurücksetzen</button><button className="secondary" disabled={busy} onClick={onValidate}>Erneut validieren</button></div><div><button className="danger-link" disabled={busy} onClick={onReject}>Verwerfen</button><button className="primary" disabled={busy || !valid || warningConfirmationMissing} onClick={onConfirm}>Mapping bestätigen und Profil anlegen</button></div></footer>
+  </section>;
 }
 
 function AnalysisStep({ analysis, fileName, bankIdentifier, onBankIdentifier, onConfirm }: { analysis: Analysis; fileName?: string; bankIdentifier: string; onBankIdentifier: (value: string) => void; onConfirm: () => void }) {
@@ -524,7 +792,7 @@ function ResultStep({ analysis, result, onReconcile, onRelation, busy }: { analy
 
 function History({ result, onOpen, onResume }: { result: QueryState<{ imports: HistoryRow[] }>; onOpen: (row: HistoryRow) => void; onResume: (row: HistoryRow) => void }) {
   const rows = result.data?.imports ?? [];
-  return <section className="panel import-history"><header><div><span className="eyebrow">DAUERHAFTE PROJEKTION</span><h2>Importhistorie</h2></div><span>{rows.length} Exporte</span></header>{result.state === "LOADING" ? <div className="page-state"><span className="loader" /></div> : rows.length === 0 ? <div className="page-state"><h3>Noch keine Importe</h3><p>Analysierte Dateien erscheinen hier ohne lokalen Dateipfad.</p></div> : <div className="history-table">{rows.map((row) => <article key={row.export_id}><div><strong>{row.bank_identifier} · {row.report_month}</strong><small>{new Date(row.imported_at).toLocaleString("de-DE")} · {row.import_profile}</small></div><span>{row.completed_section_count}/{row.section_count} Abschnitte</span><span className="status-badge">{row.status}</span><code>{shortHash(row.source_file_hash)}</code><div><button className="secondary small" onClick={() => onOpen(row)}>Details</button>{row.resumable && <button className="primary small" onClick={() => onResume(row)}>Fortsetzen</button>}</div></article>)}</div>}</section>;
+  return <section className="panel import-history"><header><div><span className="eyebrow">DAUERHAFTE PROJEKTION</span><h2>Importhistorie</h2><p>Jeder Export bleibt mit Zeitraum, Konten, Abschnitten und erzeugten Buchungen nachvollziehbar.</p></div><span>{rows.length} Exporte</span></header>{result.state === "LOADING" ? <div className="page-state"><span className="loader" /></div> : rows.length === 0 ? <div className="page-state"><h3>Noch keine Importe</h3><p>Analysierte Dateien erscheinen hier ohne lokalen Dateipfad.</p></div> : <div className="history-table">{rows.map((row) => <article key={row.export_id}><div><strong>{row.bank_identifier} · {row.report_month}</strong><small>{row.period_start && row.period_end ? `${row.period_start} – ${row.period_end}` : new Date(row.imported_at).toLocaleString("de-DE")}</small><small>{row.account_names?.length ? row.account_names.join(" · ") : row.import_profile}</small></div><span><b>{row.record_count ?? "–"}</b><small>Buchungen in {row.completed_section_count}/{row.section_count} Abschnitten</small></span><span className={`status-badge ${row.status.toLowerCase()}`}>{importStatus(row.status)}</span><span className={row.open_review_count ? "history-review warning" : "history-review"}><b>{row.open_review_count ?? 0}</b><small>offene Prüfungen</small></span><div><button className="secondary small" onClick={() => onOpen(row)}>Details</button>{row.resumable && <button className="primary small" onClick={() => onResume(row)}>Fortsetzen</button>}</div></article>)}</div>}</section>;
 }
 
 function actorLabel(entry: Json): string {
@@ -588,20 +856,29 @@ function AuditEntry({ entry }: { entry: Json }) {
 }
 
 function HistoryDetail({ detail, onClose }: { detail: Json; onClose: () => void }) {
+  const [tab, setTab] = useState<"overview" | "transactions" | "audit">("overview");
+  const [sectionFilter, setSectionFilter] = useState("ALL");
   const analysis = detail.analysis as Analysis | undefined;
+  const execution = (detail.execution_result as Json | undefined) ?? {};
+  const transactions = (detail.transactions as Json[] | undefined) ?? [];
+  const securities = (detail.security_transactions as Json[] | undefined) ?? [];
+  const review = (detail.review_summary as Json | undefined) ?? {};
+  const sectionResults = (execution.section_results as Json[] | undefined) ?? [];
+  const visibleTransactions = sectionFilter === "ALL" ? transactions : transactions.filter((item) => item.section_id === sectionFilter);
+  const visibleSecurities = sectionFilter === "ALL" ? securities : securities.filter((item) => item.section_id === sectionFilter);
   const audit = (detail.audit_history as Json[] | undefined) ?? [];
   const hasSequenceGaps = audit.some((entry, index) => index > 0 && Number(entry.sequence_number) - Number(audit[index - 1].sequence_number) > 1);
   const grouped = EVENT_CATEGORY_ORDER.map((category) => ({
     category,
     entries: audit.filter((entry) => eventLabel(String(entry.event_type)).category === category),
   })).filter((group) => group.entries.length > 0);
-  return <div className="dialog-backdrop"><section className="dialog wide" role="dialog" aria-modal="true" aria-labelledby="history-title"><button className="dialog-close" onClick={onClose} aria-label="Dialog schließen">×</button><span className="eyebrow">IMPORTDETAIL</span><h2 id="history-title">{analysis?.bank_identifier} · {analysis?.report_month}</h2><p>Status {String(detail.status)} · {analysis?.sections.length ?? 0} Abschnitte · Hash {shortHash(analysis?.source_file_hash ?? "")}</p>
-    <h3>Auditverlauf</h3>
-    {audit.length > 0 && <p className="audit-sequence-note">Die Nummer neben jedem Ereignis (z. B. „#{String(audit[audit.length - 1].sequence_number)}“) ist die globale Event-Sequenz des gesamten Datenbestands.{hasSequenceGaps && " Lücken zwischen den Nummern sind normal: Dazwischenliegende Events gehören zu anderen Konten oder Verarbeitungsschritten und werden hier nicht angezeigt."}</p>}
-    {grouped.map((group) => <div className="audit-group" key={group.category}>
-      <h4>{EVENT_CATEGORY_TITLES[group.category as EventCategory]}</h4>
-      <div className="audit-list">{group.entries.map((entry) => <AuditEntry entry={entry} key={String(entry.event_id ?? entry.sequence_number)} />)}</div>
-    </div>)}
-    {audit.length === 0 && <p className="page-state">Für diesen Import liegen noch keine Auditereignisse vor.</p>}
+  return <div className="dialog-backdrop"><section className="dialog wide import-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title"><button className="dialog-close" onClick={onClose} aria-label="Dialog schließen">×</button><span className="eyebrow">IMPORTDETAIL</span><div className="import-detail-head"><div><h2 id="history-title">{analysis?.bank_identifier} · {analysis?.report_month}</h2><p>{analysis?.period_start} – {analysis?.period_end} · Hash {shortHash(analysis?.source_file_hash ?? "")}</p></div><span className={`status-badge ${String(detail.status).toLowerCase()}`}>{importStatus(String(detail.status))}</span></div>
+    <div className="tabs" role="tablist" aria-label="Importdetails"><button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Übersicht</button><button role="tab" aria-selected={tab === "transactions"} onClick={() => setTab("transactions")}>Importierte Buchungen <span className="tab-count">{transactions.length + securities.length}</span></button><button role="tab" aria-selected={tab === "audit"} onClick={() => setTab("audit")}>Auditverlauf</button></div>
+    {tab === "overview" && <><section className="import-detail-metrics"><div><span>Kontobuchungen</span><strong>{transactions.length}</strong></div><div><span>Depotbuchungen</span><strong>{securities.length}</strong></div><div><span>Abschnitte</span><strong>{analysis?.sections.length ?? 0}</strong></div><div className={Number(review.total_open_count ?? 0) ? "warning" : ""}><span>Offene Prüfungen</span><strong>{String(review.total_open_count ?? 0)}</strong></div></section>{Number(review.total_open_count ?? 0) > 0 && <section className="import-review-summary"><strong>Noch zu prüfen</strong><span>{String(review.unclassified_transaction_count ?? 0)} nicht kategorisiert</span><span>{String(review.open_relation_count ?? 0)} Relationsvorschläge</span><span>{String(review.balance_review_count ?? 0)} Saldenabweichungen</span><span>{String(review.position_review_count ?? 0)} Bestandsabweichungen</span></section>}<section className="import-detail-sections">{(analysis?.sections ?? []).map((section) => { const result = sectionResults.find((item) => item.section_id === section.section_id); const reconciliation = (result?.balance_reconciliation ?? result?.position_reconciliation) as Json | undefined; return <article key={section.section_id}><div><strong>{section.original_title}</strong><small>{String(result?.local_account_name ?? result?.account_id ?? section.mapped_account_id ?? "Kein Konto")}</small></div><dl><div><dt>Typ</dt><dd>{section.section_type}</dd></div><div><dt>Datensätze</dt><dd>{String(result?.normalized_transaction_count ?? result?.security_transaction_count ?? section.record_count)}</dd></div><div><dt>Status</dt><dd>{importStatus(String(result?.status ?? section.import_status))}</dd></div><div><dt>Abgleich</dt><dd>{reconciliation ? importStatus(String(reconciliation.status)) : "Noch nicht durchgeführt"}</dd></div></dl><button className="secondary small" onClick={() => { setSectionFilter(section.section_id); setTab("transactions"); }}>Buchungen anzeigen</button></article>; })}</section></>}
+    {tab === "transactions" && <><div className="import-transaction-toolbar"><label>Abschnitt<select aria-label="Abschnitt filtern" value={sectionFilter} onChange={(event) => setSectionFilter(event.target.value)}><option value="ALL">Alle Abschnitte</option>{(analysis?.sections ?? []).map((section) => <option key={section.section_id} value={section.section_id}>{section.original_title}</option>)}</select></label><span>{visibleTransactions.length + visibleSecurities.length} Einträge</span></div>{visibleTransactions.length > 0 && <section className="panel table-panel import-transactions"><table><thead><tr><th>Datum</th><th>Konto</th><th>Anbieter / Beschreibung</th><th>Kategorie</th><th className="numeric">Betrag</th></tr></thead><tbody>{visibleTransactions.map((item) => <tr key={String(item.transaction_id)}><td>{String(item.booking_date)}</td><td>{String(item.account_name ?? item.account_id)}</td><td><strong>{String(item.counterparty || "Unbekannter Anbieter")}</strong><small>{String(item.description || "Keine Beschreibung")}</small></td><td><span className={item.category_code === "UNCLASSIFIED" ? "category-tag warn" : "category-tag"}>{categoryName(String(item.category_code))}</span></td><td className="numeric amount">{String(item.amount)} {String(item.currency)}</td></tr>)}</tbody></table></section>}{visibleSecurities.length > 0 && <section className="panel table-panel import-transactions"><h3>Wertpapierbewegungen</h3><table><thead><tr><th>Datum</th><th>Depot</th><th>Wertpapier</th><th>Vorgang</th><th className="numeric">Menge</th></tr></thead><tbody>{visibleSecurities.map((item) => <tr key={String(item.transaction_id)}><td>{String(item.trade_date ?? item.booking_date ?? "–")}</td><td>{String(item.account_name ?? item.account_id)}</td><td><strong>{String(item.security_name ?? item.security_identifier ?? "–")}</strong><small>{String(item.security_identifier ?? "")}</small></td><td>{importStatus(String(item.transaction_type ?? item.security_transaction_type ?? "–"))}</td><td className="numeric">{String(item.quantity ?? "–")}</td></tr>)}</tbody></table></section>}{visibleTransactions.length === 0 && visibleSecurities.length === 0 && <p className="page-state">Für diesen Abschnitt wurden keine Buchungen übernommen.</p>}</>}
+    {tab === "audit" && <><h3>Auditverlauf</h3>
+      {audit.length > 0 && <p className="audit-sequence-note">Die Nummer neben jedem Ereignis (z. B. „#{String(audit[audit.length - 1].sequence_number)}“) ist die globale Event-Sequenz des gesamten Datenbestands.{hasSequenceGaps && " Lücken zwischen den Nummern sind normal: Dazwischenliegende Events gehören zu anderen Konten oder Verarbeitungsschritten und werden hier nicht angezeigt."}</p>}
+      {grouped.map((group) => <div className="audit-group" key={group.category}><h4>{EVENT_CATEGORY_TITLES[group.category as EventCategory]}</h4><div className="audit-list">{group.entries.map((entry) => <AuditEntry entry={entry} key={String(entry.event_id ?? entry.sequence_number)} />)}</div></div>)}
+      {audit.length === 0 && <p className="page-state">Für diesen Import liegen noch keine Auditereignisse vor.</p>}</>}
   </section></div>;
 }

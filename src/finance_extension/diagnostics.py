@@ -23,6 +23,7 @@ ALLOWED_FIELDS = frozenset(
         "recorded_at",
         "operation_kind",
         "operation_name",
+        "operation",
         "duration_ms",
         "projection_duration_ms",
         "event_count",
@@ -31,6 +32,9 @@ ALLOWED_FIELDS = frozenset(
         "error_code",
         "component",
         "component_status",
+        "request_id",
+        "model_id",
+        "runtime_id",
     }
 )
 FORBIDDEN_FIELD_FRAGMENTS = (
@@ -68,6 +72,43 @@ class LocalDiagnosticRecorder:
             raise DiagnosticInvariantError("FINANCE_DIAGNOSTIC_VALUE_INVALID")
         error_code = fields.get("error_code")
         if error_code is not None and not re.fullmatch(r"FINANCE_[A-Z0-9_]+", str(error_code)):
+            raise DiagnosticInvariantError("FINANCE_DIAGNOSTIC_VALUE_INVALID")
+        record = {"recorded_at": datetime.now(UTC).isoformat(), **fields}
+        encoded = json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+        root = validate_runtime_path(self.data_dir)
+        root.mkdir(parents=True, exist_ok=True)
+        token = Fernet(self.key_provider.get_key()).encrypt(encoded)
+        with self.path.open("ab") as stream:
+            stream.write(token + b"\n")
+
+    def record_local_model_operation(
+        self,
+        *,
+        request_id: str,
+        operation: str,
+        error_code: str | None = None,
+        model_id: str | None = None,
+        runtime_id: str = "llama.cpp",
+    ) -> None:
+        """Record only correlation metadata, never paths, prompts, or samples."""
+        fields: dict[str, Any] = {
+            "request_id": request_id,
+            "operation": operation,
+            "component": "application",
+            "runtime_id": runtime_id,
+        }
+        if error_code is not None:
+            fields["error_code"] = error_code
+        if model_id is not None:
+            fields["model_id"] = model_id
+        unknown = set(fields) - {
+            "request_id", "operation", "component", "error_code", "model_id", "runtime_id"
+        }
+        if unknown or not re.fullmatch(r"req_[A-Za-z0-9_-]+", request_id):
+            raise DiagnosticInvariantError("FINANCE_DIAGNOSTIC_VALUE_INVALID")
+        if error_code is not None and not re.fullmatch(
+            r"(?:LOCAL_MODEL|LOCAL_AI|DESKTOP_WORKER|DESKTOP_OPERATION)_[A-Z0-9_]+", error_code
+        ):
             raise DiagnosticInvariantError("FINANCE_DIAGNOSTIC_VALUE_INVALID")
         record = {"recorded_at": datetime.now(UTC).isoformat(), **fields}
         encoded = json.dumps(record, sort_keys=True, separators=(",", ":")).encode()

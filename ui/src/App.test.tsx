@@ -1,16 +1,37 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { App, CriticalState, DesktopBridgeUnavailableState, DesktopServiceErrorState } from "./App";
+import { App, CriticalState, DesktopBridgeUnavailableState, DesktopServiceErrorState, localRuntimeSummary, normalizeCategory } from "./App";
 import { mockQuery } from "./mockData";
+import { statusLabel } from "./statusLabels";
 
 afterEach(cleanup);
 
 describe("Finance UI contract", () => {
+  it("uses one consistent user-facing status vocabulary", () => {
+    expect(["MATCHED", "DIFFERENCE", "REVIEW_REQUIRED", "PARTIALLY_COMPLETED", "EMPTY_COMPLETED", "STALE", "LOCKED"].map(statusLabel)).toEqual([
+      "Abgeglichen", "Abweichung", "Prüfung erforderlich", "Teilweise verarbeitet",
+      "Keine Buchungen", "Daten nicht aktuell", "Schreibgeschützt",
+    ]);
+  });
+  it("normalizes category rows from an older desktop worker without crashing", () => {
+    expect(normalizeCategory({ category_code: "CUSTOM_HAUSTIERE" })).toMatchObject({
+      display_name: "Haustiere",
+      category_type: "EXPENSE",
+      status: "ACTIVE",
+      system_category: false,
+      legacy: true,
+    });
+  });
+  it("renders settings safely while an older worker has no runtime details", () => {
+    expect(localRuntimeSummary({ status: "DISABLED", available: false })).toEqual({
+      version: "nicht eingerichtet",
+      integrity: "MISSING",
+    });
+  });
   it("derives navigation from the capability manifest", async () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Übersicht" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Wiederkehrend/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Konten/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Vermögen/ })).toBeInTheDocument();
     expect(screen.queryByText("Steuer")).not.toBeInTheDocument();
@@ -18,11 +39,30 @@ describe("Finance UI contract", () => {
     expect(
       within(screen.getByRole("navigation", { name: "Hauptnavigation" }))
         .getAllByRole("button")
-        .map((button) => button.textContent?.replace("7", "")),
+        .map((button) => button.textContent?.replace(/\d+/g, "")),
     ).toEqual([
-      "⌂Übersicht", "↕Transaktionen", "◫Kategorien", "▤Konten", "◈Vermögen",
-      "↻Wiederkehrend", "⌁Prognose", "✓Prüfungen", "⇩Importe", "⚙Einstellungen",
+      "⌂Übersicht", "↕Transaktionen", "▤Konten", "◫Kategorien", "⇩Importe",
+      "✓Prüfen", "◈Vermögen", "⌁Prognose", "⚙Einstellungen",
     ]);
+  });
+
+  it("uses the unified inbox count and opens the affected record", async () => {
+    render(<App />);
+    const reviewNavigation = await screen.findByRole("button", { name: /Prüfen.*6 offene Aufgaben/ });
+    fireEvent.click(reviewNavigation);
+
+    expect((await screen.findByText("offene Aufgaben")).parentElement).toHaveTextContent("6offene Aufgaben");
+    expect(screen.getByRole("button", { name: /Kategorien.*1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /AI-Vorschläge.*1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Saldenabweichungen.*1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Importe.*1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Relationen.*1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Formatänderungen.*1/ })).toBeInTheDocument();
+
+    const categoryReview = screen.getByText("Kategorie für Markthalle Süd festlegen").closest("article");
+    expect(categoryReview).not.toBeNull();
+    fireEvent.click(within(categoryReview as HTMLElement).getByRole("button", { name: "Öffnen" }));
+    expect(await screen.findByRole("dialog", { name: "Markthalle Süd" })).toBeInTheDocument();
   });
 
   it("renders account projections and stale balances explicitly", async () => {
@@ -30,7 +70,7 @@ describe("Finance UI contract", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
     expect(await screen.findByRole("heading", { name: "Konten" })).toBeInTheDocument();
     expect(await screen.findByText("Wertpapierdepot")).toBeInTheDocument();
-    expect(screen.getAllByText("Veraltet").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Daten nicht aktuell").length).toBeGreaterThan(0);
   });
 
   it("shows transaction context and persists a newly created category", async () => {
@@ -45,8 +85,8 @@ describe("Finance UI contract", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Neue Kategorie" }));
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Name der neuen Kategorie" }), { target: { value: "Haustiere" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Hinzufügen" }));
-    expect(within(dialog).getByRole("combobox", { name: "Kategorie" })).toHaveValue("CUSTOM_HAUSTIERE");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Anlegen" }));
+    await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Kategorie" })).toHaveValue("CUSTOM_HAUSTIERE"));
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Kategorie speichern" }));
     await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent("Kategorie wurde gespeichert"));
@@ -69,6 +109,9 @@ describe("Finance UI contract", () => {
     expect(screen.getByText("Schlüssel getrennt")).toBeInTheDocument();
     expect(screen.getByText(/Downgrade-Schutz aktiv/)).toBeInTheDocument();
     expect(screen.queryByText("Cloud-Synchronisation")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "llama.cpp wählen" })).toBeInTheDocument();
+    expect(screen.getByText(/Runtime: nicht eingerichtet/)).toBeInTheDocument();
+    expect(screen.getByText(/Integrität MISSING/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Wiederherstellen" }));
     expect(
@@ -76,6 +119,42 @@ describe("Finance UI contract", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Schlüssel rotieren" }));
     expect(screen.getByRole("button", { name: "Rotation bestätigen" })).toBeInTheDocument();
+  });
+
+  it("shows category shadow evaluation only in settings", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Transaktionen/ }));
+    expect(screen.queryByText("Shadow-Vorhersage")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Einstellungen/ }));
+    expect(await screen.findByRole("heading", { name: "Kategorie-Evaluation" })).toBeInTheDocument();
+    expect(screen.getByText(/Vorhersagen ändern keine Kategorien/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Aktivieren" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Historische Kategorien auswerten" })).toBeDisabled();
+  });
+
+  it("shows local category suggestions as an explicit review queue without auto-accept", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Kategorien/ }));
+    expect(await screen.findByText("AI-Vorschläge offen")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Vorschläge/ }));
+    expect(await screen.findByRole("heading", { name: "AI-Kategorievorschläge prüfen" })).toBeInTheDocument();
+    expect(screen.getByText(/kein Auto-Accept/i)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Bestätigen" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Ablehnen" })).toHaveLength(2);
+    expect(screen.getByText(/98,2/)).toBeInTheDocument();
+    expect(screen.queryByText(/Wahrscheinlichkeit, dass es richtig ist/i)).not.toBeInTheDocument();
+  });
+
+  it("offers understandable category management", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Kategorien/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Verwalten" }));
+    expect(await screen.findByRole("heading", { name: "Kategorien verwalten" })).toBeInTheDocument();
+    expect(screen.getByText(/Umbenennen verändert bestehende Zuordnungen nicht/)).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("z. B. Haustiere"), { target: { value: "Haustiere" } });
+    expect(screen.getByRole("button", { name: "Kategorie anlegen" })).toBeEnabled();
+    expect(screen.getByText(/Systemkategorien/)).toBeInTheDocument();
   });
 
   it("blocks financial views when bundle integrity failed", () => {
@@ -94,7 +173,7 @@ describe("Finance UI contract", () => {
   it("does not mislabel a terminated desktop service as a version conflict", () => {
     render(<DesktopServiceErrorState error="Unbekannter Fehler" />);
     expect(screen.getByRole("alert")).toHaveTextContent("Finance konnte nicht gestartet werden");
-    expect(screen.getByText("DESKTOP_APPLICATION_PROCESS_TERMINATED")).toBeInTheDocument();
+    expect(screen.getByText("DESKTOP_WORKER_UNAVAILABLE")).toBeInTheDocument();
     expect(screen.queryByText("Version nicht kompatibel")).not.toBeInTheDocument();
   });
 
@@ -125,14 +204,28 @@ describe("Finance UI contract", () => {
     expect(await screen.findByText(/Kontenübersicht/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Depots" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Geldkonten" })).toBeInTheDocument();
+    expect(screen.getByText(/6\.420,00/)).toBeInTheDocument();
+    expect(screen.getByText(/Positionsabgleich:/)).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "Konto Girokonto öffnen" }));
     const dialog = await screen.findByRole("dialog", { name: "Girokonto" });
     expect(within(dialog).getByRole("tab", { name: "Übersicht" })).toHaveAttribute("aria-selected", "true");
     expect(within(dialog).getByText("Gemeldeter Saldo")).toBeInTheDocument();
 
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Salden" }));
+    expect((await within(dialog).findAllByText(/Übernommen aus/)).length).toBeGreaterThan(0);
+    expect(within(dialog).getByText(/bestätigtem Endsaldo Juni 2026/)).toBeInTheDocument();
+
     fireEvent.click(within(dialog).getByRole("tab", { name: "Audit" }));
     expect(await within(dialog).findByText("Saldenabgleich durchgeführt")).toBeInTheDocument();
+  });
+
+  it("opens the canonical review inbox filtered to the selected account", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Offene Prüfungen: 4" }));
+    expect(await screen.findByText("Offene Aufgaben dieses Kontos. Der Zähler stammt aus derselben zentralen Inbox.")).toBeInTheDocument();
+    expect(screen.getByText("4", { selector: ".review-center-head strong" })).toBeInTheDocument();
   });
 
   it("keeps a depot's position table separate from a normal checking-account balance", async () => {
@@ -150,7 +243,7 @@ describe("Finance UI contract", () => {
     expect(await screen.findByText("Produktversion")).toBeInTheDocument();
     expect(screen.getByText("Contract-Version")).toBeInTheDocument();
     expect(screen.getByText("UI-Contract-Version")).toBeInTheDocument();
-    expect(screen.getAllByText("1.4.0").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByText("1.5.0").length).toBeGreaterThanOrEqual(3);
     expect(screen.getByText("Store-Schema")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
     expect(screen.getByText("Account Overview")).toBeInTheDocument();

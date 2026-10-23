@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/review_inbox.response.schema.json",
+  "type": "object",
+  "required": ["schema_version", "state", "projection_sequence", "event_store_sequence", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "state": { "enum": ["READY", "EMPTY", "STALE", "ERROR"] },
+    "projection_sequence": { "type": "integer", "minimum": 0 },
+    "event_store_sequence": { "type": "integer", "minimum": 0 },
+    "projection_version": { "const": "1.0.0" },
+    "freshness_status": { "enum": ["CURRENT", "STALE", "INVALID"] },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_open", "items_by_type", "severity", "items"],
+      "properties": {
+        "total_open": { "type": "integer", "minimum": 0 },
+        "items_by_type": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["CATEGORY", "AI_SUGGESTION", "BALANCE", "IMPORT", "RELATION", "FORMAT_CHANGE"],
+          "properties": {
+            "CATEGORY": { "type": "integer", "minimum": 0 },
+            "AI_SUGGESTION": { "type": "integer", "minimum": 0 },
+            "BALANCE": { "type": "integer", "minimum": 0 },
+            "IMPORT": { "type": "integer", "minimum": 0 },
+            "RELATION": { "type": "integer", "minimum": 0 },
+            "FORMAT_CHANGE": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "severity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ERROR", "WARNING", "INFO"],
+          "properties": {
+            "ERROR": { "type": "integer", "minimum": 0 },
+            "WARNING": { "type": "integer", "minimum": 0 },
+            "INFO": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["review_id", "review_type", "severity", "entity_id", "entity_type", "account_ids", "title", "description", "action_target", "created_at"],
+            "properties": {
+              "review_id": { "type": "string", "minLength": 1 },
+              "review_type": { "enum": ["CATEGORY", "AI_SUGGESTION", "BALANCE", "IMPORT", "RELATION", "FORMAT_CHANGE"] },
+              "severity": { "enum": ["ERROR", "WARNING", "INFO"] },
+              "entity_id": { "type": "string", "minLength": 1 },
+              "entity_type": { "type": "string", "minLength": 1 },
+              "account_ids": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              },
+              "title": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "action_target": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["page", "view", "entity_id"],
+                "properties": {
+                  "page": { "enum": ["transactions", "accounts", "categories", "imports", "reviews"] },
+                  "view": { "type": "string", "minLength": 1 },
+                  "entity_id": { "type": "string" }
+                }
+              },
+              "created_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

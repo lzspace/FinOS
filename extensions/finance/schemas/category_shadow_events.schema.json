@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/category_shadow_events.schema.json",
+  "title": "Local AI category shadow-mode events 1.0.0",
+  "oneOf": [
+    { "$ref": "#/$defs/SettingsEvent" },
+    { "$ref": "#/$defs/RunEvent" },
+    { "$ref": "#/$defs/SuggestionEvent" },
+    { "$ref": "#/$defs/SuggestionDecisionEvent" },
+    { "$ref": "#/$defs/SuggestionSupersededEvent" },
+    { "$ref": "#/$defs/RuleOriginEvent" },
+    { "$ref": "#/$defs/FailureEvent" },
+    { "$ref": "#/$defs/EvaluationEvent" },
+    { "$ref": "#/$defs/EvaluationSupersededEvent" }
+  ],
+  "$defs": {
+    "Base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "event_id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "occurred_at", "correlation_id", "causation_id", "payload"],
+      "properties": {
+        "schema_version": { "const": "1.0.0" },
+        "event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "event_type": { "type": "string" },
+        "aggregate_type": { "enum": ["CategoryShadowSettings", "CategoryEvaluationRun", "CategorySuggestion", "CategorySuggestionFailure", "ClassificationEvaluation"] },
+        "aggregate_id": { "type": "string", "minLength": 6 },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "correlation_id": { "type": "string" },
+        "causation_id": { "type": "string" },
+        "payload": { "type": "object" }
+      }
+    },
+    "SettingsPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "mode", "changed_at"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "mode": { "const": "SHADOW_ONLY" },
+        "changed_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "SettingsEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/Base" },
+        { "properties": { "event_type": { "enum": ["CategoryShadowModeEnabled", "CategoryShadowModeDisabled"] }, "aggregate_type": { "const": "CategoryShadowSettings" }, "payload": { "$ref": "#/$defs/SettingsPayload" } } }
+      ]
+    },
+    "RunPayload": {
+      "type": "object",
+      "required": ["run_id", "status"],
+      "properties": {
+        "run_id": { "type": "string", "pattern": "^cer_[a-f0-9]{32}$" },
+        "status": { "enum": ["RUNNING", "PAUSED", "COMPLETED", "CANCELLED"] },
+        "mode": { "const": "EVALUATION_REPLAY" },
+        "total": { "type": "integer", "minimum": 0 },
+        "processed": { "type": "integer", "minimum": 0 },
+        "succeeded": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "started_at": { "type": "string", "format": "date-time" },
+        "paused_at": { "type": "string", "format": "date-time" },
+        "resumed_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "cancelled_at": { "type": "string", "format": "date-time" },
+        "last_processed_transaction_id": { "type": ["string", "null"] },
+        "transaction_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "model_id": { "type": "string" },
+        "model_version": { "type": "string" },
+        "policy_version": { "type": "string" },
+        "taxonomy_version": { "type": "string" }
+      }
+    },
+    "RunEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/Base" },
+        { "properties": { "event_type": { "enum": ["CategoryEvaluationRunStarted", "CategoryEvaluationRunProgressed", "CategoryEvaluationRunPaused", "CategoryEvaluationRunResumed", "CategoryEvaluationRunCompleted", "CategoryEvaluationRunCancelled"] }, "aggregate_type": { "const": "CategoryEvaluationRun" }, "payload": { "$ref": "#/$defs/RunPayload" } } }
+      ]
+    },
+    "Alternative": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category_code", "confidence"],
+      "properties": {
+        "category_code": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "SuggestionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suggestion_id", "transaction_id", "category_code", "raw_confidence", "confidence_kind", "alternatives", "reason_codes", "model_id", "model_version", "runtime_version", "structured_output_backend", "inference_policy_version", "taxonomy_version", "suggestion_schema_version", "mode", "created_at"],
+      "properties": {
+        "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" },
+        "transaction_id": { "type": "string" },
+        "normalized_event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "category_code": { "type": "string" },
+        "raw_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "confidence_kind": { "const": "MODEL_SELF_REPORTED_CONFIDENCE" },
+        "alternatives": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/Alternative" } },
+        "reason_codes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["MERCHANT_SEMANTICS", "DESCRIPTION_SEMANTICS", "RECURRING_PATTERN", "TRANSACTION_DIRECTION", "AMOUNT_PATTERN", "KNOWN_SERVICE_TYPE", "AMBIGUOUS_DESCRIPTION", "INSUFFICIENT_INFORMATION"] } },
+        "model_id": { "type": "string" },
+        "model_version": { "type": "string" },
+        "runtime_version": { "type": "string" },
+        "structured_output_backend": { "enum": ["GBNF", "JSON_SCHEMA_LLAMA_CPP"] },
+        "inference_policy_version": { "type": "string" },
+        "taxonomy_version": { "type": "string" },
+        "suggestion_schema_version": { "const": "1.0.0" },
+        "mode": { "enum": ["LIVE_SHADOW", "EVALUATION_REPLAY", "SUGGESTION"] },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "allOf": [
+        { "if": { "properties": { "mode": { "const": "SUGGESTION" } } }, "then": { "required": ["normalized_event_id"] } }
+      ]
+    },
+    "SuggestionEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/Base" },
+        { "properties": { "event_type": { "const": "CategorySuggestionGenerated" }, "aggregate_type": { "const": "CategorySuggestion" }, "payload": { "$ref": "#/$defs/SuggestionPayload" } } }
+      ]
+    },
+    "SuggestionDecisionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suggestion_id", "transaction_id", "suggested_category", "model_id", "model_version", "raw_confidence", "status", "decided_at"],
+      "properties": {
+        "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" },
+        "transaction_id": { "type": "string" },
+        "suggested_category": { "type": "string" },
+        "selected_category": { "type": "string" },
+        "model_id": { "type": "string" },
+        "model_version": { "type": "string" },
+        "raw_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "status": { "enum": ["CONFIRMED", "CORRECTED", "REJECTED"] },
+        "decided_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "SuggestionDecisionEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/Base" },
+        { "properties": { "event_type": { "enum": ["CategorySuggestionConfirmed", "CategorySuggestionCorrected", "CategorySuggestionRejected"] }, "aggregate_type": { "const": "CategorySuggestion" }, "payload": { "$ref": "#/$defs/SuggestionDecisionPayload" } } }
+      ]
+    },
+    "SuggestionSupersededPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suggestion_id", "transaction_id", "status", "reason", "superseded_at"],
+      "properties": {
+        "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" },
+        "transaction_id": { "type": "string" },
+        "status": { "const": "SUPERSEDED" },
+        "reason": { "enum": ["NEW_INFERENCE", "TRANSACTION_CHANGED", "TAXONOMY_CHANGED", "INFERENCE_POLICY_CHANGED"] },
+        "superseded_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "SuggestionSupersededEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/Base" },
+        { "properties": { "event_type": { "const": "CategorySuggestionSuperseded" }, "aggregate_type": { "const": "CategorySuggestion" }, "payload": { "$ref": "#/$defs/SuggestionSupersededPayload" } } }
+      ]
+    },
+    "RuleOriginPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suggestion_id", "transaction_id", "rule_id", "field", "category_code", "source", "created_at"],
+      "properties": {
+        "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" },
+        "transaction_id": { "type": "string" },
+        "rule_id": { "type": "string" },
+        "field": { "enum": ["counterparty", "normalized_description"] },
+        "category_code": { "type": "string" },
+        "source": { "const": "USER_DECISION_FROM_AI_SUGGESTION" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "RuleOriginEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/Base" },
+        { "properties": { "event_type": { "const": "ClassificationRuleCreatedFromSuggestion" }, "aggregate_type": { "const": "CategorySuggestion" }, "payload": { "$ref": "#/$defs/RuleOriginPayload" } } }
+      ]
+    },
+    "FailurePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["failure_id", "transaction_id", "error_code", "model_id", "model_version", "inference_policy_version", "taxonomy_version", "mode", "created_at"],
+      "properties": {
+        "failure_id": { "type": "string", "pattern": "^csvf_[a-f0-9]{32}$" },
+        "transaction_id": { "type": "string" },
+        "error_code": { "type": "string", "pattern": "^(?:LOCAL_AI|LOCAL_MODEL)_[A-Z0-9_]+$" },
+        "model_id": { "type": "string" },
+        "model_version": { "type": "string" },
+        "inference_policy_version": { "type": "string" },
+        "taxonomy_version": { "type": "string" },
+        "mode": { "enum": ["LIVE_SHADOW", "EVALUATION_REPLAY", "SUGGESTION"] },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "FailureEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/Base" },
+        { "properties": { "event_type": { "const": "CategorySuggestionValidationFailed" }, "aggregate_type": { "const": "CategorySuggestionFailure" }, "payload": { "$ref": "#/$defs/FailurePayload" } } }
+      ]
+    },
+    "EvaluationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluation_id", "suggestion_id", "transaction_id", "predicted_category", "final_category", "raw_confidence", "correct", "ground_truth_source", "evaluated_at", "model_id", "model_version", "policy_version", "taxonomy_version", "evaluation_schema_version", "status"],
+      "properties": {
+        "evaluation_id": { "type": "string", "pattern": "^cev_[a-f0-9]{32}$" },
+        "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" },
+        "transaction_id": { "type": "string" },
+        "predicted_category": { "type": "string" },
+        "final_category": { "type": "string" },
+        "raw_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "correct": { "type": "boolean" },
+        "ground_truth_source": { "enum": ["USER_CONFIRMED", "USER_CORRECTED"] },
+        "evaluated_at": { "type": "string", "format": "date-time" },
+        "model_id": { "type": "string" },
+        "model_version": { "type": "string" },
+        "policy_version": { "type": "string" },
+        "taxonomy_version": { "type": "string" },
+        "evaluation_schema_version": { "const": "1.0.0" },
+        "status": { "const": "ACTIVE" }
+      }
+    },
+    "EvaluationEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/Base" },
+        { "properties": { "event_type": { "const": "CategorySuggestionEvaluated" }, "aggregate_type": { "const": "ClassificationEvaluation" }, "payload": { "$ref": "#/$defs/EvaluationPayload" } } }
+      ]
+    },
+    "SupersededPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluation_id", "suggestion_id", "transaction_id", "status", "superseded_at"],
+      "properties": {
+        "evaluation_id": { "type": "string", "pattern": "^cev_[a-f0-9]{32}$" },
+        "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" },
+        "transaction_id": { "type": "string" },
+        "status": { "const": "SUPERSEDED" },
+        "superseded_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "EvaluationSupersededEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/Base" },
+        { "properties": { "event_type": { "const": "CategorySuggestionEvaluationSuperseded" }, "aggregate_type": { "const": "ClassificationEvaluation" }, "payload": { "$ref": "#/$defs/SupersededPayload" } } }
+      ]
+    }
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/ai_import_mapping_events.schema.json",
+  "title": "Local AI import mapping events 1.0.0",
+  "allOf": [
+    { "$ref": "#/$defs/Base" },
+    {
+      "oneOf": [
+        { "$ref": "#/$defs/ImportFormatFingerprintCreated" },
+        { "$ref": "#/$defs/UnknownImportFormatDetected" },
+        { "$ref": "#/$defs/ImportFormatChangeDetected" },
+        { "$ref": "#/$defs/ImportMappingProposed" },
+        { "$ref": "#/$defs/ImportMappingValidationCompleted" },
+        { "$ref": "#/$defs/ImportMappingConfirmed" },
+        { "$ref": "#/$defs/ImportMappingRejected" },
+        { "$ref": "#/$defs/ImportProfileCreated" },
+        { "$ref": "#/$defs/ImportProfileReused" },
+        { "$ref": "#/$defs/ImportProfileSuperseded" }
+      ]
+    }
+  ],
+  "$defs": {
+    "Base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "event_id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "occurred_at", "correlation_id", "causation_id", "payload"],
+      "properties": {
+        "schema_version": { "const": "1.0.0" },
+        "event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "event_type": { "type": "string" },
+        "aggregate_type": { "enum": ["ImportFormatFingerprint", "ImportMappingProposal", "ImportProfile"] },
+        "aggregate_id": { "type": "string", "minLength": 8 },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "correlation_id": { "type": "string", "pattern": "^cmd_[a-f0-9]{32}$" },
+        "causation_id": { "type": "string", "pattern": "^cmd_[a-f0-9]{32}$" },
+        "payload": { "type": "object" }
+      }
+    },
+    "Fingerprint": {
+      "type": "object",
+      "required": ["fingerprint_id", "algorithm_version", "encoding", "delimiter", "quote_character", "section_structure", "normalized_section_titles", "normalized_column_names", "column_order", "column_count", "inferred_date_shapes", "inferred_decimal_shapes", "static_markers", "canonical_representation", "sha256", "analysis_id", "section_id"],
+      "properties": {
+        "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{32}$" },
+        "algorithm_version": { "const": "1.0.0" },
+        "encoding": { "enum": ["utf-8", "cp1252"] },
+        "delimiter": { "enum": [";", ",", "\t", "|"] },
+        "quote_character": { "const": "\"" },
+        "section_structure": { "type": "array", "items": { "type": "string" } },
+        "normalized_section_titles": { "type": "array", "items": { "type": "string" } },
+        "normalized_column_names": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+        "column_order": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "column_count": { "type": "integer", "minimum": 2 },
+        "inferred_date_shapes": { "type": "array", "items": { "type": "string" } },
+        "inferred_decimal_shapes": { "type": "array", "items": { "type": "string" } },
+        "static_markers": { "type": "array", "items": { "type": "string" } },
+        "canonical_representation": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "analysis_id": { "type": "string" },
+        "section_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "Detection": {
+      "type": "object",
+      "required": ["analysis_id", "fingerprint_id", "bank_identifier", "section_id", "status", "severity", "detected_at"],
+      "properties": {
+        "analysis_id": { "type": "string" },
+        "fingerprint_id": { "type": "string" },
+        "bank_identifier": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "section_id": { "type": "string" },
+        "status": { "enum": ["UNKNOWN", "FORMAT_CHANGED"] },
+        "severity": { "type": ["string", "null"], "enum": ["COMPATIBLE", "REVIEW_REQUIRED", "BREAKING", null] },
+        "change_types": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "previous_profile_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "detected_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "Validation": {
+      "type": "object",
+      "required": ["validation_result_id", "status", "rows_total", "rows_valid", "rows_invalid", "date_parse_errors", "decimal_parse_errors", "currency_conflicts", "missing_required_values", "errors", "warnings", "validated_at"],
+      "properties": {
+        "proposal_id": { "type": "string" },
+        "validation_result_id": { "type": "string" },
+        "status": { "enum": ["VALID", "VALID_WITH_WARNINGS", "INVALID"] },
+        "rows_total": { "type": "integer", "minimum": 0 },
+        "rows_valid": { "type": "integer", "minimum": 0 },
+        "rows_invalid": { "type": "integer", "minimum": 0 },
+        "date_parse_errors": { "type": "integer", "minimum": 0 },
+        "decimal_parse_errors": { "type": "integer", "minimum": 0 },
+        "currency_conflicts": { "type": "integer", "minimum": 0 },
+        "missing_required_values": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "validated_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "ImportFormatFingerprintCreated": { "properties": { "event_type": { "const": "ImportFormatFingerprintCreated" }, "aggregate_type": { "const": "ImportFormatFingerprint" }, "payload": { "$ref": "#/$defs/Fingerprint" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "UnknownImportFormatDetected": { "properties": { "event_type": { "const": "UnknownImportFormatDetected" }, "aggregate_type": { "const": "ImportFormatFingerprint" }, "payload": { "$ref": "#/$defs/Detection" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ImportFormatChangeDetected": { "properties": { "event_type": { "const": "ImportFormatChangeDetected" }, "aggregate_type": { "const": "ImportFormatFingerprint" }, "payload": { "$ref": "#/$defs/Detection" } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ImportMappingProposed": { "properties": { "event_type": { "const": "ImportMappingProposed" }, "aggregate_type": { "const": "ImportMappingProposal" }, "payload": { "type": "object", "required": ["proposal_id", "analysis_id", "content_hash", "fingerprint_id", "section_id", "bank_identifier", "model_id", "model_version", "inference_policy_version", "target_schema_version", "mapping_schema_version", "section_type", "field_mappings", "transformations", "constants", "ignored_columns", "confidence", "warnings", "validation", "created_at"] } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ImportMappingValidationCompleted": { "properties": { "event_type": { "const": "ImportMappingValidationCompleted" }, "aggregate_type": { "const": "ImportMappingProposal" }, "payload": { "allOf": [{ "$ref": "#/$defs/Validation" }, { "type": "object", "required": ["proposal_id"], "properties": { "proposal_id": { "type": "string" } } }] } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ImportMappingConfirmed": { "properties": { "event_type": { "const": "ImportMappingConfirmed" }, "aggregate_type": { "const": "ImportMappingProposal" }, "payload": { "type": "object", "required": ["proposal_id", "fingerprint_id", "final_mapping", "validation", "validation_result_id", "proposal_modified", "mapping_diff", "confirmation_comment", "model_id", "model_version", "inference_policy_version", "confirmed_at"] } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ImportMappingRejected": { "properties": { "event_type": { "const": "ImportMappingRejected" }, "aggregate_type": { "const": "ImportMappingProposal" }, "payload": { "type": "object", "required": ["proposal_id", "reason", "rejected_at", "rejected_by"] } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ImportProfileCreated": { "properties": { "event_type": { "const": "ImportProfileCreated" }, "aggregate_type": { "const": "ImportProfile" }, "payload": { "type": "object", "required": ["profile_id", "profile_version", "name", "source", "bank_identifier", "fingerprint_id", "fingerprint_algorithm_version", "supported_section_type", "target_schema_version", "mapping_schema_version", "mappings", "transformations", "constants", "ignored_columns", "compatibility_rules", "created_from_proposal_id", "created_by", "status", "created_at"] } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ImportProfileReused": { "properties": { "event_type": { "const": "ImportProfileReused" }, "aggregate_type": { "const": "ImportProfile" }, "payload": { "type": "object", "required": ["profile_id", "fingerprint_id", "analysis_id", "reused_at", "ai_used"] } }, "required": ["event_type", "aggregate_type", "payload"] },
+    "ImportProfileSuperseded": { "properties": { "event_type": { "const": "ImportProfileSuperseded" }, "aggregate_type": { "const": "ImportProfile" }, "payload": { "type": "object", "required": ["profile_id", "superseded_by_profile_id", "superseded_at"] } }, "required": ["event_type", "aggregate_type", "payload"] }
+  }
+}

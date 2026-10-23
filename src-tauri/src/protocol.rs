@@ -30,12 +30,32 @@ pub struct ResponseEnvelope {
 }
 
 impl RequestEnvelope {
-    pub fn new(operation: impl Into<String>, payload: Value) -> Self {
+    pub fn new(
+        request_id: impl Into<String>,
+        operation: impl Into<String>,
+        payload: Value,
+    ) -> Self {
         Self {
-            request_id: format!("req_{}", uuid::Uuid::new_v4().simple()),
+            request_id: request_id.into(),
             operation: operation.into(),
             contract_version: CONTRACT_VERSION.to_owned(),
             payload,
+        }
+    }
+}
+
+impl ResponseEnvelope {
+    pub fn error(request_id: impl Into<String>, operation: impl Into<String>, code: &str) -> Self {
+        Self {
+            request_id: request_id.into(),
+            operation: operation.into(),
+            contract_version: CONTRACT_VERSION.into(),
+            status: "ERROR".into(),
+            result: None,
+            error: Some(ProtocolError {
+                code: code.into(),
+                message: "Der lokale Vorgang konnte nicht ausgeführt werden.".into(),
+            }),
         }
     }
 }
@@ -63,7 +83,7 @@ mod tests {
 
     #[test]
     fn rejects_contract_incompatibility() {
-        let request = RequestEnvelope::new("query", json!({}));
+        let request = RequestEnvelope::new("req_test", "query", json!({}));
         let response = ResponseEnvelope {
             request_id: request.request_id.clone(),
             operation: "query".into(),
@@ -80,7 +100,7 @@ mod tests {
 
     #[test]
     fn rejects_mismatched_or_ambiguous_response() {
-        let request = RequestEnvelope::new("query", json!({}));
+        let request = RequestEnvelope::new("req_test", "query", json!({}));
         let response = ResponseEnvelope {
             request_id: "different".into(),
             operation: "query".into(),

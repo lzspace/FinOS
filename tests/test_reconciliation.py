@@ -28,6 +28,7 @@ from finance_extension.reconciliation import (
     reject_transfer,
     relation_review,
 )
+from finance_extension.review_inbox import review_inbox
 from finance_extension.store import LocalFinanceStore, StoreInvariantError
 
 
@@ -107,9 +108,11 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(exact["match_type"], "EXACT_DUPLICATE")
         review = relation_review(self.store, "duplicates")
         self.assertEqual(len(review), 1)
+        self.assertEqual(review_inbox(self.store)["items_by_type"]["RELATION"], 1)
         self.assertEqual(review[0]["payload"]["match_type"], "LIKELY_DUPLICATE")
         relation_id = review[0]["aggregate_id"]
         self.assertEqual(reject_duplicate(self.store, relation_id), 1)
+        self.assertEqual(review_inbox(self.store)["items_by_type"]["RELATION"], 0)
         self.assertEqual(reject_duplicate(self.store, relation_id), 0)
 
     def test_user_duplicate_confirmation_and_refund_rejection_are_idempotent(self) -> None:

@@ -25,6 +25,49 @@ from .workspace_lock import (
 
 DESKTOP_CONTRACT_VERSION = "1.3.0"
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
+LOCAL_MODEL_ERROR_CODES = frozenset(
+    {
+        "LOCAL_MODEL_REFERENCE_EXPIRED",
+        "LOCAL_MODEL_FILE_NOT_FOUND",
+        "LOCAL_MODEL_MANIFEST_INVALID",
+        "LOCAL_MODEL_MANIFEST_INCOMPATIBLE",
+        "LOCAL_MODEL_HASH_MISMATCH",
+        "LOCAL_MODEL_FORMAT_UNSUPPORTED",
+        "LOCAL_MODEL_PURPOSE_UNSUPPORTED",
+        "LOCAL_MODEL_RUNTIME_NOT_FOUND",
+        "LOCAL_MODEL_RUNTIME_NOT_EXECUTABLE",
+        "LOCAL_MODEL_RUNTIME_INCOMPATIBLE",
+        "LOCAL_MODEL_REGISTRATION_FAILED",
+        "LOCAL_AI_RUNTIME_NOT_FOUND",
+        "LOCAL_AI_RUNTIME_NOT_EXECUTABLE",
+        "LOCAL_AI_RUNTIME_INCOMPATIBLE",
+        "LOCAL_AI_RUNTIME_HASH_MISMATCH",
+        "LOCAL_AI_RUNTIME_START_FAILED",
+        "LOCAL_AI_GRAMMAR_INITIALIZATION_FAILED",
+        "LOCAL_AI_INVALID_OUTPUT",
+        "LOCAL_AI_JSON_PARSE_FAILED",
+        "LOCAL_AI_SCHEMA_VALIDATION_FAILED",
+        "LOCAL_AI_SEMANTIC_VALIDATION_FAILED",
+        "LOCAL_AI_TIMEOUT",
+    }
+)
+CATEGORY_SHADOW_ERROR_CODES = frozenset(
+    {
+        "CATEGORY_SHADOW_DISABLED",
+        "CATEGORY_TRANSACTION_NOT_ELIGIBLE",
+        "CATEGORY_TAXONOMY_UNAVAILABLE",
+        "CATEGORY_EVALUATION_ALREADY_RUNNING",
+        "CATEGORY_EVALUATION_NOT_FOUND",
+        "CATEGORY_EVALUATION_INCOMPATIBLE_MODEL",
+        "CATEGORY_SUGGESTION_NOT_FOUND",
+        "CATEGORY_SUGGESTION_NOT_PENDING",
+        "CATEGORY_SUGGESTION_STALE",
+        "CATEGORY_SUGGESTION_CATEGORY_INVALID",
+        "CATEGORY_SUGGESTION_DECISION_REQUIRED",
+        "CATEGORY_SUGGESTION_RULE_VALUE_MISSING",
+        "CATEGORY_TRANSACTION_ALREADY_CLASSIFIED",
+    }
+)
 
 
 class DesktopProtocolError(ValueError):
@@ -33,7 +76,11 @@ class DesktopProtocolError(ValueError):
 
 def _error_code(error: Exception) -> str:
     candidate = str(error).split(":", 1)[0]
-    if candidate.startswith(("FINANCE_", "IMPORT_")):
+    if (
+        candidate.startswith(("FINANCE_", "IMPORT_"))
+        or candidate in LOCAL_MODEL_ERROR_CODES
+        or candidate in CATEGORY_SHADOW_ERROR_CODES
+    ):
         return candidate
     if isinstance(error, DesktopProtocolError):
         return "DESKTOP_PROTOCOL_INVALID"
@@ -97,16 +144,16 @@ class DesktopRequestHandler:
                     },
                 )
             if operation == "runtime_status":
-                result = self.application.query("GetStartupStatus")
+                result = self.application.query("GetStartupStatus", request_id=request_id)
             elif operation in {"query", "command"}:
                 name = payload.get("name")
                 body = payload.get("payload", {})
                 if not isinstance(name, str) or not name or not isinstance(body, dict):
                     raise DesktopProtocolError("DESKTOP_OPERATION_PAYLOAD_INVALID")
                 result = (
-                    self.application.query(name, body)
+                    self.application.query(name, body, request_id=request_id)
                     if operation == "query"
-                    else self.application.command(name, body)
+                    else self.application.command(name, body, request_id=request_id)
                 )
             elif operation == "shutdown":
                 result = {"shutdown": True}
@@ -185,6 +232,7 @@ def serve(handler: DesktopRequestHandler, source: TextIO, destination: TextIO) -
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", required=True)
+    parser.add_argument("--llama-cpp-executable")
     parser.add_argument(
         "--e2e-test-key-env",
         action="store_true",
@@ -222,10 +270,9 @@ def main(argv: list[str] | None = None) -> int:
     if isinstance(provider, KeychainKeyProvider):
         provider.get_or_create_key()
     with LocalFinanceStore(data_dir, provider) as store:
-        executable = os.environ.get("FINANCE_LLAMA_CPP_EXECUTABLE")
         local_model = LocalModelService(
             data_dir.parent / "models",
-            executable_path=executable,
+            executable_path=args.llama_cpp_executable,
         )
         application = FinanceApplicationService(
             store,

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Imports } from "./Imports";
 import type { DesktopFinanceIPC } from "./bridge";
@@ -65,11 +65,12 @@ function ipcFor(
     selectImportFile: vi.fn(async () => ({ file_ref: "file_token_01", display_name: "Juli.csv", size_bytes: 2048 })),
     selectLocalModelFile: vi.fn(async () => null),
     selectLocalModelManifest: vi.fn(async () => null),
-    getRuntimeStatus: vi.fn(async () => ({
-      request_id: "req_runtime", operation: "runtime_status" as const, contract_version: "1.3.0",
+    selectLocalAIRuntime: vi.fn(async () => null),
+    getRuntimeStatus: vi.fn(async (requestId) => ({
+      request_id: requestId, operation: "runtime_status" as const, contract_version: "1.3.0",
       status: "OK" as const, result: { preview: false },
     })),
-    invoke: vi.fn(async (operation: "query" | "command", request: Record<string, unknown>) => {
+    invoke: vi.fn(async (requestId: string, operation: "query" | "command", request: Record<string, unknown>) => {
       const name = String(request.name);
       const payload = (request.payload ?? {}) as Record<string, unknown>;
       if (operation === "command") {
@@ -77,18 +78,18 @@ function ipcFor(
         if (name === "AnalyzeImportFile") {
           activeStep = 1;
           return {
-            request_id: "req_command", operation, contract_version: "1.3.0", status: "OK",
+            request_id: requestId, operation, contract_version: "1.3.0", status: "OK",
             result: { schema_version: "1.0.0", status: "COMPLETED", result: analysis },
           } as const;
         }
         return {
-          request_id: "req_command", operation, contract_version: "1.3.0", status: "OK",
+          request_id: requestId, operation, contract_version: "1.3.0", status: "OK",
           result: { schema_version: "1.0.0", status: "COMPLETED", result: 1 },
         } as const;
       }
       if (name === "GetImportWizardState") {
-        if (activeStep === null) return desktopQuery(envelope(null, "EMPTY"));
-        return desktopQuery(envelope({
+        if (activeStep === null) return desktopQuery(requestId, envelope(null, "EMPTY"));
+        return desktopQuery(requestId, envelope({
           export_id: analysis.export_id,
           current_step: activeStep,
           completed_steps: Array.from({ length: activeStep - 1 }, (_, index) => index + 1),
@@ -105,14 +106,16 @@ function ipcFor(
           } : null,
         }));
       }
-      if (name === "GetImportHistory") return desktopQuery(envelope({ imports: activeStep === null ? [] : [{
+      if (name === "GetImportHistory") return desktopQuery(requestId, envelope({ imports: activeStep === null ? [] : [{
         export_id: analysis.export_id, bank_identifier: "BANK_A", report_month: "2026-07",
-        imported_at: "2026-07-24T10:00:00Z", section_count: 1,
+        imported_at: "2026-07-24T10:00:00Z", completed_at: "2026-07-24T10:05:00Z",
+        period_start: "2026-07-01", period_end: "2026-07-31", section_count: 1,
         completed_section_count: activeStep === 5 ? 1 : 0, status: activeStep === 5 ? "COMPLETED" : "ANALYZED",
+        record_count: 2, account_count: 1, account_names: ["Girokonto"], open_review_count: 1,
         import_profile: analysis.import_profile, parser_version: "GermanMultiAccountCsvV1@1.0.0",
         source_file_hash: analysis.source_file_hash, resumable: activeStep !== 5,
       }] }));
-      if (name === "ListAccounts") return desktopQuery(envelope({ accounts: [{
+      if (name === "ListAccounts") return desktopQuery(requestId, envelope({ accounts: [{
         account_id: "acc_main", display_name: "Girokonto", account_type: "CHECKING",
         institution: "BANK_A", currency: "EUR", status: "ACTIVE", include_in_cashflow: true,
         include_in_liquidity: true, include_in_net_worth: true, opened_at: "2025-01-01",
@@ -120,30 +123,57 @@ function ipcFor(
         available_balance: null, balance_date: null, balance_source: null,
         reconciliation_status: "NOT_RECONCILED", freshness: "CURRENT",
       }] }));
-      if (name === "GetImportSectionPreview") return desktopQuery(envelope({
+      if (name === "GetImportSectionPreview") return desktopQuery(requestId, envelope({
         ...section, first_booking_date: "2026-07-01", last_booking_date: "2026-07-20",
         amount_sum: "-42.00", duplicate_candidate_count: 0,
         preview: [{ booking_date: "2026-07-01", description: "Miete", amount: "-40.00" }],
       }));
-      if (name === "GetImportExecutionResult") return desktopQuery(envelope({
+      if (name === "GetImportExecutionResult") return desktopQuery(requestId, envelope({
         status: "COMPLETED", normalized_transaction_count: 2, security_transaction_count: 0,
         section_results: [{ ...section, status: "IMPORTED", local_account_name: "Girokonto", normalized_transaction_count: 2 }],
         relations: [],
       }));
-      if (name === "GetImportHistoryDetail") return desktopQuery(envelope({
+      if (name === "GetImportHistoryDetail") return desktopQuery(requestId, envelope({
         status: "COMPLETED", analysis,
+        execution_result: {
+          status: "COMPLETED",
+          section_results: [{
+            ...section, status: "IMPORTED", local_account_name: "Girokonto",
+            normalized_transaction_count: 2,
+            balance_reconciliation: { status: "MATCHED" },
+          }],
+        },
+        transactions: [
+          {
+            transaction_id: "txn_market", section_id: "sec_giro", account_id: "acc_main",
+            account_name: "Girokonto", booking_date: "2026-07-20", counterparty: "Markthalle",
+            description: "Lebensmittel", amount: "-42.00", currency: "EUR", direction: "DEBIT",
+            category_code: "FOOD_GROCERIES", classification_status: "CONFIRMED",
+          },
+          {
+            transaction_id: "txn_rent", section_id: "sec_giro", account_id: "acc_main",
+            account_name: "Girokonto", booking_date: "2026-07-01", counterparty: "Vermieter",
+            description: "Monatsmiete", amount: "-900.00", currency: "EUR", direction: "DEBIT",
+            category_code: "UNCLASSIFIED", classification_status: "UNCLASSIFIED",
+          },
+        ],
+        security_transactions: [],
+        review_summary: {
+          unclassified_transaction_count: 1, open_relation_count: 0,
+          balance_review_count: 0, position_review_count: 0, total_open_count: 1,
+        },
         audit_history: options.auditHistory ?? [{ sequence_number: 42, event_type: "ImportSectionCompleted", occurred_at: "2026-07-24T10:00:00Z" }],
       }));
-      return desktopQuery(envelope(null, "EMPTY"));
+      return desktopQuery(requestId, envelope(null, "EMPTY"));
     }),
     ...overrides,
   };
   return { ipc, commands };
 }
 
-function desktopQuery(result: unknown) {
+function desktopQuery(requestId: string, result: unknown) {
   return {
-    request_id: "req_query",
+    request_id: requestId,
     operation: "query" as const,
     contract_version: "1.3.0",
     status: "OK" as const,
@@ -157,6 +187,56 @@ afterEach(() => {
 });
 
 describe("Importassistent 1.2.0", () => {
+  it("bearbeitet und bestätigt einen lokal erzeugten Mapping-Vorschlag", async () => {
+    const { ipc, commands } = ipcFor(null);
+    const originalInvoke = ipc.invoke.bind(ipc);
+    ipc.invoke = vi.fn(async (requestId, operation, request) => {
+      const name = String(request.name);
+      if (operation === "command" && name === "AnalyzeUnknownImportFormat") {
+        commands.push([name, (request.payload ?? {}) as Record<string, unknown>]);
+        return {
+          request_id: requestId, operation, contract_version: "1.3.0", status: "OK",
+          result: { schema_version: "1.0.0", status: "COMPLETED", result: {
+            status: "PROPOSAL_READY", format_status: "UNKNOWN", analysis_id: "unknown_1", ai_used: true,
+            source_structure: { columns: ["Datum", "Betrag", "Währung"], encoding: "utf-8", delimiter: ";", section_title: "Umsätze" },
+            proposal: {
+              proposal_id: "mapping_proposal_1", analysis_id: "unknown_1", model_id: "local-test", model_version: "1.0.0",
+              section_type: "CHECKING", confidence: 0.98, warnings: [], ignored_columns: [], constants: {},
+              field_mappings: [
+                { source_column: "Datum", target_field: "booking_date", confidence: 0.99 },
+                { source_column: "Betrag", target_field: "amount", confidence: 0.99 },
+                { source_column: "Währung", target_field: "currency", confidence: 0.99 },
+              ],
+              transformations: [
+                { target_field: "booking_date", type: "PARSE_DATE", parameters: { format: "DD.MM.YYYY" } },
+                { target_field: "amount", type: "PARSE_DECIMAL", parameters: { decimal_separator: ",", thousands_separator: "." } },
+              ],
+              validation: { validation_result_id: "validation_1", status: "VALID", rows_total: 2, rows_valid: 2, rows_invalid: 0, errors: [], warnings: [] },
+            },
+          } },
+        } as const;
+      }
+      if (operation === "command" && name === "ValidateImportMapping") {
+        commands.push([name, (request.payload ?? {}) as Record<string, unknown>]);
+        return { request_id: requestId, operation, contract_version: "1.3.0", status: "OK", result: { schema_version: "1.0.0", status: "COMPLETED", result: { validation_result_id: "validation_1", status: "VALID", rows_total: 2, rows_valid: 2, rows_invalid: 0, errors: [], warnings: [] } } } as const;
+      }
+      if (operation === "command" && name === "ConfirmImportMapping") {
+        commands.push([name, (request.payload ?? {}) as Record<string, unknown>]);
+        return { request_id: requestId, operation, contract_version: "1.3.0", status: "OK", result: { schema_version: "1.0.0", status: "COMPLETED", result: { profile: { name: "BANK_A – Checking", profile_version: "1.0.0", source: "USER_CONFIRMED_AI" } } } } as const;
+      }
+      return originalInvoke(requestId, operation, request);
+    });
+    window.__FINANCE_IPC__ = ipc;
+    render(<Imports uiMonth="2026-07" manifest={{ ...manifest, contract_version: "1.5.0" }} />);
+    fireEvent.change(await screen.findByPlaceholderText("z. B. BANK_A"), { target: { value: "BANK_A" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Unbekanntes Format analysieren" })[1]);
+    expect(await screen.findByRole("heading", { name: "Spaltenzuordnung prüfen" })).toBeInTheDocument();
+    expect(screen.getByText("2 / 2 Datensätzen gültig")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mapping bestätigen und Profil anlegen" }));
+    expect(await screen.findByRole("heading", { name: "BANK_A – Checking" })).toBeInTheDocument();
+    expect(commands.some(([name]) => name === "ConfirmImportMapping")).toBe(true);
+  });
+
   it("zeigt ohne Projektion einen lokalen, dateireferenzbasierten Einstieg", async () => {
     const { ipc } = ipcFor(null);
     window.__FINANCE_IPC__ = ipc;
@@ -283,6 +363,7 @@ describe("Importassistent 1.2.0", () => {
     render(<Imports uiMonth="2026-07" manifest={manifest} />);
     fireEvent.click(await screen.findByRole("button", { name: "Details" }));
     const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Auditverlauf" }));
     expect(dialog).toHaveTextContent("Anfangssaldo erfasst");
     expect(dialog).toHaveTextContent("Unbekanntes Ereignis");
     expect(dialog).toHaveTextContent("SomeFutureEvent");
@@ -311,7 +392,15 @@ describe("Importassistent 1.2.0", () => {
     expect(screen.getByText("2", { selector: ".result-metrics strong" })).toBeInTheDocument();
     expect(screen.getByText("BANK_A · 2026-07")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
-    expect(await screen.findByRole("dialog")).toHaveTextContent("ImportSectionCompleted");
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Offene Prüfungen");
+    expect(dialog).toHaveTextContent("Girokonto");
+    fireEvent.click(within(dialog).getByRole("tab", { name: /Importierte Buchungen/ }));
+    expect(dialog).toHaveTextContent("Markthalle");
+    expect(dialog).toHaveTextContent("Lebensmittel");
+    expect(dialog).toHaveTextContent("Lebensmittel");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Auditverlauf" }));
+    expect(dialog).toHaveTextContent("ImportSectionCompleted");
   });
 
   it("blockiert den Assistenten bei fehlenden Backend-Fähigkeiten", () => {

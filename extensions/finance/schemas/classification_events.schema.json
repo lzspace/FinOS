@@ -57,7 +57,8 @@
         "normalized_event_id": { "type": "string" },
         "category_code": { "$ref": "#/$defs/CategoryCode" },
         "status": { "const": "CONFIRMED" },
-        "confirmed_by": { "const": "USER" },
+        "confirmed_by": { "enum": ["USER", "LOCAL_LLM_CONFIRMED_BY_USER", "LOCAL_LLM_CORRECTED_BY_USER"] },
+        "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" },
         "policy_version": { "const": "rules@1.0.0" }
       }
     },

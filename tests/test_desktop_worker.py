@@ -27,11 +27,21 @@ FIXTURE = (
 
 
 class _FakeApplication:
-    def query(self, name: str, payload: dict[str, object] | None = None) -> dict[str, object]:
+    def query(self, name: str, payload: dict[str, object] | None = None, *, request_id: str | None = None) -> dict[str, object]:
+        assert request_id
         return {"name": name, "payload": payload or {}}
 
-    def command(self, name: str, payload: dict[str, object]) -> dict[str, object]:
+    def command(self, name: str, payload: dict[str, object], *, request_id: str | None = None) -> dict[str, object]:
+        assert request_id
         return {"name": name, "payload": payload}
+
+
+class _FailingApplication(_FakeApplication):
+    def __init__(self, code: str) -> None:
+        self.code = code
+
+    def command(self, name: str, payload: dict[str, object], *, request_id: str | None = None) -> dict[str, object]:
+        raise ValueError(self.code)
 
 
 class DesktopWorkerContractTests(unittest.TestCase):
@@ -78,6 +88,56 @@ class DesktopWorkerContractTests(unittest.TestCase):
         self.assertNotIn("987654.32", response)
         self.assertNotIn("secret", response)
         self.assertIn("DESKTOP_PROTOCOL_INVALID", response)
+
+    def test_preserves_all_stable_local_model_registration_errors(self) -> None:
+        codes = (
+            "LOCAL_MODEL_FILE_NOT_FOUND",
+            "LOCAL_MODEL_MANIFEST_INVALID",
+            "LOCAL_MODEL_MANIFEST_INCOMPATIBLE",
+            "LOCAL_MODEL_HASH_MISMATCH",
+            "LOCAL_MODEL_FORMAT_UNSUPPORTED",
+            "LOCAL_MODEL_PURPOSE_UNSUPPORTED",
+            "LOCAL_MODEL_RUNTIME_NOT_FOUND",
+            "LOCAL_MODEL_RUNTIME_NOT_EXECUTABLE",
+            "LOCAL_MODEL_RUNTIME_INCOMPATIBLE",
+            "LOCAL_MODEL_REGISTRATION_FAILED",
+            "LOCAL_AI_RUNTIME_NOT_FOUND",
+            "LOCAL_AI_RUNTIME_NOT_EXECUTABLE",
+            "LOCAL_AI_RUNTIME_INCOMPATIBLE",
+            "LOCAL_AI_RUNTIME_HASH_MISMATCH",
+            "LOCAL_AI_RUNTIME_START_FAILED",
+            "LOCAL_AI_GRAMMAR_INITIALIZATION_FAILED",
+            "LOCAL_AI_INVALID_OUTPUT",
+            "LOCAL_AI_JSON_PARSE_FAILED",
+            "LOCAL_AI_SCHEMA_VALIDATION_FAILED",
+            "LOCAL_AI_SEMANTIC_VALIDATION_FAILED",
+            "LOCAL_AI_TIMEOUT",
+            "CATEGORY_SHADOW_DISABLED",
+            "CATEGORY_TRANSACTION_NOT_ELIGIBLE",
+            "CATEGORY_TAXONOMY_UNAVAILABLE",
+            "CATEGORY_EVALUATION_ALREADY_RUNNING",
+            "CATEGORY_EVALUATION_NOT_FOUND",
+            "CATEGORY_EVALUATION_INCOMPATIBLE_MODEL",
+            "CATEGORY_SUGGESTION_NOT_FOUND",
+            "CATEGORY_SUGGESTION_NOT_PENDING",
+            "CATEGORY_SUGGESTION_STALE",
+            "CATEGORY_SUGGESTION_CATEGORY_INVALID",
+            "CATEGORY_SUGGESTION_DECISION_REQUIRED",
+            "CATEGORY_SUGGESTION_RULE_VALUE_MISSING",
+            "CATEGORY_TRANSACTION_ALREADY_CLASSIFIED",
+        )
+        for code in codes:
+            with self.subTest(code=code):
+                request = self.request("command", {"name": "RegisterLocalModel", "payload": {}})
+                response = DesktopRequestHandler(_FailingApplication(code)).handle(request)  # type: ignore[arg-type]
+                self.assertEqual(response["request_id"], request["request_id"])
+                self.assertEqual(response["error"]["code"], code)
+
+    def test_unknown_error_is_safely_collapsed(self) -> None:
+        request = self.request("command", {"name": "RegisterLocalModel", "payload": {}})
+        response = DesktopRequestHandler(_FailingApplication("PRIVATE_PATH_/Users/example")).handle(request)  # type: ignore[arg-type]
+        self.assertEqual(response["error"]["code"], "DESKTOP_OPERATION_FAILED")
+        self.assertNotIn("/Users/example", json.dumps(response))
 
     def test_startup_recovers_only_a_verified_stale_workspace_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -11,11 +11,11 @@ const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum PythonClientError {
-    #[error("DESKTOP_APPLICATION_PROCESS_START_FAILED")]
+    #[error("DESKTOP_WORKER_UNAVAILABLE")]
     Start,
-    #[error("DESKTOP_APPLICATION_PROCESS_TERMINATED")]
+    #[error("DESKTOP_WORKER_UNAVAILABLE")]
     Terminated,
-    #[error("DESKTOP_RESPONSE_INVALID")]
+    #[error("DESKTOP_WORKER_INVALID_RESPONSE")]
     InvalidResponse,
     #[error("DESKTOP_CONTRACT_INCOMPATIBLE")]
     IncompatibleContract,
@@ -49,6 +49,7 @@ impl PythonClient {
 
     pub fn send(
         &mut self,
+        request_id: &str,
         operation: &str,
         payload: Value,
     ) -> Result<ResponseEnvelope, PythonClientError> {
@@ -60,7 +61,7 @@ impl PythonClient {
         {
             return Err(PythonClientError::Terminated);
         }
-        let request = RequestEnvelope::new(operation, payload);
+        let request = RequestEnvelope::new(request_id, operation, payload);
         serde_json::to_writer(&mut self.input, &request)
             .map_err(|_| PythonClientError::Terminated)?;
         self.input
@@ -118,7 +119,9 @@ id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
 printf '{"request_id":"%s","operation":"query","contract_version":"1.3.0","status":"OK","result":{"schema_version":"1.0.0"}}\n' "$id""#,
         );
         let mut client = PythonClient::spawn(&path, &[]).unwrap();
-        let response = client.send("query", serde_json::json!({})).unwrap();
+        let response = client
+            .send("req_test", "query", serde_json::json!({}))
+            .unwrap();
         assert_eq!(response.status, "OK");
     }
 
@@ -127,14 +130,14 @@ printf '{"request_id":"%s","operation":"query","contract_version":"1.3.0","statu
         let (_root, path) = script("exit 7");
         let mut client = PythonClient::spawn(&path, &[]).unwrap();
         assert!(matches!(
-            client.send("query", serde_json::json!({})),
+            client.send("req_test", "query", serde_json::json!({})),
             Err(PythonClientError::Terminated)
         ));
 
         let (_root, path) = script("read line\nprintf 'not-json\\n'");
         let mut client = PythonClient::spawn(&path, &[]).unwrap();
         assert!(matches!(
-            client.send("query", serde_json::json!({})),
+            client.send("req_test", "query", serde_json::json!({})),
             Err(PythonClientError::InvalidResponse)
         ));
     }
