@@ -357,19 +357,44 @@ export interface RuntimeSecurityStatus {
 
 export interface Dashboard {
   month: string;
-  effective_income: string;
-  effective_expenses: string;
-  net_cashflow: string;
+  period: PeriodSelection;
+  effective_income: string | null;
+  effective_expenses: string | null;
+  net_cashflow: string | null;
   expected_month_end_surplus: string | null;
   remaining_expected_income: string;
   remaining_expected_expenses: string;
   savings_rate: string | null;
   open_reviews: number;
-  liquid_balance?: string;
+  liquid_balance?: string | null;
   liquid_balance_as_of?: string;
   projected_month_end_balance?: string | null;
-  net_worth?: string;
+  net_worth?: string | null;
   net_worth_as_of?: string;
+}
+
+export interface FinancialTimeSeriesPoint {
+  bucket_start: string;
+  bucket_end: string;
+  income: string | null;
+  expenses: string | null;
+  net_cashflow: string | null;
+  transaction_count: number;
+  has_data: boolean;
+}
+
+export interface FinancialTimeSeries {
+  period: PeriodSelection;
+  aggregation: "DAY" | "WEEK" | "MONTH";
+  points: FinancialTimeSeriesPoint[];
+  summary: {
+    has_data: boolean;
+    effective_income: string | null;
+    effective_expenses: string | null;
+    net_cashflow: string | null;
+    covered_bucket_count: number;
+    missing_bucket_count: number;
+  };
 }
 
 export interface Account {
@@ -460,6 +485,7 @@ export interface MigrationStatus {
 
 export interface Transaction {
   transaction_id: string;
+  account_id?: string;
   booking_date: string;
   amount: string;
   currency: string;
@@ -471,6 +497,8 @@ export interface Transaction {
   transfer_status?: string;
   refund_status?: string;
   cashflow_relevant?: boolean;
+  export_id?: string;
+  section_id?: string;
 }
 
 export interface ForecastScenario {

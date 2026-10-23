@@ -296,7 +296,7 @@ export function App() {
         </header>
         {page === "overview" && <Overview month={month} reviewCount={openReviews} onNavigate={(next) => navigate(next)} />}
         {page === "accounts" && <AccountsOverview period={periodControls.period} periodPayload={periodControls.payload} focusId={navigationTarget?.page === "accounts" ? navigationTarget.entity_id : undefined} focusView={navigationTarget?.page === "accounts" ? navigationTarget.view : undefined} onNavigate={navigate} />}
-        {page === "transactions" && <Transactions month={month} focusId={navigationTarget?.page === "transactions" ? navigationTarget.entity_id : undefined} />}
+        {page === "transactions" && <Transactions month={month} periodPayload={periodControls.payload} focusId={navigationTarget?.page === "transactions" ? navigationTarget.entity_id : undefined} onNavigate={navigate} />}
         {page === "categories" && <Categories month={month} initialTab={navigationTarget?.page === "categories" ? navigationTarget.view : undefined} focusId={navigationTarget?.page === "categories" ? navigationTarget.entity_id : undefined} />}
         {page === "recurring" && <Recurring month={month} />}
         {page === "forecast" && <Forecast month={month} />}
@@ -644,71 +644,110 @@ function PanelHeader({ title, subtitle, action, onAction }: { title: string; sub
   return <header className="panel-header"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div>{action && <button className="text-button" onClick={onAction}>{action} →</button>}</header>;
 }
 
-function Transactions({ month, focusId }: { month: string; focusId?: string }) {
-  const result = useFinanceQuery<{ transactions: Transaction[] }>("ListTransactions", { month });
-  const categories = useFinanceQuery<CategoryList>("ListCategories");
+function Transactions({ month, periodPayload, focusId, onNavigate }: { month: string; periodPayload: Record<string, unknown>; focusId?: string; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
+  const [refresh, setRefresh] = useState(0);
+  const result = useFinanceQuery<{ transactions: Transaction[] }>("ListTransactions", { ...periodPayload, refresh });
+  const categories = useFinanceQuery<CategoryList>("ListCategories", { refresh });
+  const accounts = useFinanceQuery<{ accounts: Account[] }>("ListAccounts");
+  const suggestions = useFinanceQuery<{ suggestions: CategorySuggestionRow[] }>("ListPendingCategorySuggestions", { refresh });
   const [selected, setSelected] = useState<Transaction | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState("");
   const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string>>({});
+  const [filters, setFilters] = useState({ account: "ALL", category: "ALL", direction: "ALL", minimum: "", maximum: "", classification: "ALL", ai: "ALL", importId: "ALL" });
+  const [bulkCategory, setBulkCategory] = useState("");
+  const catalogue = (categories.envelope?.data.categories ?? []).map(normalizeCategory);
+  const accountRows = accounts.envelope?.data.accounts ?? [];
+  const accountNames = Object.fromEntries(accountRows.map((item) => [item.account_id, item.display_name]));
+  const pendingSuggestions = suggestions.envelope?.data.suggestions ?? [];
+  const suggestionByTransaction = new Map(pendingSuggestions.map((item) => [item.transaction_id, item]));
   useEffect(() => {
     if (!focusId || !result.envelope) return;
     const transaction = result.envelope.data.transactions.find((item) => item.transaction_id === focusId);
-    if (transaction) setSelected(transaction);
-  }, [focusId, result.envelope]);
-  const classify = async () => { await financeBridge.command("ClassifyTransactions", { month }); setMessage("Klassifikation lokal ausgeführt."); };
-  return <QueryBoundary result={result}>{({ transactions }) => <>
-    <section className="section-intro"><div><h2>Buchungen im Zeitraum</h2><p>Effektive Beträge nach bestätigten Dubletten, Transfers und Rückerstattungen.</p></div><button className="primary" onClick={classify}>Regeln anwenden</button></section>
-    {message && <div className="toast" role="status">{message}</div>}
-    <section className="panel table-panel"><table><thead><tr><th>Datum</th><th>Anbieter und Beschreibung</th><th>Kategorie</th><th>Status</th><th className="numeric">Betrag</th><th><span className="sr-only">Aktion</span></th></tr></thead><tbody>{transactions.map((item) => { const category = categoryOverrides[item.transaction_id] ?? item.category_code; return <tr key={item.transaction_id}><td>{date(item.booking_date)}</td><td><strong>{item.counterparty || "Unbekannter Anbieter"}</strong><small>{item.description || item.normalized_description || "Keine Beschreibung"}</small></td><td><span className={`category-tag ${category === "UNCLASSIFIED" ? "warn" : ""}`}>{categoryLabel(category)}</span></td><td><span className="status-dot ok">Effektiv</span></td><td className={`numeric amount ${Number(item.amount) >= 0 ? "positive-text" : ""}`}>{money(item.amount, item.currency)}</td><td><button className="icon-button" onClick={() => setSelected({ ...item, category_code: category })} aria-label={`Details zu ${item.counterparty}`}>→</button></td></tr>; })}</tbody></table></section>
-    {selected && <TransactionDialog transaction={selected} categories={(categories.envelope?.data.categories ?? []).map(normalizeCategory)} onClose={() => setSelected(null)} onSaved={(category) => { setCategoryOverrides((current) => ({ ...current, [selected.transaction_id]: category })); setSelected((current) => current ? { ...current, category_code: category } : current); setMessage(`Kategorie wurde gespeichert.`); }} />}
-  </>}</QueryBoundary>;
+    if (transaction) setSelected({ ...transaction, category_code: categoryOverrides[transaction.transaction_id] ?? transaction.category_code });
+  }, [focusId, result.envelope, categoryOverrides]);
+  const updateFilter = (name: keyof typeof filters, value: string) => setFilters((current) => ({ ...current, [name]: value }));
+  const classify = async () => { await financeBridge.command("ClassifyTransactions", { month }); setMessage("Regeln wurden angewendet."); setRefresh((value) => value + 1); };
+  const setBulkClassification = async () => {
+    if (!bulkCategory || selectedIds.size === 0) return;
+    for (const transactionId of selectedIds) await financeBridge.command("ConfirmClassification", { transaction_id: transactionId, category_code: bulkCategory });
+    setCategoryOverrides((current) => ({ ...current, ...Object.fromEntries(Array.from(selectedIds).map((id) => [id, bulkCategory])) }));
+    setMessage(`${selectedIds.size} Transaktionen wurden kategorisiert.`); setSelectedIds(new Set()); setRefresh((value) => value + 1);
+  };
+  return <QueryBoundary result={result}>{({ transactions }) => {
+    const importIds = Array.from(new Set(transactions.map((item) => item.export_id).filter(Boolean))) as string[];
+    const visible = transactions.filter((item) => {
+      const category = categoryOverrides[item.transaction_id] ?? item.category_code;
+      const amount = Number(item.amount);
+      const minimum = Number(filters.minimum.replace(",", "."));
+      const maximum = Number(filters.maximum.replace(",", "."));
+      return (filters.account === "ALL" || item.account_id === filters.account)
+        && (filters.category === "ALL" || category === filters.category)
+        && (filters.direction === "ALL" || (filters.direction === "INCOME" ? amount >= 0 : amount < 0))
+        && (!filters.minimum || (!Number.isNaN(minimum) && Math.abs(amount) >= minimum))
+        && (!filters.maximum || (!Number.isNaN(maximum) && Math.abs(amount) <= maximum))
+        && (filters.classification === "ALL" || (filters.classification === "CLASSIFIED" ? category !== "UNCLASSIFIED" : category === "UNCLASSIFIED"))
+        && (filters.ai === "ALL" || (filters.ai === "PENDING" ? suggestionByTransaction.has(item.transaction_id) : !suggestionByTransaction.has(item.transaction_id)))
+        && (filters.importId === "ALL" || item.export_id === filters.importId);
+    });
+    const allVisibleSelected = visible.length > 0 && visible.every((item) => selectedIds.has(item.transaction_id));
+    return <>
+      <section className="section-intro"><div><h2>Transaktionsarbeitsplatz</h2><p>{visible.length} Buchungen · Filter und Auswahl bleiben beim Öffnen des Detailpanels erhalten.</p></div><button className="secondary" onClick={classify}>Regeln anwenden</button></section>
+      {message && <div className="toast" role="status">{message}</div>}
+      <section className="panel transaction-filters" aria-label="Transaktionen filtern">
+        <label>Konto<select value={filters.account} onChange={(event) => updateFilter("account", event.target.value)}><option value="ALL">Alle Konten</option>{accountRows.map((item) => <option key={item.account_id} value={item.account_id}>{item.display_name}</option>)}</select></label>
+        <label>Kategorie<select value={filters.category} onChange={(event) => updateFilter("category", event.target.value)}><option value="ALL">Alle Kategorien</option>{catalogue.map((item) => <option key={item.category_code} value={item.category_code}>{item.display_name}</option>)}</select></label>
+        <label>Richtung<select value={filters.direction} onChange={(event) => updateFilter("direction", event.target.value)}><option value="ALL">Einnahmen und Ausgaben</option><option value="INCOME">Einnahmen</option><option value="EXPENSE">Ausgaben</option></select></label>
+        <label>Betrag von<input inputMode="decimal" value={filters.minimum} onChange={(event) => updateFilter("minimum", event.target.value)} placeholder="0,00" /></label>
+        <label>Betrag bis<input inputMode="decimal" value={filters.maximum} onChange={(event) => updateFilter("maximum", event.target.value)} placeholder="beliebig" /></label>
+        <label>Kategorisierung<select value={filters.classification} onChange={(event) => updateFilter("classification", event.target.value)}><option value="ALL">Alle</option><option value="CLASSIFIED">Kategorisiert</option><option value="UNCLASSIFIED">Nicht kategorisiert</option></select></label>
+        <label>AI-Vorschlag<select value={filters.ai} onChange={(event) => updateFilter("ai", event.target.value)}><option value="ALL">Alle</option><option value="PENDING">Vorschlag offen</option><option value="NONE">Ohne Vorschlag</option></select></label>
+        <label>Import<select value={filters.importId} onChange={(event) => updateFilter("importId", event.target.value)}><option value="ALL">Alle Importe</option>{importIds.map((id) => <option key={id} value={id}>{id}</option>)}</select></label>
+        <button className="text-button" onClick={() => setFilters({ account: "ALL", category: "ALL", direction: "ALL", minimum: "", maximum: "", classification: "ALL", ai: "ALL", importId: "ALL" })}>Filter zurücksetzen</button>
+      </section>
+      {selectedIds.size > 0 && <section className="panel bulk-bar" aria-label="Mehrfachauswahl"><strong>{selectedIds.size} ausgewählt</strong><select aria-label="Kategorie für Auswahl" value={bulkCategory} onChange={(event) => setBulkCategory(event.target.value)}><option value="">Kategorie wählen</option>{catalogue.filter((item) => item.status === "ACTIVE").map((item) => <option value={item.category_code} key={item.category_code}>{item.display_name}</option>)}</select><button className="primary small" disabled={!bulkCategory} onClick={setBulkClassification}>Kategorie setzen</button><button className="secondary small" disabled={!Array.from(selectedIds).some((id) => suggestionByTransaction.has(id))} onClick={() => { const id = Array.from(selectedIds).find((candidate) => suggestionByTransaction.has(candidate)); const item = transactions.find((transaction) => transaction.transaction_id === id); if (item) setSelected({ ...item, category_code: categoryOverrides[item.transaction_id] ?? item.category_code }); }}>AI-Vorschläge prüfen</button><small>Relationen und Salden können nicht gesammelt geändert werden.</small></section>}
+      <section className="panel table-panel transaction-worktable"><table><thead><tr><th><input aria-label="Alle sichtbaren Transaktionen markieren" type="checkbox" checked={allVisibleSelected} onChange={() => setSelectedIds(allVisibleSelected ? new Set() : new Set(visible.map((item) => item.transaction_id)))} /></th><th>Datum</th><th>Händler</th><th>Beschreibung</th><th>Kategorie</th><th>Konto</th><th className="numeric">Betrag</th><th>Status</th></tr></thead><tbody>{visible.map((item) => { const category = categoryOverrides[item.transaction_id] ?? item.category_code; const suggestion = suggestionByTransaction.get(item.transaction_id); return <tr key={item.transaction_id} tabIndex={0} className={selected?.transaction_id === item.transaction_id ? "active-row" : ""} onKeyDown={(event) => { if (event.key === "Enter") setSelected({ ...item, category_code: category }); if (event.key === " ") { event.preventDefault(); setSelectedIds((current) => { const next = new Set(current); next.has(item.transaction_id) ? next.delete(item.transaction_id) : next.add(item.transaction_id); return next; }); } }} onDoubleClick={() => setSelected({ ...item, category_code: category })}><td><input aria-label={`${item.counterparty} markieren`} type="checkbox" checked={selectedIds.has(item.transaction_id)} onChange={() => setSelectedIds((current) => { const next = new Set(current); next.has(item.transaction_id) ? next.delete(item.transaction_id) : next.add(item.transaction_id); return next; })} /></td><td>{date(item.booking_date)}</td><td><button className="table-link" onClick={() => setSelected({ ...item, category_code: category })}>{item.counterparty || "Unbekannter Händler"}</button></td><td>{item.description || item.normalized_description || "–"}</td><td><span className={`category-tag ${category === "UNCLASSIFIED" ? "warn" : ""}`}>{categoryLabel(category)}</span></td><td>{accountNames[item.account_id ?? ""] ?? item.account_id ?? "–"}</td><td className={`numeric amount ${Number(item.amount) >= 0 ? "positive-text" : ""}`}>{money(item.amount, item.currency)}</td><td><span className={`status-badge ${suggestion ? "paused" : category === "UNCLASSIFIED" ? "missed" : "confirmed"}`}>{suggestion ? "AI-Vorschlag offen" : category === "UNCLASSIFIED" ? "Kategorie offen" : "Kategorisiert"}</span></td></tr>; })}</tbody></table></section>
+      {selected && <TransactionSidePanel transaction={selected} accountName={accountNames[selected.account_id ?? ""]} suggestion={suggestionByTransaction.get(selected.transaction_id)} categories={catalogue} onClose={() => setSelected(null)} onOpenImport={(exportId) => onNavigate("imports", { page: "imports", view: "detail", entity_id: exportId })} onSaved={(category) => { setCategoryOverrides((current) => ({ ...current, [selected.transaction_id]: category })); setSelected((current) => current ? { ...current, category_code: category } : current); setMessage("Entscheidung wurde gespeichert."); setRefresh((value) => value + 1); }} />}
+    </>;
+  }}</QueryBoundary>;
 }
 
-function TransactionDialog({ transaction, categories, onClose, onSaved }: { transaction: Transaction; categories: Category[]; onClose: () => void; onSaved: (category: string) => void }) {
+function TransactionSidePanel({ transaction, accountName, suggestion, categories, onClose, onOpenImport, onSaved }: { transaction: Transaction; accountName?: string; suggestion?: CategorySuggestionRow; categories: Category[]; onClose: () => void; onOpenImport: (exportId: string) => void; onSaved: (category: string) => void }) {
   const close = useRef<HTMLButtonElement>(null);
   const details = useFinanceQuery<Record<string, unknown>>("GetTransactionDetails", { transaction_id: transaction.transaction_id });
-  const handleKeyDown = useModalFocus(close, onClose);
   const [category, setCategory] = useState(transaction.category_code);
   const [creating, setCreating] = useState(false);
   const [newCategory, setNewCategory] = useState("");
   const [localCategories, setLocalCategories] = useState(categories);
-  const [rememberProvider, setRememberProvider] = useState(false);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
   const detail = details.envelope?.data ?? {};
+  useEffect(() => { const previous = document.activeElement as HTMLElement | null; close.current?.focus(); return () => previous?.focus(); }, []);
   const categoryOptions = localCategories.filter((item) => item.status === "ACTIVE" || item.category_code === transaction.category_code);
   const addCategory = async () => {
     if (!newCategory.trim()) { setFeedback("Gib einen Namen für die neue Kategorie ein."); return; }
     setBusy(true);
-    try {
-      const response = await financeBridge.command("CreateCategory", { display_name: newCategory, category_type: Number(transaction.amount) >= 0 ? "INCOME" : "EXPENSE" }) as { result?: Category };
-      if (!response.result) throw new Error("Kategorie konnte nicht angelegt werden.");
-      setLocalCategories((current) => [...current, response.result as Category]);
-      setCategory(response.result.category_code);
-      setCreating(false); setNewCategory("");
-      setFeedback(`Neue Kategorie „${response.result.display_name}“ wurde angelegt und ausgewählt.`);
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Kategorie konnte nicht angelegt werden.");
-    } finally { setBusy(false); }
+    try { const response = await financeBridge.command("CreateCategory", { display_name: newCategory, category_type: Number(transaction.amount) >= 0 ? "INCOME" : "EXPENSE" }) as { result?: Category }; if (!response.result) throw new Error("Kategorie konnte nicht angelegt werden."); setLocalCategories((current) => [...current, response.result as Category]); setCategory(response.result.category_code); setCreating(false); setNewCategory(""); }
+    catch (error) { setFeedback(error instanceof Error ? error.message : "Kategorie konnte nicht angelegt werden."); }
+    finally { setBusy(false); }
   };
-  const save = async () => {
+  const saveCategory = async (createRule = false) => {
     if (!category || category === "UNCLASSIFIED") { setFeedback("Wähle zuerst eine Kategorie."); return; }
     setBusy(true);
-    setFeedback("");
-    try {
-      await financeBridge.command("ConfirmClassification", { transaction_id: transaction.transaction_id, category_code: category });
-      if (rememberProvider && transaction.counterparty.trim()) {
-        await financeBridge.command("CreateClassificationRule", { field: "counterparty", operator: "EQUALS", value: transaction.counterparty, category_code: category, priority: 250 });
-      }
-      onSaved(category);
-      setFeedback(rememberProvider ? "Kategorie und Anbieterregel wurden gespeichert." : "Kategorie wurde gespeichert.");
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Kategorie konnte nicht gespeichert werden.");
-    } finally {
-      setBusy(false);
-    }
+    try { await financeBridge.command("ConfirmClassification", { transaction_id: transaction.transaction_id, category_code: category }); if (createRule && transaction.counterparty.trim()) await financeBridge.command("CreateClassificationRule", { field: "counterparty", operator: "EQUALS", value: transaction.counterparty, category_code: category, priority: 250 }); onSaved(category); setFeedback(createRule ? "Kategorie und Händlerregel wurden gespeichert." : "Kategorie wurde gespeichert."); }
+    catch (error) { setFeedback(error instanceof Error ? error.message : "Kategorie konnte nicht gespeichert werden."); }
+    finally { setBusy(false); }
   };
-  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog wide transaction-dialog" role="dialog" aria-modal="true" aria-labelledby="transaction-title" onKeyDown={handleKeyDown}><button ref={close} className="dialog-close" onClick={onClose} aria-label="Dialog schließen">×</button><span className="eyebrow">TRANSAKTIONSDETAIL</span><div className="transaction-dialog-head"><div><h2 id="transaction-title">{transaction.counterparty || "Unbekannter Anbieter"}</h2><p>{transaction.description || transaction.normalized_description || "Keine Transaktionsbeschreibung vorhanden"}</p></div><strong className="dialog-amount">{money(transaction.amount, transaction.currency)}</strong></div><section className="category-editor" aria-label="Kategorie bearbeiten"><div><label htmlFor="transaction-category">Kategorie</label><select id="transaction-category" value={category} onChange={(event) => setCategory(event.target.value)}>{categoryOptions.map((item) => <option value={item.category_code} key={item.category_code}>{item.display_name}</option>)}</select></div><button className="secondary small" type="button" onClick={() => setCreating((value) => !value)}>{creating ? "Abbrechen" : "Neue Kategorie"}</button>{creating && <div className="new-category-row"><input aria-label="Name der neuen Kategorie" value={newCategory} onChange={(event) => setNewCategory(event.target.value)} placeholder="z. B. Haustiere" /><button className="secondary small" disabled={busy} type="button" onClick={addCategory}>Anlegen</button></div>}<label className="remember-rule"><input type="checkbox" checked={rememberProvider} onChange={(event) => setRememberProvider(event.target.checked)} /> Für diesen Anbieter künftig automatisch verwenden</label><button className="primary" disabled={busy || category === "UNCLASSIFIED"} onClick={save}>{busy ? "Speichert …" : "Kategorie speichern"}</button></section>{feedback && <div className="toast compact" role="status">{feedback}</div>}<dl className="transaction-facts"><div><dt>Anbieter</dt><dd>{String(detail.counterparty ?? transaction.counterparty ?? "–")}</dd></div><div><dt>Transaktionsbeschreibung</dt><dd>{String(detail.description ?? transaction.description ?? "–")}</dd></div><div><dt>Buchungstag</dt><dd>{date(String(detail.booking_date ?? transaction.booking_date))}</dd></div><div><dt>Wertstellung</dt><dd>{detail.value_date ? date(String(detail.value_date)) : "–"}</dd></div><div><dt>Konto</dt><dd>{String(detail.account_id ?? "–")}</dd></div><div><dt>Cashflow-relevant</dt><dd>{Boolean(detail.cashflow_relevant ?? transaction.cashflow_relevant) ? "Ja" : "Nein"}</dd></div><div><dt>Dublette</dt><dd>{relationStatusLabel(String((detail.reconciliation as Record<string, unknown> | undefined)?.duplicate_status ?? transaction.duplicate_status ?? "NONE"))}</dd></div><div><dt>Transfer</dt><dd>{relationStatusLabel(String((detail.reconciliation as Record<string, unknown> | undefined)?.transfer_status ?? transaction.transfer_status ?? "NONE"))}</dd></div></dl><div className="detail-state">{details.state === "LOADING" ? "Event-Historie wird geladen …" : `${((detail.event_history as unknown[] | undefined) ?? []).length} zugehörige Events · Projektion ${details.state}`}</div></section></div>;
+  const decideSuggestion = async (action: "confirm" | "correct" | "reject") => {
+    if (!suggestion) return;
+    setBusy(true);
+    try { const command = action === "confirm" ? "ConfirmCategorySuggestion" : action === "correct" ? "CorrectCategorySuggestion" : "RejectCategorySuggestion"; await financeBridge.command(command, action === "correct" ? { suggestion_id: suggestion.suggestion_id, selected_category: category } : { suggestion_id: suggestion.suggestion_id }); onSaved(action === "reject" ? "UNCLASSIFIED" : action === "confirm" ? suggestion.category_code : category); setFeedback(action === "reject" ? "AI-Vorschlag wurde abgelehnt." : "AI-Vorschlag wurde übernommen."); }
+    catch (error) { setFeedback(error instanceof Error ? error.message : "AI-Vorschlag konnte nicht verarbeitet werden."); }
+    finally { setBusy(false); }
+  };
+  const reconciliation = (detail.reconciliation as Record<string, unknown> | undefined) ?? {};
+  const eventHistory = (detail.event_history as Array<{ event_id: string; event_type: string; occurred_at: string }> | undefined) ?? [];
+  return <aside className="transaction-sidepanel" role="dialog" aria-modal="false" aria-labelledby="transaction-title" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}><button ref={close} className="dialog-close" onClick={onClose} aria-label="Detailpanel schließen">×</button><span className="eyebrow">TRANSAKTION</span><div className="transaction-dialog-head"><div><h2 id="transaction-title">{transaction.counterparty || "Unbekannter Händler"}</h2><p>{transaction.description || transaction.normalized_description || "Keine Beschreibung"}</p></div><strong className="dialog-amount">{money(transaction.amount, transaction.currency)}</strong></div><dl className="transaction-facts compact"><div><dt>Datum</dt><dd>{date(transaction.booking_date)}</dd></div><div><dt>Konto</dt><dd>{accountName ?? transaction.account_id ?? "–"}</dd></div><div><dt>Händler</dt><dd>{transaction.counterparty || "–"}</dd></div><div><dt>Beschreibung</dt><dd>{transaction.description || transaction.normalized_description || "–"}</dd></div></dl><section className="sidepanel-section"><h3>Kategorie</h3><div className="sidepanel-category"><select aria-label="Kategorie" value={category} onChange={(event) => setCategory(event.target.value)}>{categoryOptions.map((item) => <option value={item.category_code} key={item.category_code}>{item.display_name}</option>)}</select><button className="primary small" disabled={busy || category === "UNCLASSIFIED"} onClick={() => saveCategory(false)}>Kategorie ändern</button><button className="secondary small" disabled={busy || category === "UNCLASSIFIED"} onClick={() => saveCategory(true)}>Regel erstellen</button><button className="text-button" onClick={() => setCreating((value) => !value)}>Neue Kategorie</button></div>{creating && <div className="new-category-row"><input aria-label="Name der neuen Kategorie" value={newCategory} onChange={(event) => setNewCategory(event.target.value)} /><button className="secondary small" onClick={addCategory}>Anlegen</button></div>}</section><section className="sidepanel-section ai-assist"><h3>AI-Vorschlag</h3>{suggestion ? <><p><strong>{categoryLabel(suggestion.category_code)}</strong> · {percent(suggestion.raw_confidence)}</p><small>Lokaler Vorschlag – erst deine Entscheidung wirkt fachlich.</small><div className="sidepanel-actions"><button className="primary small" disabled={busy} onClick={() => decideSuggestion("confirm")}>Bestätigen</button><button className="secondary small" disabled={busy || category === suggestion.category_code} onClick={() => decideSuggestion("correct")}>Korrigieren</button><button className="secondary small" disabled={busy} onClick={() => decideSuggestion("reject")}>Ablehnen</button></div></> : <p>Kein offener AI-Vorschlag.</p>}</section>{feedback && <div className="toast compact" role="status">{feedback}</div>}<section className="sidepanel-section"><h3>Relationen</h3><dl className="transaction-facts compact"><div><dt>Dublette</dt><dd>{relationStatusLabel(String(reconciliation.duplicate_status ?? transaction.duplicate_status ?? "NONE"))}</dd></div><div><dt>Transfer</dt><dd>{relationStatusLabel(String(reconciliation.transfer_status ?? transaction.transfer_status ?? "NONE"))}</dd></div><div><dt>Rückerstattung</dt><dd>{relationStatusLabel(String(reconciliation.refund_status ?? transaction.refund_status ?? "NONE"))}</dd></div></dl><small>Sicherheitskritische Relationen können hier nicht gesammelt geändert werden.</small></section><section className="sidepanel-section"><h3>Importquelle</h3>{transaction.export_id ? <button className="secondary small" onClick={() => onOpenImport(transaction.export_id!)}>Import öffnen</button> : <p>Keine Importquelle hinterlegt.</p>}</section><section className="sidepanel-section"><details open><summary>Audit · {eventHistory.length} Ereignisse</summary><div className="sidepanel-audit">{eventHistory.map((event) => <div key={event.event_id}><strong>{eventLabel(event.event_type).title}</strong><small>{date(event.occurred_at)}</small></div>)}</div></details></section></aside>;
 }
 
 type CategorySuggestionRow = {

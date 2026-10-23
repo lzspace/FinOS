@@ -112,17 +112,17 @@
       "startup_status.response.schema.json": "89610a3d838f3d3114ccbe93daba1b7b090ca3e5390e3719b8b97c750fca3526",
       "store_integrity.response.schema.json": "d7ac68ae36d882e81ff5ecedb1e382b5ab5089b8606185ff60107ecfe3d13166",
       "transaction_detail.response.schema.json": "9dc7c50261542be07c1f12182d6487f770977954db7ee659a962540ec5e4efb9",
-      "transaction_list.response.schema.json": "3ee3bcdb59099f90606c6bc703b2a9f38e872447b7b6d652902c3067386565fe",
+      "transaction_list.response.schema.json": "8890f1ca321797367197faa00a19cc3a7ae4c8f8b98ce358fbda7855284d9532",
       "vertical_slice_events.schema.json": "091ea19d244cd66f3702303465a59d8a64b9f2a9732fe78390273e0c0fc79227"
     },
-    "sha256": "837cace5b4efcaea270594d7feca3c0d9e607dc29543564c6a37c131210c6e79"
+    "sha256": "133fa860c97ece8ee1e42b1c61e76fc2b4c04fda64cfc4df4f58edd3800158be"
   },
   "ui_bundle": {
     "files": {
-      "assets/index-3s1IRMep.js": "4e1d1b06dcb16a86df59c0ddf1fd090ef432313f8add493a91c85b9cd2102382",
-      "assets/index-KDH5aDAY.css": "de36f21200d490cc3c8a2d3432e4f53424b5c77106787dc9882905289188a794",
-      "index.html": "11f1dff21c61f76909059a578cf8f929fb2530267e1638c15ae9a444b4a2f7c8"
+      "assets/index-0xNLR0NE.css": "7892aa173e4fb8180b7a3a2fc6ab2f5208e6dc1461ecc16a7c07ed080efd34d1",
+      "assets/index-AGZMQfAm.js": "c7b58909aac78a6d03bddae9774ec790956f5f76cdb25ba5c85eaf0d9ed36abd",
+      "index.html": "3427661411d58518f21f1d684d2329aac307eed2e859af63b322efc9fe21296c"
     },
-    "sha256": "96349c76a2e051ee39ba4e5770dc93b2226cb4317934ef0ae5fad5d511f09466"
+    "sha256": "f0a6b2f8e218ca7729f2d88b9acbdb81a0ded16d79de69dda826930a34f83d31"
   }
 }

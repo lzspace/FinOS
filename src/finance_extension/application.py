@@ -95,6 +95,7 @@ from .forecasting import (
     reject_recurring_pattern,
     update_recurring_pattern,
 )
+from .financial_time_series import financial_time_series
 from .importer import import_csv, normalize_batch
 from .ai_import_mapping import (
     analyze_unknown_import_format,
@@ -432,6 +433,7 @@ class FinanceApplicationService:
             "GetStartupStatus": self._startup_status,
             "GetRuntimeSecurityStatus": self._security_status,
             "GetDashboard": self._dashboard,
+            "GetFinancialTimeSeries": self._financial_time_series,
             "ListTransactions": self._transactions,
             "GetTransactionDetails": self._transaction_details,
             "ListAccounts": self._accounts,
@@ -682,52 +684,91 @@ class FinanceApplicationService:
         )
 
     def _dashboard(self, payload: dict[str, Any]) -> dict[str, Any]:
-        month = _require_month(payload)
-        cashflow = reconciled_monthly_cashflow(self._store, month)
-        base = monthly_forecast(self._store, month).get("BASE")
-        liquidity = liquidity_overview(self._store)
-        worth = net_worth_overview(self._store)
-        projected = projected_month_end_balance(self._store, month)
+        if payload.get("mode") or isinstance(payload.get("period"), dict):
+            period = self._resolve_period(payload)
+        else:
+            month = _require_month(payload)
+            year_value, month_value = (int(value) for value in month.split("-"))
+            period = resolve_period_from_payload(
+                {"mode": "MONTH", "year": year_value, "month": month_value}
+            )
+        month = period["start_date"][:7]
+        series = financial_time_series(self._store, period)
+        cashflow = series["summary"]
+        base = monthly_forecast(self._store, month).get("BASE") if period["mode"] == "MONTH" else None
+        liquidity = liquidity_overview(self._store, as_of=period["end_date"])
+        worth = net_worth_overview(self._store, as_of=period["end_date"])
+        projected = projected_month_end_balance(self._store, month) if period["mode"] == "MONTH" else {"projected_month_end_balance": None}
         reviews = review_inbox(self._store)["total_open"]
         income = cashflow["effective_income"]
         savings_rate = (
-            (cashflow["net_cashflow"] / income * 100).quantize(Decimal("0.01"))
-            if income > 0
+            (Decimal(cashflow["net_cashflow"]) / Decimal(income) * 100).quantize(Decimal("0.01"))
+            if income is not None and Decimal(income) > 0
             else None
+        )
+        stale = bool(liquidity["stale_account_ids"]) or any(
+            item["freshness"] == "STALE" and item["include_in_net_worth"]
+            for item in account_overview(self._store, period["end_date"])
         )
         return self._envelope(
             {
                 "month": month,
-                "effective_income": str(income),
-                "effective_expenses": str(cashflow["effective_expenses"]),
-                "net_cashflow": str(cashflow["net_cashflow"]),
+                "period": period,
+                "effective_income": income,
+                "effective_expenses": cashflow["effective_expenses"],
+                "net_cashflow": cashflow["net_cashflow"],
                 "expected_month_end_surplus": base["predicted_surplus"] if base else None,
                 "remaining_expected_income": base["expected_income"] if base else "0",
                 "remaining_expected_expenses": base["expected_fixed_expenses"] if base else "0",
                 "savings_rate": str(savings_rate) if savings_rate is not None else None,
                 "open_reviews": reviews,
-                "liquid_balance": liquidity["liquid_funds"],
+                "liquid_balance": liquidity["liquid_funds"] if liquidity["accounts"] else None,
                 "liquid_balance_as_of": liquidity["as_of"],
                 "projected_month_end_balance": projected["projected_month_end_balance"],
-                "net_worth": worth["net_worth"],
+                "net_worth": worth["net_worth"] if worth["source_snapshot_ids"] else None,
                 "net_worth_as_of": worth["as_of"],
             },
-            status="EMPTY" if self._sequence() == 0 else "READY",
+            status="EMPTY" if self._sequence() == 0 else "STALE" if stale else "READY",
+        )
+
+    def _financial_time_series(self, payload: dict[str, Any]) -> dict[str, Any]:
+        period = self._resolve_period(payload)
+        data = financial_time_series(self._store, period)
+        return self._envelope(
+            data,
+            status="READY" if data["summary"]["has_data"] else "EMPTY",
+            projection_version=PROJECTION_VERSIONS["financial_time_series"],
         )
 
     def _transactions(self, payload: dict[str, Any]) -> dict[str, Any]:
         month = payload.get("month")
+        if payload.get("mode") or isinstance(payload.get("period"), dict):
+            period = self._resolve_period(payload)
+            period_start = period["start_date"]
+            period_end = period["end_date"]
+        else:
+            period_start = f"{month}-01" if isinstance(month, str) and month else None
+            period_end = f"{month}-31" if isinstance(month, str) and month else None
         reconciled = reconciled_transactions(self._store)
         classifications = active_classifications(self._store)
+        raw_sources = {
+            event["event_id"]: event["payload"]
+            for event in self._store.events("RawTransactionImported")
+        }
         rows = []
         for event in self._store.events("TransactionNormalized"):
             item = event["payload"]
-            if month and not item["booking_date"].startswith(month):
+            if period_start and period_end and not period_start <= item["booking_date"] <= period_end:
                 continue
             classification = classifications.get(item["transaction_id"])
+            raw_source = raw_sources.get(item.get("raw_transaction_event_id"), {})
+            export_id = item.get("export_id") or raw_source.get("export_id") or raw_source.get("import_batch_id")
+            section_id = item.get("section_id") or raw_source.get("section_id")
             rows.append(
                 {
                     **item,
+                    **({"export_id": export_id} if export_id else {}),
+                    **({"section_id": section_id} if section_id else {}),
                     "category_code": (
                         classification["payload"]["category_code"]
                         if classification

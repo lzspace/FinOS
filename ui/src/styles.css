@@ -202,6 +202,42 @@ td small { margin-top: 3px; color: #84908d; }
 .dialog .transaction-facts > div { min-height: 67px; display: block; padding: 12px 14px; border: 0; background: white; }
 .transaction-facts dt { font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
 .transaction-facts dd { margin-top: 7px; text-align: left; line-height: 1.45; overflow-wrap: anywhere; }
+.transaction-filters { display: grid; grid-template-columns: repeat(4,minmax(140px,1fr)); gap: 12px; align-items: end; margin-bottom: 14px; padding: 16px; }
+.transaction-filters label { display: grid; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 800; }
+.transaction-filters select, .transaction-filters input, .bulk-bar select, .sidepanel-category select, .sidepanel-category input { width: 100%; min-height: 36px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: white; }
+.transaction-filters .text-button { min-height: 36px; justify-self: start; }
+.bulk-bar { position: sticky; z-index: 4; top: 12px; display: flex; gap: 9px; align-items: center; margin-bottom: 14px; padding: 11px 14px; box-shadow: 0 8px 24px rgba(17,55,49,.1); }
+.bulk-bar strong { white-space: nowrap; }
+.bulk-bar select { width: auto; min-width: 190px; }
+.bulk-bar small { margin-left: auto; color: var(--muted); }
+.transaction-worktable { overflow-x: auto; }
+.transaction-worktable table { min-width: 980px; }
+.transaction-worktable tbody tr { cursor: pointer; }
+.transaction-worktable tbody tr:focus { outline: 2px solid var(--green); outline-offset: -2px; }
+.transaction-worktable tbody tr.active-row { background: #eef6f2; }
+.table-link { padding: 0; border: 0; color: var(--ink); background: transparent; font: inherit; font-weight: 800; text-align: left; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; cursor: pointer; }
+.table-link:hover, .table-link:focus-visible { color: var(--green); text-decoration-color: currentColor; }
+.transaction-sidepanel { position: fixed; z-index: 12; inset: 0 0 0 auto; width: min(520px,96vw); overflow-y: auto; padding: 30px; border-left: 1px solid var(--line); background: #fff; box-shadow: -18px 0 55px rgba(11,40,35,.18); }
+.transaction-sidepanel h2 { margin: 0 0 6px; font: 600 24px Georgia,serif; }
+.transaction-sidepanel .transaction-facts { margin: 20px 0 0; }
+.transaction-sidepanel .transaction-facts > div { min-height: 62px; padding: 12px 14px; background: white; }
+.transaction-sidepanel .dialog-close { position: sticky; z-index: 1; float: right; top: 0; }
+.transaction-sidepanel .toast.compact { margin: 14px 0 0; }
+.sidepanel-section { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.sidepanel-section h3 { margin: 0 0 11px; font: 600 15px Georgia,serif; }
+.sidepanel-section > p { margin: 0; color: var(--muted); font-size: 10px; }
+.sidepanel-section > small { display: block; margin-top: 9px; color: var(--muted); font-size: 8px; line-height: 1.5; }
+.sidepanel-category { display: grid; grid-template-columns: minmax(170px,1fr) auto; gap: 8px; align-items: center; }
+.sidepanel-category .text-button { justify-self: start; }
+.new-category-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 9px; }
+.new-category-row input { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.ai-assist { padding: 16px; border: 1px solid #d8e7e1; border-radius: 10px; background: #f2f8f5; }
+.ai-assist h3 { margin-top: 0; }
+.ai-assist p { margin: 0 0 5px; color: var(--ink); }
+.sidepanel-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.sidepanel-audit { display: grid; gap: 7px; margin-top: 10px; }
+.sidepanel-audit > div { display: flex; justify-content: space-between; gap: 14px; padding: 9px 10px; border-radius: 7px; background: #f3f6f3; font-size: 9px; }
+.sidepanel-audit small { color: var(--muted); }
 .account-summary { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }.account-tile { position: relative; min-height: 150px; padding: 17px; display: flex; gap: 13px; }.account-type { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 10px; color: #1d5e52; background: #dfeee8; font-size: 9px; font-weight: 900; }.account-tile small { color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .04em; }.account-tile h3 { margin: 6px 0 14px; font-size: 13px; }.account-tile strong { font: 600 22px Georgia, serif; }.account-tile p { margin: 7px 0 0; color: var(--muted); font: 9px ui-monospace, monospace; }.freshness { position: absolute; right: 13px; top: 13px; padding: 4px 7px; border-radius: 9px; color: #28604f; background: #dfeee8; font-size: 7px; font-weight: 900; text-transform: uppercase; }.freshness.stale { color: #8e493b; background: #f4ded9; }.stale-text { color: #a45242 !important; font-weight: 800; }.relevance { color: var(--muted); font-size: 9px; }
 .form-stack { display: grid; gap: 13px; margin: 22px 0; }.form-stack label, .balance-entry { color: var(--muted); font-size: 9px; font-weight: 800; }.form-stack input, .form-stack select, .balance-entry input { width: 100%; margin-top: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: white; }.account-balance { margin: 18px 0; padding: 17px; border-radius: 10px; color: white; background: linear-gradient(135deg, #195e53, #143e38); }.account-balance span, .account-balance strong, .account-balance small { display: block; }.account-balance span { color: #b9d3cb; font-size: 9px; }.account-balance strong { margin: 8px 0; font: 600 26px Georgia, serif; }.account-balance small { color: #c4d6d1; font-size: 9px; }.balance-entry { display: block; margin-bottom: 19px; }.history-list { margin-top: 18px; }.history-list h3 { font: 600 14px Georgia, serif; }.history-list > div { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 9px; }.history-list strong { text-align: center; }.history-list small { text-align: right; color: var(--muted); }
 .category-list { padding: 8px 20px; }
@@ -442,6 +478,7 @@ td small { margin-top: 3px; color: #84908d; }
   .shell { grid-template-columns: 76px minmax(0,1fr); }.sidebar { padding-inline: 10px; }.brand { justify-content: center; padding-inline: 0; }.brand > div, .nav-item { font-size: 0; }.nav-item { grid-template-columns: 1fr; justify-items: center; padding: 12px; }.nav-item > span:first-child { font-size: 19px; }.nav-item .nav-count { font-size: 9px; }.local-card div, .profile div { display: none; }.local-card, .profile { justify-content: center; }.content { padding-inline: 24px; }.metric-grid, .forecast-summary { grid-template-columns: repeat(2,1fr); }.security-grid { grid-template-columns: repeat(2,1fr); }.recovery-grid { grid-template-columns: 1fr; }
   .import-stepper { gap: 8px; }.import-stepper li { grid-template-columns: 27px minmax(0,max-content) minmax(10px,1fr); gap: 6px; }.import-stepper strong { white-space: nowrap; }.suggestion-summary, .review-summary-grid { grid-template-columns: repeat(2,1fr); }
   .mapping-list article, .section-overview, .import-detail-sections article { grid-template-columns: 1fr; }.mapping-controls { grid-template-columns: 1fr 1fr; }
+  .transaction-filters { grid-template-columns: repeat(2,minmax(150px,1fr)); }
 }
 @media (max-width: 760px) {
   .shell { display: block; }.sidebar { position: static; width: 100%; height: auto; padding: 10px; flex-direction: row; align-items: center; overflow-x: auto; }.brand { padding: 0 10px 0 0; border: 0; }.brand-mark { width: 32px; height: 32px; }.sidebar nav { display: flex; margin: 0; }.nav-item { min-width: 42px; }.local-card, .profile { display: none; }.content { padding: 20px 14px 40px; }.topbar { min-height: 64px; gap: 8px; }.month-picker { gap: 4px; font-size: 9px; }.month-picker input { width: 130px; padding: 6px; }.two-column, .wealth-hero, .wealth-bottom { grid-template-columns: 1fr; }.metric-grid, .forecast-summary, .scenario-grid, .expected-grid, .account-summary, .balance-strip, .review-summary-grid { grid-template-columns: 1fr; }.wealth-metrics { grid-template-columns: 1fr 1fr; }.category-row { grid-template-columns: 38px 1fr 80px; }.category-row .bar { display: none; }.table-panel { max-width: 100%; overflow-x: auto; }.table-panel table { min-width: 720px; }.review-card { grid-template-columns: 1fr; }.review-kind, .review-actions { grid-column: 1; justify-items: start; }.security-grid { grid-template-columns: 1fr; }.settings-info dl { grid-template-columns: 1fr 1fr; }.hero-row, .section-intro, .import-hero { align-items: flex-start; flex-direction: column; }.import-hero .primary { margin-left: 0; }.edit-grid, .import-confirm { grid-template-columns: 1fr; }.import-confirm > span { grid-column: 1; }.trace-note { align-items: flex-start; flex-direction: column; gap: 5px; }.recovery-card { grid-template-columns: 36px 1fr; }.recovery-card > button, .recovery-card > .card-actions, .recovery-card > .status-badge { grid-column: 2; justify-self: start; }.restore-warning { grid-template-columns: 1fr; }.restore-warning button { justify-self: start; }
@@ -451,6 +488,7 @@ td small { margin-top: 3px; color: #84908d; }
   .account-detail-metrics, .account-workspace-grid, .account-overview-context, .carry-forward-card { grid-template-columns: 1fr; }.account-overview-actions { width: 100%; align-items: flex-start; flex-direction: column; }.account-workspace-card > footer { align-items: flex-start; flex-direction: column; }.account-period-stats { grid-template-columns: 1fr; }.account-period-stats > b, .balance-adjustment { grid-column: 1; }
   .import-facts { grid-template-columns: 1fr 1fr; }.import-facts > div[class] { grid-column: span 1; }.import-facts .fact-period, .import-facts .fact-profile, .import-facts .fact-content { grid-column: 1 / -1; }.section-cards, .preview-list, .result-sections, .result-metrics { grid-template-columns: 1fr; }.mapping-controls { grid-template-columns: 1fr; }.position-row { grid-template-columns: 1fr 1fr; }.relation-list article, .history-table article { grid-template-columns: 1fr; }.history-table article > div:last-child { justify-content: flex-start; }
   .transaction-dialog-head { flex-direction: column-reverse; gap: 12px; }.category-editor { grid-template-columns: 1fr; }.category-editor .new-category-row, .category-editor .remember-rule, .category-editor > .primary { grid-column: 1; }.transaction-facts { grid-template-columns: 1fr; }.suggestion-decision, .suggestion-transaction, .import-detail-head { align-items: flex-start; flex-direction: column; }.suggestion-decision > div { justify-content: flex-start; }.suggestion-details { grid-template-columns: 1fr; }.import-detail-metrics, .import-detail-sections dl { grid-template-columns: 1fr 1fr; }.import-transaction-toolbar { align-items: stretch; flex-direction: column; }.import-transaction-toolbar select { width: 100%; min-width: 0; }
+  .transaction-filters { grid-template-columns: 1fr; }.bulk-bar { position: static; align-items: stretch; flex-direction: column; }.bulk-bar select { width: 100%; }.bulk-bar small { margin-left: 0; }.transaction-sidepanel { width: 100%; padding: 24px 18px; }.sidepanel-category { grid-template-columns: 1fr; }.sidepanel-category button { justify-self: start; }
 }
 @media (max-width: 390px) {
   .content { padding-inline: 10px; }.import-stage > header, .import-stage > footer, .import-history > header, .mapping-list, .values-list, .section-overview, .section-cards, .preview-list, .result-sections, .relation-list { padding-left: 14px; padding-right: 14px; }

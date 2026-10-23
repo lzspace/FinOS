@@ -10,6 +10,7 @@ const required = [
   "runtime_security_status.response.schema.json",
   "startup_status.response.schema.json",
   "dashboard.response.schema.json",
+  "financial_time_series.response.schema.json",
   "transaction_list.response.schema.json",
   "transaction_detail.response.schema.json",
   "review_queue.response.schema.json",

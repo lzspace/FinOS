@@ -1,5 +1,15 @@
 # Agent OS Finance 1.5.0
 
+The transaction area is now the primary daily workspace. Its stable table
+combines merchant, description, category, account, amount and decision status,
+with composable filters for period, account, category, direction, amount,
+classification, local-AI suggestions and import provenance. Opening a
+transaction keeps that table context visible in a keyboard-accessible side
+panel, including relations, import provenance and audit history. Category and
+AI decisions update immediately. Safe bulk category and suggestion review are
+available, while relations and balance corrections deliberately remain
+single-record decisions.
+
 The account area is now the central operational workspace. Money accounts
 show reported and calculated balances separately alongside income, expenses,
 net cashflow, last import and the account-specific slice of the canonical

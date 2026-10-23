@@ -112,6 +112,17 @@ class ApplicationServiceTests(unittest.TestCase):
         self._validate(transactions, "transaction_list.response.schema.json")
         self._validate(details, "transaction_detail.response.schema.json")
 
+    def test_transaction_query_uses_shared_period_selection(self) -> None:
+        response = self.application.query(
+            "ListTransactions",
+            {"mode": "CUSTOM_RANGE", "start_date": "2026-07-02", "end_date": "2026-07-31"},
+        )
+        rows = response["data"]["transactions"]
+        self.assertTrue(rows)
+        self.assertTrue(all("2026-07-02" <= row["booking_date"] <= "2026-07-31" for row in rows))
+        self.assertTrue(all("account_id" in row and "export_id" in row for row in rows))
+        self._validate(response, "transaction_list.response.schema.json")
+
     def test_review_inbox_is_derived_and_rebuilds_deterministically(self) -> None:
         before = len(self.store.events())
         first = self.application.query("GetReviewInbox")

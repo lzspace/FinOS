@@ -76,20 +76,48 @@ describe("Finance UI contract", () => {
   it("shows transaction context and persists a newly created category", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Transaktionen/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /Details zu Markthalle/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Markthalle Süd" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Markthalle Süd" });
     expect(within(dialog).getAllByText("Lebensmittel").length).toBeGreaterThan(0);
-    expect(within(dialog).getByText("Transaktionsbeschreibung")).toBeInTheDocument();
-    expect(within(dialog).getByText("Anbieter")).toBeInTheDocument();
+    expect(within(dialog).getByText("Beschreibung")).toBeInTheDocument();
+    expect(within(dialog).getByText("Händler")).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Neue Kategorie" }));
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Name der neuen Kategorie" }), { target: { value: "Haustiere" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Anlegen" }));
     await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Kategorie" })).toHaveValue("CUSTOM_HAUSTIERE"));
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Kategorie speichern" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Kategorie ändern" }));
     await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent("Kategorie wurde gespeichert"));
+  });
+
+  it("keeps transaction filters while the sidepanel opens and closes", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Transaktionen/ }));
+
+    fireEvent.change(await screen.findByRole("combobox", { name: "Richtung" }), { target: { value: "EXPENSE" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Kategorie" }), { target: { value: "FOOD_GROCERIES" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Markthalle Süd" }));
+
+    const panel = await screen.findByRole("dialog", { name: "Markthalle Süd" });
+    expect(panel).toHaveAttribute("aria-modal", "false");
+    fireEvent.keyDown(panel, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Markthalle Süd" })).not.toBeInTheDocument());
+    expect(screen.getByRole("combobox", { name: "Richtung" })).toHaveValue("EXPENSE");
+    expect(screen.getByRole("combobox", { name: "Kategorie" })).toHaveValue("FOOD_GROCERIES");
+  });
+
+  it("offers safe bulk categorization without relation or balance actions", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Transaktionen/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Markthalle Süd markieren" }));
+
+    const bulk = await screen.findByRole("region", { name: "Mehrfachauswahl" });
+    expect(within(bulk).getByText("1 ausgewählt")).toBeInTheDocument();
+    expect(within(bulk).getByRole("button", { name: "Kategorie setzen" })).toBeInTheDocument();
+    expect(within(bulk).queryByRole("button", { name: /Relation|Saldo/ })).not.toBeInTheDocument();
+    expect(within(bulk).getByText(/Relationen und Salden können nicht gesammelt/)).toBeInTheDocument();
   });
 
   it("exposes all three runtime security states without treating unchecked as passed", () => {
