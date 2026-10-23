@@ -11,6 +11,8 @@ from finance_extension.classification import classify_transactions, confirm_clas
 from finance_extension.cli import _parser
 from finance_extension.crypto import StaticKeyProvider
 from finance_extension.importer import import_csv, normalize_batch
+from finance_extension.financial_time_series import financial_time_series
+from finance_extension.periods import resolve_period
 from finance_extension.reconciliation import (
     break_transfer,
     confirm_duplicate,
@@ -172,6 +174,12 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(confirm_transfer(self.store, outgoing, incoming), 0)
         projection = reconciled_monthly_cashflow(self.store, "2026-07")
         self.assertEqual(projection["internal_transfers"], 500)
+        series = financial_time_series(
+            self.store, resolve_period("MONTH", year=2026, month=7)
+        )
+        self.assertEqual(
+            series["summary"]["net_cashflow"], str(projection["net_cashflow"])
+        )
         self.assertEqual(reconciled_transactions(self.store)[outgoing]["cashflow_relevant"], False)
         self.assertEqual(break_transfer(self.store, outgoing, incoming), 1)
         self.assertEqual(break_transfer(self.store, outgoing, incoming), 0)
@@ -241,6 +249,14 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(july["refunds"], 125)
         self.assertEqual(august["refunds"], 30)
         self.assertEqual(august["net_cashflow"], 40)
+        july_series = financial_time_series(
+            self.store, resolve_period("MONTH", year=2026, month=7)
+        )
+        august_series = financial_time_series(
+            self.store, resolve_period("MONTH", year=2026, month=8)
+        )
+        self.assertEqual(july_series["summary"]["effective_expenses"], str(july["effective_expenses"]))
+        self.assertEqual(august_series["summary"]["net_cashflow"], str(august["net_cashflow"]))
 
     def test_reconciled_category_projection_inherits_original_category_and_rebuilds(self) -> None:
         detect_duplicates(self.store)

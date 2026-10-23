@@ -123,6 +123,61 @@ class ApplicationServiceTests(unittest.TestCase):
         self.assertTrue(all("account_id" in row and "export_id" in row for row in rows))
         self._validate(response, "transaction_list.response.schema.json")
 
+    def test_dashboard_and_time_series_share_period_and_cashflow_totals(self) -> None:
+        selection = {
+            "mode": "CUSTOM_RANGE",
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-05",
+        }
+        dashboard = self.application.query("GetDashboard", selection)
+        series = self.application.query("GetFinancialTimeSeries", selection)
+
+        self.assertEqual(len(series["data"]["points"]), 5)
+        self.assertIsNone(series["data"]["points"][1]["income"])
+        self.assertFalse(series["data"]["points"][1]["has_data"])
+        self.assertEqual(
+            dashboard["data"]["effective_income"],
+            series["data"]["summary"]["effective_income"],
+        )
+        self.assertEqual(
+            dashboard["data"]["effective_expenses"],
+            series["data"]["summary"]["effective_expenses"],
+        )
+        self.assertEqual(
+            dashboard["data"]["net_cashflow"],
+            series["data"]["summary"]["net_cashflow"],
+        )
+        self.assertIsNone(dashboard["data"]["liquid_balance"])
+        self.assertIsNone(dashboard["data"]["net_worth"])
+        self._validate(dashboard, "dashboard.response.schema.json")
+        self._validate(series, "financial_time_series.response.schema.json")
+
+    def test_dashboard_marks_stale_balance_sources(self) -> None:
+        create_account(
+            self.store,
+            account_id="acc_stale",
+            display_name="Altes Girokonto",
+            account_type="CHECKING",
+            institution="Lokale Bank",
+            currency="EUR",
+            opened_at="2025-01-01",
+        )
+        record_balance_snapshot(
+            self.store,
+            account_id="acc_stale",
+            balance_date="2025-01-31",
+            booked_balance="100.00",
+            available_balance="100.00",
+            currency="EUR",
+            source="MANUAL_ENTRY",
+            confidence="HIGH",
+        )
+        response = self.application.query(
+            "GetDashboard", {"mode": "MONTH", "year": 2026, "month": 7}
+        )
+        self.assertEqual(response["state"], "STALE")
+        self.assertEqual(response["data"]["liquid_balance"], "100.00")
+
     def test_review_inbox_is_derived_and_rebuilds_deterministically(self) -> None:
         before = len(self.store.events())
         first = self.application.query("GetReviewInbox")

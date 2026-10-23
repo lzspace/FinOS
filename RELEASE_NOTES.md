@@ -1,5 +1,15 @@
 # Agent OS Finance 1.5.0
 
+The dashboard now answers financial position, period activity and required
+actions from rebuildable projections only. Month, year and custom-range
+controls drive the five core KPIs and the new `GetFinancialTimeSeries` query
+together. The chart aggregates daily, weekly or monthly as appropriate,
+preserves explicit gaps instead of inventing zeroes, and applies the same
+duplicate, transfer, refund and investment-funding policy as account cashflow.
+Liquidity and net worth remain snapshot-based and expose stale or unavailable
+source data. Its compact task summary is derived directly from the canonical
+review inbox.
+
 The transaction area is now the primary daily workspace. Its stable table
 combines merchant, description, category, account, amount and decision status,
 with composable filters for period, account, category, direction, amount,

@@ -45,7 +45,10 @@ def _bucket_ranges(period: dict[str, Any]) -> list[tuple[date, date]]:
 
 
 def financial_time_series(
-    store: LocalFinanceStore, period: dict[str, Any]
+    store: LocalFinanceStore,
+    period: dict[str, Any],
+    *,
+    account_id: str | None = None,
 ) -> dict[str, Any]:
     """Return cashflow buckets without inventing zeroes for uncovered intervals."""
 
@@ -65,6 +68,8 @@ def financial_time_series(
     )
 
     for transaction_id, transaction in transactions.items():
+        if account_id is not None and transaction["account_id"] != account_id:
+            continue
         booking_date = transaction["booking_date"]
         if not start <= booking_date <= end:
             continue
@@ -86,7 +91,11 @@ def financial_time_series(
         if event["payload"].get("status") != "CONFIRMED":
             continue
         refund = transactions.get(event["payload"]["refund_transaction_id"])
-        if refund and start <= refund["booking_date"] <= end:
+        if (
+            refund
+            and (account_id is None or refund["account_id"] == account_id)
+            and start <= refund["booking_date"] <= end
+        ):
             daily[refund["booking_date"]]["expenses"] -= Decimal(
                 event["payload"]["confirmed_amount"]
             )

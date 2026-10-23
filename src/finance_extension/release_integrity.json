@@ -40,13 +40,14 @@
       "common.schema.json": "987877d4dc10688f660b2521733bf2c2855bf8bb86f386cbdbd7d6cc04b24a88",
       "confirm_empty_opening_security_positions.command.schema.json": "520857baabbcfe9f07d820a5be6e5ca20c4e20906f67c76d78b1cb67cf151899",
       "correct_security_position_snapshot.command.schema.json": "32bf8a69203dee0f73c0a8f2479dd47dd748512a217a1c0901d16caceb0c8c69",
-      "dashboard.response.schema.json": "f4a46e6b5fbdbb8550f70c515558d459171f8778683cc5685ec2e39a605af0c3",
+      "dashboard.response.schema.json": "84a6d29c68dc23d44f5c250a9ede3885024179a051d6a7f3f8b41e9e338f5115",
       "desktop_ipc.schema.json": "fb331437bb53373b2dbeeac0810b208a184b817af1113814cd7b25ec6349043e",
       "detect_investment_funding_relations.command.schema.json": "87f432a0395daf035a02515f0e43093c8b45fedb3a1764449ddbcb0abb6dc414",
       "document_balance_difference.command.schema.json": "c4c29ffc35a77f2c9efe9d81cecba3f6128fb6d9d317026728b7964d12b6b1de",
       "empty_import_section_processed.event.schema.json": "cc48f5fa753f5f0164fc6faab2fc7fdbe6ec035c9912a842c2ceeb0880737059",
       "empty_opening_security_positions_confirmed.event.schema.json": "8f54e7bac3a3ae4b5c324405dfdc1ae3d8ce61da9aba6d1d4e2ea16418292bfd",
       "events.schema.json": "fcbd2306e800671792f58decc1c8b23571ec0c87764e76790c8b85027c58bc36",
+      "financial_time_series.response.schema.json": "1834105f4c93d41abfbc2f6f2c04d30eeb216d67b1d474505dc42d73df421625",
       "forecast.response.schema.json": "8810709ce46481818a1267dc4ee725895e46e6d9794e475d9eedf2c2a5c7f2d0",
       "forecast_commands.schema.json": "86b746bed837604f600a4338e2f7d3b68e909bbb5e88aa5b493515141bd8f53a",
       "forecast_evaluation.response.schema.json": "732f9ebb00327a99d5926a94b4f4f1a32fb7942b31de13d6c5657e8301a61582",
@@ -115,14 +116,14 @@
       "transaction_list.response.schema.json": "8890f1ca321797367197faa00a19cc3a7ae4c8f8b98ce358fbda7855284d9532",
       "vertical_slice_events.schema.json": "091ea19d244cd66f3702303465a59d8a64b9f2a9732fe78390273e0c0fc79227"
     },
-    "sha256": "133fa860c97ece8ee1e42b1c61e76fc2b4c04fda64cfc4df4f58edd3800158be"
+    "sha256": "d797e9c0103964d8298b1a8ed7b364011c17eb8e99ed9d5a7be831af1a261e27"
   },
   "ui_bundle": {
     "files": {
-      "assets/index-0xNLR0NE.css": "7892aa173e4fb8180b7a3a2fc6ab2f5208e6dc1461ecc16a7c07ed080efd34d1",
-      "assets/index-AGZMQfAm.js": "c7b58909aac78a6d03bddae9774ec790956f5f76cdb25ba5c85eaf0d9ed36abd",
-      "index.html": "3427661411d58518f21f1d684d2329aac307eed2e859af63b322efc9fe21296c"
+      "assets/index-C5omeiTh.js": "9903c64250ef32b07e1d04fefc427da2fd220c935905d1c8bd99fc3480b06fbb",
+      "assets/index-qZoazivR.css": "d9edbbe2d94e0b743e8f7e4144f35507972e984ea3654ebbac4d343049eb1213",
+      "index.html": "658b27364f5100a025db5295cd38a5663433c28fd8860a0d33753df0d4e471e2"
     },
-    "sha256": "f0a6b2f8e218ca7729f2d88b9acbdb81a0ded16d79de69dda826930a34f83d31"
+    "sha256": "c52b46723ec9594e990cb4ce29197d0e9934757d39089f24279412364fe48a1c"
   }
 }

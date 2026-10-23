@@ -100,6 +100,7 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
     }),
     GetDashboard: envelope({
       month,
+      period: MOCK_PERIOD,
       effective_income: "4320.00",
       effective_expenses: "2598.40",
       net_cashflow: "1721.60",
@@ -113,6 +114,20 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
       projected_month_end_balance: "18136.60",
       net_worth: "86420.00",
       net_worth_as_of: "2026-07-20",
+    }),
+    GetFinancialTimeSeries: envelope({
+      period: MOCK_PERIOD,
+      aggregation: "DAY",
+      points: [
+        { bucket_start: "2026-07-01", bucket_end: "2026-07-01", income: "4000.00", expenses: "0.00", net_cashflow: "4000.00", transaction_count: 1, has_data: true },
+        { bucket_start: "2026-07-02", bucket_end: "2026-07-02", income: null, expenses: null, net_cashflow: null, transaction_count: 0, has_data: false },
+        { bucket_start: "2026-07-03", bucket_end: "2026-07-03", income: "0.00", expenses: "14.99", net_cashflow: "-14.99", transaction_count: 1, has_data: true },
+        { bucket_start: "2026-07-15", bucket_end: "2026-07-15", income: "320.00", expenses: "0.00", net_cashflow: "320.00", transaction_count: 1, has_data: true },
+        { bucket_start: "2026-07-16", bucket_end: "2026-07-16", income: "0.00", expenses: "49.00", net_cashflow: "-49.00", transaction_count: 1, has_data: true },
+        { bucket_start: "2026-07-17", bucket_end: "2026-07-17", income: null, expenses: null, net_cashflow: null, transaction_count: 0, has_data: false },
+        { bucket_start: "2026-07-18", bucket_end: "2026-07-18", income: "0.00", expenses: "2534.41", net_cashflow: "-2534.41", transaction_count: 1, has_data: true },
+      ],
+      summary: { has_data: true, effective_income: "4320.00", effective_expenses: "2598.40", net_cashflow: "1721.60", covered_bucket_count: 5, missing_bucket_count: 2 },
     }),
     GetReviewInbox: envelope({
       total_open: 6,

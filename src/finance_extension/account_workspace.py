@@ -20,6 +20,7 @@ from .accounts import (
     balance_reconciliations,
 )
 from .classification import active_classifications
+from .financial_time_series import financial_time_series
 from .multi_account_import import (
     PARSER_VERSION,
     PROFILE_VERSION,
@@ -167,28 +168,13 @@ def derive_overview_status(row: dict[str, Any]) -> str:
 
 
 def _period_cashflow(store: LocalFinanceStore, account_id: str, period: dict[str, Any]) -> dict[str, str]:
-    projected = reconciled_transactions(store)
-    income = expenses = Decimal("0")
-    for event in store.events("TransactionNormalized"):
-        item = event["payload"]
-        if item["account_id"] != account_id or not _in_period(item["booking_date"], period):
-            continue
-        view = projected[item["transaction_id"]]
-        if view["duplicate_status"] == "CONFIRMED":
-            continue
-        if (
-            view["transfer_status"] == "CONFIRMED"
-            or view["investment_funding_status"] == "CONFIRMED"
-            or view["refund_status"] == "REFUND"
-        ):
-            continue
-        amount = Decimal(item["amount"])
-        income += max(amount, Decimal("0"))
-        expenses += max(-amount, Decimal("0"))
+    summary = financial_time_series(store, period, account_id=account_id)["summary"]
+    income = summary["effective_income"] or "0"
+    expenses = summary["effective_expenses"] or "0"
     return {
-        "period_income": str(income),
-        "period_expenses": str(expenses),
-        "period_net_cashflow": str(income - expenses),
+        "period_income": income,
+        "period_expenses": expenses,
+        "period_net_cashflow": str(Decimal(income) - Decimal(expenses)),
     }
 
 

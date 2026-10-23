@@ -46,6 +46,20 @@ describe("Finance UI contract", () => {
     ]);
   });
 
+  it("renders only real dashboard KPIs, a gap-aware time series and the inbox summary", async () => {
+    render(<App />);
+
+    const metrics = await screen.findByRole("region", { name: "Zentrale Finanzkennzahlen" });
+    for (const title of ["Einnahmen", "Ausgaben", "Netto-Cashflow", "Liquidität", "Nettovermögen"]) {
+      expect(within(metrics).getByText(title)).toBeInTheDocument();
+    }
+    expect(screen.queryByText("Erwarteter Monatsüberschuss")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Finanzverlauf mit 5 belegten und 2 unbelegten/ })).toBeInTheDocument();
+    expect(screen.getByText(/2 Zeitabschnitte ohne Buchungsdaten/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "6 Dinge benötigen Aufmerksamkeit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Alle prüfen" })).toBeInTheDocument();
+  });
+
   it("uses the unified inbox count and opens the affected record", async () => {
     render(<App />);
     const reviewNavigation = await screen.findByRole("button", { name: /Prüfen.*6 offene Aufgaben/ });
@@ -213,11 +227,14 @@ describe("Finance UI contract", () => {
     fireEvent.click(within(group).getByRole("tab", { name: "Jahr" }));
     expect(within(group).getByRole("tab", { name: "Jahr" })).toHaveAttribute("aria-selected", "true");
     expect(within(group).getByLabelText("Jahr auswählen")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /2026 auf einen Blick/ })).toBeInTheDocument();
 
     fireEvent.click(within(group).getByRole("tab", { name: "Zeitraum" }));
     expect(within(group).getByRole("tab", { name: "Zeitraum" })).toHaveAttribute("aria-selected", "true");
     expect(within(group).getByLabelText("Startdatum")).toBeInTheDocument();
     expect(within(group).getByLabelText("Enddatum")).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: "Vorheriger Zeitraum" })).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: "Nächster Zeitraum" })).toBeInTheDocument();
   });
 
   it("hides the period control on settings and imports where it does not apply", async () => {

@@ -25,6 +25,7 @@ import type {
   Dashboard,
   Envelope,
   ExpectedTransaction,
+  FinancialTimeSeries,
   ForecastScenario,
   LiquidityOverview,
   LocalModelStatus,
@@ -183,6 +184,12 @@ type PeriodControls = ReturnType<typeof usePeriodSelection>;
 
 function PeriodSelector({ controls }: { controls: PeriodControls }) {
   const { mode, setMode, year, setYear, month, setMonth, rangeStart, setRangeStart, rangeEnd, setRangeEnd } = controls;
+  const shiftCustomRange = (direction: -1 | 1) => {
+    const start = new Date(`${rangeStart}T12:00:00`); const end = new Date(`${rangeEnd}T12:00:00`);
+    const span = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+    start.setDate(start.getDate() + direction * span); end.setDate(end.getDate() + direction * span);
+    setRangeStart(localISODate(start)); setRangeEnd(localISODate(end));
+  };
   return (
     <div className="period-selector" role="group" aria-label="Zeitraumsteuerung">
       <div className="period-mode-switch" role="tablist" aria-label="Zeitraummodus">
@@ -212,11 +219,13 @@ function PeriodSelector({ controls }: { controls: PeriodControls }) {
       )}
       {mode === "CUSTOM_RANGE" && (
         <div className="period-fields">
+          <button className="icon-button" aria-label="Vorheriger Zeitraum" onClick={() => shiftCustomRange(-1)}>‹</button>
           <label className="sr-only" htmlFor="period-range-start">Startdatum</label>
           <input id="period-range-start" type="date" value={rangeStart} onChange={(event) => setRangeStart(event.target.value)} aria-label="Startdatum" />
+          <span aria-hidden="true">–</span>
           <label className="sr-only" htmlFor="period-range-end">Enddatum</label>
           <input id="period-range-end" type="date" value={rangeEnd} onChange={(event) => setRangeEnd(event.target.value)} aria-label="Enddatum" />
-          <button className="secondary small" onClick={() => { setRangeStart(rangeStart); setRangeEnd(rangeEnd); }}>Anwenden</button>
+          <button className="icon-button" aria-label="Nächster Zeitraum" onClick={() => shiftCustomRange(1)}>›</button>
           <button className="text-button" onClick={() => { const now = new Date(); setRangeStart(`${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`); setRangeEnd(localISODate(now)); }}>Zurücksetzen</button>
         </div>
       )}
@@ -294,7 +303,7 @@ export function App() {
           <div><span className="eyebrow">PRIVATER ARBEITSBEREICH</span><h1>{navigation.find((item) => item.id === page)?.text}</h1></div>
           {page !== "settings" && page !== "imports" && <PeriodSelector controls={periodControls} />}
         </header>
-        {page === "overview" && <Overview month={month} reviewCount={openReviews} onNavigate={(next) => navigate(next)} />}
+        {page === "overview" && <Overview period={periodControls.period} periodPayload={periodControls.payload} reviewInbox={reviewInbox} onNavigate={(next) => navigate(next)} />}
         {page === "accounts" && <AccountsOverview period={periodControls.period} periodPayload={periodControls.payload} focusId={navigationTarget?.page === "accounts" ? navigationTarget.entity_id : undefined} focusView={navigationTarget?.page === "accounts" ? navigationTarget.view : undefined} onNavigate={navigate} />}
         {page === "transactions" && <Transactions month={month} periodPayload={periodControls.payload} focusId={navigationTarget?.page === "transactions" ? navigationTarget.entity_id : undefined} onNavigate={navigate} />}
         {page === "categories" && <Categories month={month} initialTab={navigationTarget?.page === "categories" ? navigationTarget.view : undefined} focusId={navigationTarget?.page === "categories" ? navigationTarget.entity_id : undefined} />}
@@ -373,24 +382,67 @@ function QueryBoundary<T>({ result, children, empty = "Für diesen Zeitraum lieg
   return <>{(result.state === "STALE" || result.state === "PARTIAL") && <div className="status-banner" role="status"><strong>{result.state === "STALE" ? statusLabel("STALE") : "Teilprojektion"}</strong><span>{result.envelope.projection_sequence < result.envelope.event_store_sequence ? "Die lokale Ansicht wird noch aktualisiert." : result.state === "STALE" ? "Mindestens ein fachlicher Snapshot ist nicht aktuell." : "Ein Teil der lokalen Daten ist noch nicht verfügbar."}</span><details><summary>Technische Details</summary><code>Projektion #{result.envelope.projection_sequence} · Event Store #{result.envelope.event_store_sequence}</code></details></div>}{children(result.envelope.data)}</>;
 }
 
-function Overview({ month, reviewCount, onNavigate }: { month: string; reviewCount: number; onNavigate: (page: PageId) => void }) {
-  const result = useFinanceQuery<Dashboard>("GetDashboard", { month });
+function Overview({ period, periodPayload, reviewInbox, onNavigate }: { period: PeriodSelection; periodPayload: Record<string, unknown>; reviewInbox: QueryResult<ReviewInbox>; onNavigate: (page: PageId) => void }) {
+  const result = useFinanceQuery<Dashboard>("GetDashboard", periodPayload);
+  const series = useFinanceQuery<FinancialTimeSeries>("GetFinancialTimeSeries", periodPayload);
+  const inbox = reviewInbox.envelope?.data;
+  const reviewGroups = inbox ? [
+    ["Kategorien", inbox.items_by_type.CATEGORY],
+    ["AI-Vorschläge", inbox.items_by_type.AI_SUGGESTION],
+    ["Saldenabweichungen", inbox.items_by_type.BALANCE],
+    ["Importe", inbox.items_by_type.IMPORT + inbox.items_by_type.FORMAT_CHANGE],
+    ["Relationen", inbox.items_by_type.RELATION],
+  ].filter(([, count]) => Number(count) > 0) as Array<[string, number]> : [];
   return <QueryBoundary result={result}>{(data) => <>
-    <section className="hero-row"><div><h2>Dein Juli auf einen Blick</h2><p>Realisierte Werte und erwartete Buchungen, Stand heute.</p></div><button className="secondary" onClick={() => onNavigate("forecast")}>Prognose öffnen <span>→</span></button></section>
-    <section className="metric-grid" aria-label="Monatskennzahlen">
-      <Metric label="Effektive Einnahmen" value={money(data.effective_income)} tone="positive" note="Realisierte Buchungen" />
-      <Metric label="Effektive Ausgaben" value={money(data.effective_expenses)} tone="negative" note="Nach Abgleichen" />
-      <Metric label="Netto-Cashflow" value={money(data.net_cashflow)} tone="ink" note={data.savings_rate ? `${data.savings_rate} % Sparquote` : "Sparquote nicht verfügbar"} />
-      <Metric label="Erwarteter Monatsüberschuss" value={money(data.expected_month_end_surplus)} tone="accent" note="Deterministische Basisprognose" />
+    <section className="hero-row"><div><h2>{period.display_label} auf einen Blick</h2><p>Finanzlage, tatsächliche Bewegungen und offener Handlungsbedarf.</p></div></section>
+    <section className="metric-grid dashboard-kpi-grid" aria-label="Zentrale Finanzkennzahlen">
+      <Metric label="Einnahmen" value={money(data.effective_income)} tone="positive" note={data.effective_income == null ? "Keine Buchungsdaten" : "Bereinigte Buchungen"} />
+      <Metric label="Ausgaben" value={money(data.effective_expenses)} tone="negative" note={data.effective_expenses == null ? "Keine Buchungsdaten" : "Nach Abgleichen"} />
+      <Metric label="Netto-Cashflow" value={money(data.net_cashflow)} tone="ink" note={data.net_cashflow == null ? "Keine Buchungsdaten" : "Einnahmen minus Ausgaben"} />
+      <Metric label="Liquidität" value={money(data.liquid_balance)} tone="ink" note={data.liquid_balance == null ? "Kein bestätigter Saldo" : `Stand ${date(data.liquid_balance_as_of ?? period.end_date)}`} />
+      <Metric label="Nettovermögen" value={money(data.net_worth)} tone="ink" note={data.net_worth == null ? "Keine bewerteten Bestände" : `Stand ${date(data.net_worth_as_of ?? period.end_date)}`} />
     </section>
-    {data.liquid_balance !== undefined && <section className="balance-strip" aria-label="Bestandskennzahlen"><button onClick={() => onNavigate("accounts")}><span>Liquider Bestand</span><strong>{money(data.liquid_balance)}</strong><small>Stand {data.liquid_balance_as_of ? date(data.liquid_balance_as_of) : "–"}</small></button><button onClick={() => onNavigate("forecast")}><span>Prognostizierter Monatsendbestand</span><strong>{money(data.projected_month_end_balance)}</strong><small>Bestand, nicht Periodenüberschuss</small></button><button onClick={() => onNavigate("wealth")}><span>Nettovermögen</span><strong>{money(data.net_worth)}</strong><small>Stand {data.net_worth_as_of ? date(data.net_worth_as_of) : "–"}</small></button></section>}
-    <div className="two-column">
-      <section className="panel cashflow-card"><PanelHeader title="Monatsverlauf" subtitle="Realisierter Netto-Cashflow" action="Transaktionen" onAction={() => onNavigate("transactions")} /><div className="chart" aria-label="Cashflow-Verlauf als Flächendiagramm"><div className="chart-y"><span>4k</span><span>2k</span><span>0</span></div><svg viewBox="0 0 700 230" role="img" aria-label="Cashflow steigt im Juli auf 1.722 Euro"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#196a5d" stopOpacity=".26"/><stop offset="1" stopColor="#196a5d" stopOpacity="0"/></linearGradient></defs><path className="gridline" d="M0 35H700M0 112H700M0 190H700"/><path className="area" d="M0 182 C75 180 110 148 170 150 S240 120 295 128 S390 93 445 103 S535 66 585 76 S645 42 700 48 L700 220 L0 220Z"/><path className="line" d="M0 182 C75 180 110 148 170 150 S240 120 295 128 S390 93 445 103 S535 66 585 76 S645 42 700 48"/><g className="chart-labels"><text x="0" y="228">01. Jul</text><text x="215" y="228">08. Jul</text><text x="440" y="228">15. Jul</text><text x="650" y="228">Heute</text></g></svg></div>
-      </section>
-      <section className="panel outlook"><PanelHeader title="Noch erwartet" subtitle="Bis Monatsende" /><div className="outlook-number positive">+ {money(data.remaining_expected_income)}</div><p>Verbleibende Einnahmen</p><div className="outlook-number negative">− {money(data.remaining_expected_expenses)}</div><p>Verbleibende Ausgaben</p><div className="divider"/><div className="outlook-total"><span>Offene Prüfungen</span><button className="review-pill" onClick={() => onNavigate("reviews")}>{reviewCount} prüfen</button></div></section>
+    <div className="dashboard-grid">
+      <section className="panel cashflow-card"><PanelHeader title="Finanzverlauf" subtitle={`${period.display_label} · ${period.aggregation === "DAY" ? "täglich" : period.aggregation === "WEEK" ? "wöchentlich" : "monatlich"}`} action="Transaktionen" onAction={() => onNavigate("transactions")} /><FinancialTimeSeriesChart result={series} /></section>
+      <section className="panel dashboard-reviews"><PanelHeader title={`${inbox?.total_open ?? data.open_reviews} Dinge benötigen Aufmerksamkeit`} subtitle="Kurzfassung deiner offenen Aufgaben" />{reviewGroups.length ? <div className="dashboard-review-list">{reviewGroups.map(([title, count]) => <div key={title}><span>{title}</span><strong>{count}</strong></div>)}</div> : <p className="dashboard-review-empty">Aktuell sind keine Aufgaben offen.</p>}<button className="primary" onClick={() => onNavigate("reviews")}>Alle prüfen</button></section>
     </div>
     <section className="panel privacy-note"><span className="shield">◇</span><div><strong>Deine Finanzdaten bleiben auf diesem Gerät.</strong><p>Bestände stammen aus expliziten Salden-Snapshots; berechnete Werte und Prognosen sind klar gekennzeichnet.</p></div><span className="sequence">Projektion #{result.envelope?.projection_sequence}</span></section>
   </>}</QueryBoundary>;
+}
+
+function FinancialTimeSeriesChart({ result }: { result: QueryResult<FinancialTimeSeries> }) {
+  if (result.state === "LOADING") return <div className="chart-state"><span className="loader" /><p>Verlauf wird geladen …</p></div>;
+  if (result.state === "ERROR" || result.state === "INCOMPATIBLE_SCHEMA") return <div className="chart-state error"><p>Der Finanzverlauf ist derzeit nicht verfügbar.</p></div>;
+  const data = result.envelope?.data;
+  if (!data?.summary.has_data) return <div className="chart-state"><span className="empty-icon">○</span><p>Für diesen Zeitraum liegen keine Buchungsdaten vor.</p></div>;
+  const width = 720; const height = 230; const top = 18; const bottom = 35; const plotHeight = height - top - bottom;
+  const values = data.points.flatMap((point) => point.has_data ? [Number(point.income), -Number(point.expenses), Number(point.net_cashflow)] : []);
+  const maximum = Math.max(1, ...values.map((value) => Math.abs(value)));
+  const x = (index: number) => data.points.length === 1 ? width / 2 : index * width / (data.points.length - 1);
+  const y = (value: number) => top + plotHeight / 2 - (value / maximum) * (plotHeight / 2 - 8);
+  const paths = (selector: (point: FinancialTimeSeries["points"][number]) => string | null, invert = false) => {
+    const segments: string[] = []; let current = "";
+    data.points.forEach((point, index) => { const raw = selector(point); if (raw == null) { if (current) segments.push(current); current = ""; return; } const value = Number(raw) * (invert ? -1 : 1); current += `${current ? " L" : "M"}${x(index).toFixed(1)} ${y(value).toFixed(1)}`; });
+    if (current) segments.push(current); return segments;
+  };
+  const labels = Array.from(new Set([0, Math.floor((data.points.length - 1) / 2), data.points.length - 1]));
+  return <div className="financial-chart">
+    <div className="chart-legend"><span className="income">Einnahmen</span><span className="expenses">Ausgaben</span><span className="net">Netto-Cashflow</span></div>
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Finanzverlauf mit ${data.summary.covered_bucket_count} belegten und ${data.summary.missing_bucket_count} unbelegten Zeitabschnitten`}>
+      <path className="gridline" d={`M0 ${y(maximum / 2)}H${width}M0 ${y(0)}H${width}M0 ${y(-maximum / 2)}H${width}`} />
+      {data.points.map((point, index) => !point.has_data && <rect key={point.bucket_start} className="chart-gap" x={Math.max(0, x(index) - 3)} y={top} width="6" height={plotHeight} />)}
+      {paths((point) => point.income).map((path) => <path key={`income-${path}`} className="series-income" d={path} />)}
+      {paths((point) => point.expenses, true).map((path) => <path key={`expenses-${path}`} className="series-expenses" d={path} />)}
+      {paths((point) => point.net_cashflow).map((path) => <path key={`net-${path}`} className="series-net" d={path} />)}
+      {data.points.map((point, index) => point.has_data && <g key={`points-${point.bucket_start}`}>
+        <circle className="point-income" cx={x(index)} cy={y(Number(point.income))} r="3" />
+        <circle className="point-expenses" cx={x(index)} cy={y(-Number(point.expenses))} r="3" />
+        <circle className="point-net" cx={x(index)} cy={y(Number(point.net_cashflow))} r="3" />
+      </g>)}
+      <g className="chart-labels">{labels.map((index) => <text key={index} x={x(index)} y={height - 8} textAnchor={index === 0 ? "start" : index === data.points.length - 1 ? "end" : "middle"}>{date(data.points[index].bucket_start)}</text>)}</g>
+    </svg>
+    <p className="chart-coverage">{data.summary.missing_bucket_count > 0 ? `${data.summary.missing_bucket_count} Zeitabschnitte ohne Buchungsdaten sind als Lücken markiert.` : "Der gewählte Zeitraum ist vollständig mit Buchungsdaten belegt."}</p>
+  </div>;
 }
 
 const OVERVIEW_STATUS_TONE: Record<string, string> = {
