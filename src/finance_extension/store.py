@@ -183,6 +183,17 @@ class LocalFinanceStore:
           stored_file_reference TEXT NOT NULL, parser_version TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS projection_checkpoint (
           projection_name TEXT PRIMARY KEY, last_sequence_number INTEGER NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS projection_registry (
+          projection_name TEXT PRIMARY KEY, projection_version TEXT NOT NULL,
+          last_applied_sequence INTEGER NOT NULL, status TEXT NOT NULL,
+          updated_at TEXT NOT NULL, error_code TEXT);
+        CREATE TABLE IF NOT EXISTS projection_document (
+          projection_name TEXT NOT NULL, projection_version TEXT NOT NULL,
+          document_key TEXT NOT NULL, last_applied_sequence INTEGER NOT NULL,
+          document_json BLOB NOT NULL, document_hash TEXT NOT NULL, updated_at TEXT NOT NULL,
+          PRIMARY KEY(projection_name, projection_version, document_key));
+        CREATE INDEX IF NOT EXISTS idx_projection_document_sequence
+          ON projection_document(projection_name, last_applied_sequence);
         CREATE TABLE IF NOT EXISTS store_metadata (
           metadata_key TEXT PRIMARY KEY, metadata_value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS migration_log (
@@ -312,6 +323,17 @@ class LocalFinanceStore:
                 "UPDATE command_log SET status='COMPLETED', completed_at=?, result_event_ids=? WHERE command_id=?",
                 (datetime.now(UTC).isoformat(), json.dumps(sequences), command["command_id"]),
             )
+        # Read models are disposable. A failure to mark them stale must never
+        # roll back an already committed domain event.
+        try:
+            self.connection.execute(
+                "UPDATE projection_registry SET status='STALE', updated_at=? "
+                "WHERE last_applied_sequence < ?",
+                (datetime.now(UTC).isoformat(), self.latest_sequence()),
+            )
+            self.connection.commit()
+        except sqlite3.DatabaseError:
+            pass
         return sequences
 
     def events(self, event_type: str | None = None) -> list[dict[str, Any]]:

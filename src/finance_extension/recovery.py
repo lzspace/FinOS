@@ -616,6 +616,8 @@ def repair_local_store(store: LocalFinanceStore) -> dict[str, Any]:
     if before["status"] != "VALID":
         raise RecoveryInvariantError("FINANCE_REPAIR_REQUIRES_VALID_EVENT_HISTORY")
     store.connection.execute("DELETE FROM projection_checkpoint")
+    store.connection.execute("DELETE FROM projection_document")
+    store.connection.execute("DELETE FROM projection_registry")
     store.connection.execute("PRAGMA optimize")
     store.connection.commit()
     temporary = store.data_dir / f".{LocalFinanceStore.DB_FILE}.tmp"

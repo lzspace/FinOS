@@ -167,6 +167,7 @@ from .reconciliation import (
     reject_transfer,
     relation_review,
 )
+from .read_models import ProjectionDefinition, ProjectionRegistry
 from .review_inbox import review_inbox
 from .recovery import (
     create_backup,
@@ -496,6 +497,7 @@ class FinanceApplicationService:
         mode = os.environ.get("FINANCE_PERFORMANCE_MODE", "SUMMARY").upper()
         self._performance_mode = mode if mode in {"OFF", "SUMMARY", "DETAILED"} else "SUMMARY"
         self._performance_samples: deque[dict[str, Any]] = deque(maxlen=500)
+        self._read_models = ProjectionRegistry(self._store)
         self._import_file_resolver = import_file_resolver
         self._local_model_service = local_model_service or LocalModelService(
             self._store.data_dir.parent / "models"
@@ -517,6 +519,35 @@ class FinanceApplicationService:
             return factory()
         normalized = json.dumps(parameters, sort_keys=True, separators=(",", ":"), default=str)
         return context.memoize((name, normalized, context.sequence), factory)
+
+    def _persisted_response(
+        self,
+        name: str,
+        version: str,
+        parameters: dict[str, Any],
+        factory: Callable[[], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Return an encrypted-store read model at the request's pinned sequence."""
+
+        sequence = self._sequence()
+        definition = ProjectionDefinition(name, version)
+
+        def build() -> dict[str, Any]:
+            response = factory()
+            return {
+                "data": response.get("data"),
+                "state": response.get("state", "READY"),
+                "projection_version": response.get("projection_version", version),
+            }
+
+        materialized = self._read_models.materialize(
+            definition, parameters, sequence, build
+        )
+        return self._envelope(
+            materialized["data"],
+            status=materialized["state"],
+            projection_version=materialized["projection_version"],
+        )
 
     def _envelope(
         self, data: Any, *, status: str = "READY", projection_version: str = "1.0.0"
@@ -612,6 +643,7 @@ class FinanceApplicationService:
             "GetStoreIntegrity": self._store_integrity,
             "GetKeyStatus": self._key_status,
             "GetMigrationStatus": self._migration_status,
+            "GetProjectionStatus": self._projection_status,
             "GetLocalModelStatus": self._local_model_status,
             "GetImportFormatStatus": self._import_format_status,
             "GetImportMappingProposal": self._import_mapping_proposal,
@@ -866,6 +898,14 @@ class FinanceApplicationService:
         )
 
     def _dashboard(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._persisted_response(
+            "dashboard_read_model",
+            "1.0.0",
+            payload,
+            lambda: self._dashboard_uncached(payload),
+        )
+
+    def _dashboard_uncached(self, payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("mode") or isinstance(payload.get("period"), dict):
             period = self._resolve_period(payload)
         else:
@@ -934,6 +974,16 @@ class FinanceApplicationService:
         )
 
     def _financial_time_series(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._persisted_response(
+            "financial_time_series_read_model",
+            "1.0.0",
+            payload,
+            lambda: self._financial_time_series_uncached(payload),
+        )
+
+    def _financial_time_series_uncached(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         period = self._resolve_period(payload)
         data = financial_time_series(self._store, period)
         return self._envelope(
@@ -943,6 +993,14 @@ class FinanceApplicationService:
         )
 
     def _transactions(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._persisted_response(
+            "transaction_read_model",
+            "1.0.0",
+            payload,
+            lambda: self._transactions_uncached(payload),
+        )
+
+    def _transactions_uncached(self, payload: dict[str, Any]) -> dict[str, Any]:
         month = payload.get("month")
         if payload.get("mode") or isinstance(payload.get("period"), dict):
             period = self._resolve_period(payload)
@@ -1219,6 +1277,14 @@ class FinanceApplicationService:
         )
 
     def _account_overviews(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._persisted_response(
+            "account_read_model",
+            "1.0.0",
+            payload,
+            lambda: self._account_overviews_uncached(payload),
+        )
+
+    def _account_overviews_uncached(self, payload: dict[str, Any]) -> dict[str, Any]:
         period = self._resolve_period(payload)
         rows = account_overview_for_period(
             self._store,
@@ -1242,6 +1308,14 @@ class FinanceApplicationService:
         )
 
     def _account_detail(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._persisted_response(
+            "account_detail_read_model",
+            "1.0.0",
+            payload,
+            lambda: self._account_detail_uncached(payload),
+        )
+
+    def _account_detail_uncached(self, payload: dict[str, Any]) -> dict[str, Any]:
         account_id = _require_identifier(payload, "account_id")
         period = self._resolve_period(payload)
         row = next(
@@ -1389,6 +1463,14 @@ class FinanceApplicationService:
         return self._envelope({"reviews": rows}, status="EMPTY" if not rows else "READY")
 
     def _review_inbox(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._persisted_response(
+            "review_read_model",
+            "1.0.0",
+            payload,
+            lambda: self._review_inbox_uncached(payload),
+        )
+
+    def _review_inbox_uncached(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = review_inbox(self._store)
         page, next_cursor, has_more, page_size = _paginate(
             data["items"],
@@ -1413,6 +1495,14 @@ class FinanceApplicationService:
         )
 
     def _category_breakdown(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._persisted_response(
+            "category_period_summary",
+            "1.0.0",
+            payload,
+            lambda: self._category_breakdown_uncached(payload),
+        )
+
+    def _category_breakdown_uncached(self, payload: dict[str, Any]) -> dict[str, Any]:
         month = _require_month(payload)
         result = reconciled_category_breakdown(self._store, month)
         for item in result["categories"].values():
@@ -1522,7 +1612,15 @@ class FinanceApplicationService:
         )
         return self._envelope(row, status="READY" if row else "EMPTY")
 
-    def _import_history(self, _: dict[str, Any]) -> dict[str, Any]:
+    def _import_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._persisted_response(
+            "import_read_model",
+            "1.0.0",
+            payload,
+            lambda: self._import_history_uncached(payload),
+        )
+
+    def _import_history_uncached(self, _: dict[str, Any]) -> dict[str, Any]:
         rows = import_history(self._store)
         return self._envelope(
             {"imports": rows}, status="READY" if rows else "EMPTY"
@@ -1685,6 +1783,27 @@ class FinanceApplicationService:
     def _migration_status(self, _: dict[str, Any]) -> dict[str, Any]:
         return self._envelope(migration_status(self._store))
 
+    def _projection_status(self, _: dict[str, Any]) -> dict[str, Any]:
+        event_sequence = self._sequence()
+        rows = [
+            {
+                **dict(row),
+                "freshness_status": (
+                    "CURRENT"
+                    if int(row["last_applied_sequence"]) == event_sequence
+                    and row["status"] == "CURRENT"
+                    else "STALE"
+                ),
+            }
+            for row in self._store.connection.execute(
+                "SELECT projection_name,projection_version,last_applied_sequence,status,updated_at "
+                "FROM projection_registry ORDER BY projection_name"
+            ).fetchall()
+        ]
+        return self._envelope(
+            {"event_store_sequence": event_sequence, "projections": rows}
+        )
+
     def _local_model_status(self, _: dict[str, Any]) -> dict[str, Any]:
         return self._envelope(self._local_model_service.status())
 
@@ -1796,6 +1915,16 @@ class FinanceApplicationService:
         )
 
     def _pending_category_suggestions(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._persisted_response(
+            "category_suggestion_read_model",
+            "1.0.0",
+            payload,
+            lambda: self._pending_category_suggestions_uncached(payload),
+        )
+
+    def _pending_category_suggestions_uncached(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         filters = {
             key: payload[key]
             for key in (
@@ -1830,7 +1959,17 @@ class FinanceApplicationService:
             projection_version=PROJECTION_VERSIONS["category_suggestion_review"],
         )
 
-    def _category_suggestion_review_summary(self, _: dict[str, Any]) -> dict[str, Any]:
+    def _category_suggestion_review_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._persisted_response(
+            "category_suggestion_summary_read_model",
+            "1.0.0",
+            payload,
+            lambda: self._category_suggestion_review_summary_uncached(payload),
+        )
+
+    def _category_suggestion_review_summary_uncached(
+        self, _: dict[str, Any]
+    ) -> dict[str, Any]:
         return self._envelope(
             category_suggestion_review_summary(self._store),
             projection_version=PROJECTION_VERSIONS["category_suggestion_review"],
@@ -2099,6 +2238,15 @@ class FinanceApplicationService:
             )
         elif command_name == "RepairLocalStore":
             result = repair_local_store(self._store)
+        elif command_name == "RebuildReadModels":
+            with self._store.transaction() as connection:
+                connection.execute("DELETE FROM projection_document")
+                connection.execute("DELETE FROM projection_registry")
+            result = {
+                "status": "REBUILDING",
+                "strategy": "LAZY_DETERMINISTIC_REPLAY",
+                "event_store_sequence": self._store.latest_sequence(),
+            }
         elif command_name == "ValidateStoreIntegrity":
             result = validate_store_integrity(self._store)
         elif command_name == "RegisterLocalAIRuntime":

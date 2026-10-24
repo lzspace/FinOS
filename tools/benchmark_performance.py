@@ -23,6 +23,7 @@ from finance_extension.store import LocalFinanceStore  # noqa: E402
 
 
 SIZES = (100, 1_000, 10_000)
+EXTENDED_SIZE = 50_000
 OPERATIONS = (
     ("GetDashboard", {"mode": "MONTH", "year": 2026, "month": 10}),
     ("ListAccountOverviews", {"mode": "MONTH", "year": 2026, "month": 10}),
@@ -101,12 +102,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sizes", nargs="+", type=int, default=list(SIZES))
     parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument(
+        "--include-large",
+        action="store_true",
+        help="add the non-CI 50,000 transaction scaling dataset",
+    )
     arguments = parser.parse_args()
     if arguments.runs < 1 or any(size < 1 for size in arguments.sizes):
         parser.error("sizes and runs must be positive")
+    sizes = [*arguments.sizes]
+    if arguments.include_large and EXTENDED_SIZE not in sizes:
+        sizes.append(EXTENDED_SIZE)
     report = {
         "performance_instrumentation_schema": "1.0.0",
-        "datasets": [benchmark(size, arguments.runs) for size in arguments.sizes],
+        "datasets": [benchmark(size, arguments.runs) for size in sizes],
     }
     print(json.dumps(report, sort_keys=True, indent=2))
     return 0

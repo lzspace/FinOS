@@ -44,14 +44,15 @@ class PerformanceRegressionTests(unittest.TestCase):
                     (
                         "GetDashboard",
                         {"mode": "MONTH", "year": 2026, "month": 10},
-                        750.0,
+                        100.0,
                     ),
                     (
                         "ListAccountOverviews",
                         {"mode": "MONTH", "year": 2026, "month": 10},
-                        500.0,
+                        100.0,
                     ),
-                    ("ListTransactions", {"month": "2026-10", "limit": 50}, 250.0),
+                    ("ListTransactions", {"month": "2026-10", "limit": 50}, 15.0),
+                    ("GetReviewInbox", {"limit": 50}, 75.0),
                 )
                 for operation, payload, budget_ms in cases:
                     application.query(operation, payload)
