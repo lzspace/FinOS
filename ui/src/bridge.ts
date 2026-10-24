@@ -69,6 +69,61 @@ const supportedCommands = new Set([
 ]);
 
 let previewRequest = 0;
+const QUERY_CACHE_TTL_MS = 30_000;
+type QueryCacheEntry = { expiresAt: number; value: Envelope<unknown> };
+const queryCache = new Map<string, QueryCacheEntry>();
+const pendingQueries = new Map<string, Promise<Envelope<unknown>>>();
+let cacheOwner: DesktopFinanceIPC | null = null;
+
+function bindCacheTo(ipc: DesktopFinanceIPC): void {
+  if (cacheOwner === ipc) return;
+  cacheOwner = ipc;
+  queryCache.clear();
+  pendingQueries.clear();
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalize(item)]),
+  );
+}
+
+function queryKey(name: string, payload: Record<string, unknown>): string {
+  return `${name}:${JSON.stringify(canonicalize(payload))}`;
+}
+
+function queryGroup(name: string): string {
+  if (/Category|Classification/.test(name)) return "CATEGORY";
+  if (/Transaction/.test(name)) return "TRANSACTIONS";
+  if (/Account|Balance|Position|Liquidity|NetWorth|Asset|Liabilit/.test(name)) return "ACCOUNT";
+  if (/Import|Format|Funding/.test(name)) return "IMPORT";
+  if (/Review/.test(name)) return "REVIEW";
+  if (/Dashboard|FinancialTimeSeries|Forecast|Recurring|Expected/.test(name)) return "DASHBOARD";
+  if (/Backup|StoreIntegrity|KeyStatus|Migration|RuntimeSecurity/.test(name)) return "SECURITY";
+  if (/LocalModel|LocalAI|Shadow|Evaluation/.test(name)) return "LOCAL_AI";
+  return "GENERAL";
+}
+
+function invalidationGroups(command: string): Set<string> {
+  if (/Category|Classification/.test(command)) return new Set(["CATEGORY", "TRANSACTIONS", "REVIEW", "DASHBOARD"]);
+  if (/Import|Opening|Closing|Reconcile|Funding|Duplicate|Transfer|Refund/.test(command)) return new Set(["IMPORT", "TRANSACTIONS", "ACCOUNT", "REVIEW", "DASHBOARD"]);
+  if (/Account|Balance|Position|Asset|Liability/.test(command)) return new Set(["ACCOUNT", "REVIEW", "DASHBOARD"]);
+  if (/Backup|Store|Key|Migration|Repair|Restore/.test(command)) return new Set(["SECURITY"]);
+  if (/LocalModel|LocalAI|Shadow|Evaluation/.test(command)) return new Set(["LOCAL_AI", "CATEGORY", "REVIEW"]);
+  if (/Forecast|Recurring/.test(command)) return new Set(["DASHBOARD"]);
+  return new Set(["GENERAL"]);
+}
+
+function invalidateQueryGroups(groups: Set<string>): void {
+  for (const key of queryCache.keys()) {
+    const name = key.slice(0, key.indexOf(":"));
+    if (groups.has(queryGroup(name))) queryCache.delete(key);
+  }
+}
 
 function previewResponse(requestId: string, operation: DesktopOperation, result: unknown): DesktopResponse {
   return {
@@ -209,6 +264,9 @@ function userMessage(code: string): string {
     CATEGORY_SUGGESTION_DECISION_REQUIRED: "Erst nach einer Bestätigung oder Korrektur kann eine Regel erstellt werden.",
     CATEGORY_SUGGESTION_RULE_VALUE_MISSING: "Für diese Transaktion kann keine passende Regel erstellt werden.",
     CATEGORY_TRANSACTION_ALREADY_CLASSIFIED: "Die Transaktion ist bereits durch eine vorrangige Entscheidung kategorisiert.",
+    QUERY_CURSOR_INVALID: "Diese Listenseite kann nicht fortgesetzt werden. Bitte lade die Liste neu.",
+    QUERY_CURSOR_STALE: "Die Daten haben sich geändert. Die Liste wird ab der ersten Seite neu geladen.",
+    QUERY_LIMIT_INVALID: "Die angeforderte Seitengröße ist ungültig.",
     DESKTOP_WORKER_UNAVAILABLE: "Der lokale Hintergrunddienst ist nicht verfügbar.",
     DESKTOP_WORKER_INVALID_RESPONSE: "Der lokale Hintergrunddienst hat ungültig geantwortet.",
   };
@@ -232,21 +290,44 @@ export class FinanceBridge {
   }
 
   async query<T>(name: string, payload: Record<string, unknown> = {}): Promise<Envelope<T>> {
-    const id = requestId();
-    const response = await this.ipc().invoke(id, "query", { name, payload });
-    const envelope = unwrapDesktopResponse<Envelope<T>>(response, "query", id);
-    if (!envelope || typeof envelope !== "object") throw new DesktopResponseError();
-    if (envelope.schema_version !== CONTRACT_SCHEMA_VERSION) {
-      throw new SchemaCompatibilityError(envelope.schema_version);
+    const ipc = this.ipc();
+    bindCacheTo(ipc);
+    const requestPayload = { ...payload };
+    const force = Object.hasOwn(requestPayload, "refresh");
+    delete requestPayload.refresh;
+    const key = queryKey(name, requestPayload);
+    const cached = queryCache.get(key);
+    if (!force && cached && cached.expiresAt > Date.now()) return cached.value as Envelope<T>;
+    const pending = pendingQueries.get(key);
+    if (pending) return pending as Promise<Envelope<T>>;
+    const operation = (async () => {
+      const id = requestId();
+      const response = await ipc.invoke(id, "query", { name, payload: requestPayload });
+      const envelope = unwrapDesktopResponse<Envelope<T>>(response, "query", id);
+      if (!envelope || typeof envelope !== "object") throw new DesktopResponseError();
+      if (envelope.schema_version !== CONTRACT_SCHEMA_VERSION) {
+        throw new SchemaCompatibilityError(envelope.schema_version);
+      }
+      queryCache.set(key, { expiresAt: Date.now() + QUERY_CACHE_TTL_MS, value: envelope });
+      return envelope;
+    })();
+    pendingQueries.set(key, operation as Promise<Envelope<unknown>>);
+    try {
+      return await operation;
+    } finally {
+      pendingQueries.delete(key);
     }
-    return envelope;
   }
 
   async command(name: string, payload: Record<string, unknown> = {}): Promise<unknown> {
     if (!supportedCommands.has(name)) throw new Error(`Nicht unterstützter Command: ${name}`);
     const id = requestId();
-    const response = await this.ipc().invoke(id, "command", { name, payload });
-    return unwrapDesktopResponse(response, "command", id);
+    const ipc = this.ipc();
+    bindCacheTo(ipc);
+    const response = await ipc.invoke(id, "command", { name, payload });
+    const result = unwrapDesktopResponse(response, "command", id);
+    invalidateQueryGroups(invalidationGroups(name));
+    return result;
   }
 
   async selectImportFile(): Promise<SelectedImportFile | null> {

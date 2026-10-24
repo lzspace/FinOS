@@ -41,6 +41,25 @@ afterEach(() => {
 });
 
 describe("Desktop bridge boundary", () => {
+  it("deduplicates identical simultaneous queries and invalidates only affected groups", async () => {
+    const ipc = successfulIpc();
+    window.__FINANCE_IPC__ = ipc;
+    const bridge = new FinanceBridge();
+
+    const [first, second, third] = await Promise.all([
+      bridge.query("GetCategorySuggestionReviewSummary", { period: "2026-10" }),
+      bridge.query("GetCategorySuggestionReviewSummary", { period: "2026-10" }),
+      bridge.query("GetCategorySuggestionReviewSummary", { period: "2026-10" }),
+    ]);
+    expect(first).toEqual(second);
+    expect(second).toEqual(third);
+    expect(ipc.invoke).toHaveBeenCalledTimes(1);
+
+    await bridge.command("ConfirmClassification", { transaction_id: "txn_1", category_code: "OTHER_EXPENSE" });
+    await bridge.query("GetCategorySuggestionReviewSummary", { period: "2026-10" });
+    expect(ipc.invoke).toHaveBeenCalledTimes(3);
+  });
+
   it("fails closed when no host injected the bridge", async () => {
     delete window.__FINANCE_IPC__;
     await expect(new FinanceBridge().query("GetStartupStatus"))

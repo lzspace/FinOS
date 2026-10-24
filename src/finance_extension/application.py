@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from collections import deque
+import base64
+import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 from time import monotonic
@@ -219,6 +223,110 @@ class ApplicationContractError(ValueError):
     pass
 
 
+PAGINATION_CONTRACT_VERSION = "1.0.0"
+
+
+def _query_fingerprint(name: str, payload: dict[str, Any]) -> str:
+    normalized = {key: value for key, value in payload.items() if key not in {"cursor", "limit"}}
+    encoded = json.dumps(
+        {"query": name, "payload": normalized}, sort_keys=True, separators=(",", ":")
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _encode_cursor(data: dict[str, Any]) -> str:
+    encoded = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(encoded).decode().rstrip("=")
+
+
+def _decode_cursor(value: Any) -> dict[str, Any]:
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        raise ApplicationContractError("QUERY_CURSOR_INVALID")
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ApplicationContractError("QUERY_CURSOR_INVALID") from exc
+    if not isinstance(decoded, dict):
+        raise ApplicationContractError("QUERY_CURSOR_INVALID")
+    return decoded
+
+
+def _paginate(
+    rows: list[dict[str, Any]],
+    *,
+    query_name: str,
+    payload: dict[str, Any],
+    sequence: int,
+    identity: Callable[[dict[str, Any]], tuple[str, ...]],
+    default_limit: int = 50,
+) -> tuple[list[dict[str, Any]], str | None, bool, int]:
+    raw_limit = payload.get("limit", default_limit)
+    if isinstance(raw_limit, bool):
+        raise ApplicationContractError("QUERY_LIMIT_INVALID")
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError) as exc:
+        raise ApplicationContractError("QUERY_LIMIT_INVALID") from exc
+    if limit < 1 or limit > 200:
+        raise ApplicationContractError("QUERY_LIMIT_INVALID")
+    fingerprint = _query_fingerprint(query_name, payload)
+    start = 0
+    if payload.get("cursor") is not None:
+        cursor = _decode_cursor(payload["cursor"])
+        if cursor.get("v") != PAGINATION_CONTRACT_VERSION or cursor.get("fingerprint") != fingerprint:
+            raise ApplicationContractError("QUERY_CURSOR_INVALID")
+        if cursor.get("sequence") != sequence:
+            raise ApplicationContractError("QUERY_CURSOR_STALE")
+        last = cursor.get("last")
+        if not isinstance(last, list) or not all(isinstance(item, str) for item in last):
+            raise ApplicationContractError("QUERY_CURSOR_INVALID")
+        marker = tuple(last)
+        try:
+            start = next(index for index, row in enumerate(rows) if identity(row) == marker) + 1
+        except StopIteration as exc:
+            raise ApplicationContractError("QUERY_CURSOR_INVALID") from exc
+    page = rows[start : start + limit]
+    has_more = start + limit < len(rows)
+    next_cursor = None
+    if has_more and page:
+        next_cursor = _encode_cursor(
+            {
+                "v": PAGINATION_CONTRACT_VERSION,
+                "sequence": sequence,
+                "fingerprint": fingerprint,
+                "last": list(identity(page[-1])),
+            }
+        )
+    return page, next_cursor, has_more, limit
+
+
+def _pagination_parameters(
+    query_name: str, payload: dict[str, Any], sequence: int, default_limit: int = 50
+) -> tuple[int, tuple[str, ...] | None, str]:
+    raw_limit = payload.get("limit", default_limit)
+    if isinstance(raw_limit, bool):
+        raise ApplicationContractError("QUERY_LIMIT_INVALID")
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError) as exc:
+        raise ApplicationContractError("QUERY_LIMIT_INVALID") from exc
+    if limit < 1 or limit > 200:
+        raise ApplicationContractError("QUERY_LIMIT_INVALID")
+    fingerprint = _query_fingerprint(query_name, payload)
+    if payload.get("cursor") is None:
+        return limit, None, fingerprint
+    cursor = _decode_cursor(payload["cursor"])
+    if cursor.get("v") != PAGINATION_CONTRACT_VERSION or cursor.get("fingerprint") != fingerprint:
+        raise ApplicationContractError("QUERY_CURSOR_INVALID")
+    if cursor.get("sequence") != sequence:
+        raise ApplicationContractError("QUERY_CURSOR_STALE")
+    last = cursor.get("last")
+    if not isinstance(last, list) or not all(isinstance(item, str) for item in last):
+        raise ApplicationContractError("QUERY_CURSOR_INVALID")
+    return limit, tuple(last), fingerprint
+
+
 COMMAND_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "ImportTransactions": ("source_file_path", "account_id"),
     "AnalyzeImportFile": ("requested_profile",),
@@ -385,6 +493,9 @@ class FinanceApplicationService:
         self._backup_directory = backup_directory
         self._export_directory = export_directory
         self._diagnostic_recorder = diagnostic_recorder
+        mode = os.environ.get("FINANCE_PERFORMANCE_MODE", "SUMMARY").upper()
+        self._performance_mode = mode if mode in {"OFF", "SUMMARY", "DETAILED"} else "SUMMARY"
+        self._performance_samples: deque[dict[str, Any]] = deque(maxlen=500)
         self._import_file_resolver = import_file_resolver
         self._local_model_service = local_model_service or LocalModelService(
             self._store.data_dir.parent / "models"
@@ -392,8 +503,20 @@ class FinanceApplicationService:
         self._local_model_service.start_async()
 
     def _sequence(self) -> int:
-        events = self._store.events()
-        return events[-1]["sequence_number"] if events else 0
+        context = self._store.current_read_context
+        return context.sequence if context is not None else self._store.latest_sequence()
+
+    def _projection(
+        self,
+        name: str,
+        parameters: dict[str, Any],
+        factory: Callable[[], Any],
+    ) -> Any:
+        context = self._store.current_read_context
+        if context is None:
+            return factory()
+        normalized = json.dumps(parameters, sort_keys=True, separators=(",", ":"), default=str)
+        return context.memoize((name, normalized, context.sequence), factory)
 
     def _envelope(
         self, data: Any, *, status: str = "READY", projection_version: str = "1.0.0"
@@ -425,7 +548,6 @@ class FinanceApplicationService:
         *,
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        del request_id  # Correlation context; deliberately excluded from domain payloads/events.
         payload = payload or {}
         queries: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "GetCapabilityManifest": self._capabilities,
@@ -511,10 +633,71 @@ class FinanceApplicationService:
             "ListPendingCategorySuggestions": self._pending_category_suggestions,
             "GetCategorySuggestionReviewSummary": self._category_suggestion_review_summary,
             "ListClassificationRules": self._classification_rules,
+            "GetQueryPerformanceSummary": self._query_performance_summary,
         }
         if query_name not in queries:
             raise ApplicationContractError("FINANCE_QUERY_UNSUPPORTED")
-        return queries[query_name](payload)
+        started = monotonic()
+        with self._store.read_context() as context:
+            result = queries[query_name](payload)
+            if self._performance_mode != "OFF":
+                try:
+                    data = result.get("data") if isinstance(result, dict) else None
+                    if isinstance(data, list):
+                        result_count = len(data)
+                    elif isinstance(data, dict):
+                        result_count = next(
+                            (len(value) for value in data.values() if isinstance(value, list)),
+                            len(data),
+                        )
+                    else:
+                        result_count = 0 if data is None else 1
+                    sample = {
+                        "instrumentation_schema": "1.0.0",
+                        "operation": query_name,
+                        "duration_ms": round((monotonic() - started) * 1000),
+                        "event_store_sequence": context.sequence,
+                        "events_loaded": context.events_loaded,
+                        "events_decoded": context.events_decoded,
+                        "store_queries": context.store_queries,
+                        "request_cache_hits": context.request_cache_hits,
+                        "request_cache_misses": context.request_cache_misses,
+                        "result_count": result_count,
+                        "response_bytes": len(
+                            json.dumps(result, separators=(",", ":"), default=str).encode()
+                        ),
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                    self._performance_samples.append(sample)
+                    if self._diagnostic_recorder:
+                        self._diagnostic_recorder.record(
+                            operation_kind="QUERY",
+                            operation_name=query_name,
+                            duration_ms=sample["duration_ms"],
+                            event_store_sequence=context.sequence,
+                            events_loaded=context.events_loaded,
+                            events_decoded=context.events_decoded,
+                            store_queries=context.store_queries,
+                            request_cache_hits=context.request_cache_hits,
+                            request_cache_misses=context.request_cache_misses,
+                            result_count=result_count,
+                            response_bytes=sample["response_bytes"],
+                            component_status="PASSED",
+                        )
+                except Exception:
+                    # Instrumentation is deliberately best effort and must never
+                    # affect a Finance query.
+                    pass
+            return result
+
+    def _query_performance_summary(self, _: dict[str, Any]) -> dict[str, Any]:
+        return self._envelope(
+            {
+                "instrumentation_schema": "1.0.0",
+                "mode": self._performance_mode,
+                "samples": list(self._performance_samples),
+            }
+        )
 
     def _startup_status(self, _: dict[str, Any]) -> dict[str, Any]:
         state = "READY"
@@ -692,13 +875,30 @@ class FinanceApplicationService:
                 {"mode": "MONTH", "year": year_value, "month": month_value}
             )
         month = period["start_date"][:7]
-        series = financial_time_series(self._store, period)
+        series = self._projection(
+            "financial_time_series", {"period": period},
+            lambda: financial_time_series(self._store, period),
+        )
         cashflow = series["summary"]
-        base = monthly_forecast(self._store, month).get("BASE") if period["mode"] == "MONTH" else None
-        liquidity = liquidity_overview(self._store, as_of=period["end_date"])
-        worth = net_worth_overview(self._store, as_of=period["end_date"])
-        projected = projected_month_end_balance(self._store, month) if period["mode"] == "MONTH" else {"projected_month_end_balance": None}
-        reviews = review_inbox(self._store)["total_open"]
+        base = self._projection(
+            "monthly_forecast", {"month": month}, lambda: monthly_forecast(self._store, month)
+        ).get("BASE") if period["mode"] == "MONTH" else None
+        liquidity = self._projection(
+            "liquidity_overview", {"as_of": period["end_date"]},
+            lambda: liquidity_overview(self._store, as_of=period["end_date"]),
+        )
+        worth = self._projection(
+            "net_worth_overview", {"as_of": period["end_date"]},
+            lambda: net_worth_overview(self._store, as_of=period["end_date"]),
+        )
+        projected = self._projection(
+            "projected_month_end_balance", {"month": month},
+            lambda: projected_month_end_balance(self._store, month),
+        ) if period["mode"] == "MONTH" else {"projected_month_end_balance": None}
+        reviews = self._projection(
+            "review_inbox_summary", {},
+            lambda: review_inbox(self._store, materialize_limit=0),
+        )["total_open"]
         income = cashflow["effective_income"]
         savings_rate = (
             (Decimal(cashflow["net_cashflow"]) / Decimal(income) * 100).quantize(Decimal("0.01"))
@@ -707,7 +907,10 @@ class FinanceApplicationService:
         )
         stale = bool(liquidity["stale_account_ids"]) or any(
             item["freshness"] == "STALE" and item["include_in_net_worth"]
-            for item in account_overview(self._store, period["end_date"])
+            for item in self._projection(
+                "account_overview", {"as_of": period["end_date"]},
+                lambda: account_overview(self._store, period["end_date"]),
+            )
         )
         return self._envelope(
             {
@@ -748,6 +951,89 @@ class FinanceApplicationService:
         else:
             period_start = f"{month}-01" if isinstance(month, str) and month else None
             period_end = f"{month}-31" if isinstance(month, str) and month else None
+        category_ids = payload.get("category_ids")
+        if not category_ids:
+            sequence = self._sequence()
+            limit, marker, fingerprint = _pagination_parameters(
+                "ListTransactions", payload, sequence
+            )
+            if marker is not None and len(marker) != 2:
+                raise ApplicationContractError("QUERY_CURSOR_INVALID")
+            page_events = self._store.transaction_events_page(
+                period_start=period_start,
+                period_end=period_end,
+                limit=limit + 1,
+                after=(marker[0], marker[1]) if marker else None,
+                account_ids=payload.get("account_ids")
+                if isinstance(payload.get("account_ids"), list)
+                else None,
+                direction=str(payload["direction"]) if payload.get("direction") else None,
+                search=str(payload["search"]).strip() if payload.get("search") else None,
+            )
+            has_more = len(page_events) > limit
+            page_events = page_events[:limit]
+            transaction_payloads = {
+                event["payload"]["transaction_id"]: event["payload"] for event in page_events
+            }
+            reconciled_page = reconciled_transactions(self._store, transaction_payloads)
+            classifications_page = active_classifications(self._store)
+            raw_sources_page = {
+                event["event_id"]: event["payload"]
+                for event in self._store.events_by_ids(
+                    [
+                        str(item.get("raw_transaction_event_id"))
+                        for item in transaction_payloads.values()
+                        if item.get("raw_transaction_event_id")
+                    ]
+                )
+            }
+            rows = []
+            for event in page_events:
+                item = event["payload"]
+                classification = classifications_page.get(item["transaction_id"])
+                raw_source = raw_sources_page.get(item.get("raw_transaction_event_id"), {})
+                rows.append(
+                    {
+                        **item,
+                        **({"export_id": item.get("export_id") or raw_source.get("export_id") or raw_source.get("import_batch_id")} if item.get("export_id") or raw_source.get("export_id") or raw_source.get("import_batch_id") else {}),
+                        **({"section_id": item.get("section_id") or raw_source.get("section_id")} if item.get("section_id") or raw_source.get("section_id") else {}),
+                        "category_code": (
+                            classification["payload"]["category_code"]
+                            if classification
+                            and classification["event_type"] == "TransactionClassificationConfirmed"
+                            else "UNCLASSIFIED"
+                        ),
+                        **{
+                            key: str(value) if isinstance(value, Decimal) else value
+                            for key, value in reconciled_page[item["transaction_id"]].items()
+                        },
+                    }
+                )
+            next_cursor = None
+            if has_more and rows:
+                last = rows[-1]
+                next_cursor = _encode_cursor(
+                    {
+                        "v": PAGINATION_CONTRACT_VERSION,
+                        "sequence": sequence,
+                        "fingerprint": fingerprint,
+                        "last": [
+                            str(last.get("booking_date", "")),
+                            str(last.get("transaction_id", "")),
+                        ],
+                    }
+                )
+            return self._envelope(
+                {
+                    "transactions": rows,
+                    "items": rows,
+                    "next_cursor": next_cursor,
+                    "has_more": has_more,
+                    "page_size": limit,
+                    "pagination_version": PAGINATION_CONTRACT_VERSION,
+                },
+                status="EMPTY" if not rows else "READY",
+            )
         reconciled = reconciled_transactions(self._store)
         classifications = active_classifications(self._store)
         raw_sources = {
@@ -763,8 +1049,7 @@ class FinanceApplicationService:
             raw_source = raw_sources.get(item.get("raw_transaction_event_id"), {})
             export_id = item.get("export_id") or raw_source.get("export_id") or raw_source.get("import_batch_id")
             section_id = item.get("section_id") or raw_source.get("section_id")
-            rows.append(
-                {
+            row = {
                     **item,
                     **({"export_id": export_id} if export_id else {}),
                     **({"section_id": section_id} if section_id else {}),
@@ -779,8 +1064,47 @@ class FinanceApplicationService:
                         for key, value in reconciled[item["transaction_id"]].items()
                     },
                 }
-            )
-        return self._envelope({"transactions": rows}, status="EMPTY" if not rows else "READY")
+            account_ids = payload.get("account_ids")
+            category_ids = payload.get("category_ids")
+            if isinstance(account_ids, list) and account_ids and row.get("account_id") not in account_ids:
+                continue
+            if isinstance(category_ids, list) and category_ids and row["category_code"] not in category_ids:
+                continue
+            if payload.get("direction") and row.get("direction") != payload["direction"]:
+                continue
+            search = str(payload.get("search", "")).strip().casefold()
+            if search and search not in " ".join(
+                str(row.get(key, ""))
+                for key in ("counterparty", "normalized_description", "description")
+            ).casefold():
+                continue
+            rows.append(row)
+        rows.sort(
+            key=lambda row: (
+                str(row.get("booking_date", "")), str(row.get("transaction_id", ""))
+            ),
+            reverse=True,
+        )
+        page, next_cursor, has_more, page_size = _paginate(
+            rows,
+            query_name="ListTransactions",
+            payload=payload,
+            sequence=self._sequence(),
+            identity=lambda row: (
+                str(row.get("booking_date", "")), str(row.get("transaction_id", ""))
+            ),
+        )
+        return self._envelope(
+            {
+                "transactions": page,
+                "items": page,
+                "next_cursor": next_cursor,
+                "has_more": has_more,
+                "page_size": page_size,
+                "pagination_version": PAGINATION_CONTRACT_VERSION,
+            },
+            status="EMPTY" if not page else "READY",
+        )
 
     def _transaction_details(self, payload: dict[str, Any]) -> dict[str, Any]:
         transaction_id = payload.get("transaction_id")
@@ -1064,8 +1388,24 @@ class FinanceApplicationService:
         rows = account_reviews(self._store, payload.get("as_of"))
         return self._envelope({"reviews": rows}, status="EMPTY" if not rows else "READY")
 
-    def _review_inbox(self, _: dict[str, Any]) -> dict[str, Any]:
+    def _review_inbox(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = review_inbox(self._store)
+        page, next_cursor, has_more, page_size = _paginate(
+            data["items"],
+            query_name="GetReviewInbox",
+            payload=payload,
+            sequence=self._sequence(),
+            identity=lambda row: (str(row["review_id"]),),
+        )
+        data.update(
+            {
+                "items": page,
+                "next_cursor": next_cursor,
+                "has_more": has_more,
+                "page_size": page_size,
+                "pagination_version": PAGINATION_CONTRACT_VERSION,
+            }
+        )
         return self._envelope(
             data,
             status="EMPTY" if data["total_open"] == 0 else "READY",
@@ -1470,9 +1810,23 @@ class FinanceApplicationService:
         }
         filters.setdefault("status", "PENDING")
         rows = list_category_suggestions(self._store, filters)
+        page, next_cursor, has_more, page_size = _paginate(
+            rows,
+            query_name="ListPendingCategorySuggestions",
+            payload=payload,
+            sequence=self._sequence(),
+            identity=lambda row: (str(row.get("suggestion_id", "")),),
+        )
         return self._envelope(
-            {"suggestions": rows},
-            status="READY" if rows else "EMPTY",
+            {
+                "suggestions": page,
+                "items": page,
+                "next_cursor": next_cursor,
+                "has_more": has_more,
+                "page_size": page_size,
+                "pagination_version": PAGINATION_CONTRACT_VERSION,
+            },
+            status="READY" if page else "EMPTY",
             projection_version=PROJECTION_VERSIONS["category_suggestion_review"],
         )
 

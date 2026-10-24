@@ -60,6 +60,7 @@ function ipcFor(
   options: { requirements?: Record<string, unknown>[]; auditHistory?: Record<string, unknown>[] } = {},
 ) {
   let activeStep = step;
+  let automaticBalancesSatisfied = false;
   const commands: Array<[string, Record<string, unknown>]> = [];
   const ipc: DesktopFinanceIPC = {
     selectImportFile: vi.fn(async () => ({ file_ref: "file_token_01", display_name: "Juli.csv", size_bytes: 2048 })),
@@ -82,6 +83,27 @@ function ipcFor(
             result: { schema_version: "1.0.0", status: "COMPLETED", result: analysis },
           } as const;
         }
+        if (name === "MapImportSections") {
+          activeStep = (options.requirements ?? []).some((item) => item.required && !item.satisfied) ? 3 : 4;
+        }
+        if (name === "RecordOpeningBalance") {
+          automaticBalancesSatisfied = true;
+          activeStep = 4;
+        }
+        if (name === "ImportMappedSections") {
+          if (payload.import_mode === "IMPORT_NEW") activeStep = 5;
+          const execution = payload.import_mode === "VALIDATE_ONLY" ? {
+            status: "VALID", section_results: [{ section_id: section.section_id, status: "VALID" }],
+          } : {
+            status: "COMPLETED", normalized_transaction_count: 2, security_transaction_count: 0,
+            section_results: [{ ...section, status: "IMPORTED", account_id: "acc_main", local_account_name: "Girokonto", normalized_transaction_count: 2 }],
+            relations: [], balance_reconciliations: [], position_reconciliations: [],
+          };
+          return {
+            request_id: requestId, operation, contract_version: "1.3.0", status: "OK",
+            result: { schema_version: "1.0.0", status: "COMPLETED", result: execution },
+          } as const;
+        }
         return {
           request_id: requestId, operation, contract_version: "1.3.0", status: "OK",
           result: { schema_version: "1.0.0", status: "COMPLETED", result: 1 },
@@ -96,7 +118,7 @@ function ipcFor(
           status: activeStep === 5 ? "COMPLETED" : "ANALYZED",
           can_resume: activeStep < 5,
           analysis,
-          requirements: options.requirements ?? [],
+          requirements: (options.requirements ?? []).map((item) => automaticBalancesSatisfied ? { ...item, satisfied: true } : item),
           execution_result: activeStep === 5 ? {
             status: "COMPLETED",
             normalized_transaction_count: 2,
@@ -192,6 +214,9 @@ describe("Importassistent 1.2.0", () => {
     const originalInvoke = ipc.invoke.bind(ipc);
     ipc.invoke = vi.fn(async (requestId, operation, request) => {
       const name = String(request.name);
+      if (operation === "command" && name === "AnalyzeImportFile") {
+        throw new Error("IMPORT_FORMAT_UNKNOWN");
+      }
       if (operation === "command" && name === "AnalyzeUnknownImportFormat") {
         commands.push([name, (request.payload ?? {}) as Record<string, unknown>]);
         return {
@@ -229,7 +254,9 @@ describe("Importassistent 1.2.0", () => {
     window.__FINANCE_IPC__ = ipc;
     render(<Imports uiMonth="2026-07" manifest={{ ...manifest, contract_version: "1.5.0" }} />);
     fireEvent.change(await screen.findByPlaceholderText("z. B. BANK_A"), { target: { value: "BANK_A" } });
-    fireEvent.click(screen.getAllByRole("button", { name: "Unbekanntes Format analysieren" })[1]);
+    expect(screen.queryByRole("button", { name: "Formatproblem lösen" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Lokale CSV auswählen" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Formatproblem lösen" }));
     expect(await screen.findByRole("heading", { name: "Spaltenzuordnung prüfen" })).toBeInTheDocument();
     expect(screen.getByText("2 / 2 Datensätzen gültig")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Mapping bestätigen und Profil anlegen" }));
@@ -251,11 +278,49 @@ describe("Importassistent 1.2.0", () => {
     window.__FINANCE_IPC__ = ipc;
     render(<Imports uiMonth="2026-07" manifest={manifest} />);
     fireEvent.click(await screen.findByRole("button", { name: "Lokale CSV auswählen" }));
-    expect(await screen.findByText("Umsätze Girokonto")).toBeInTheDocument();
-    expect(screen.getByText("2026-07")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "BANK_A" })).toBeInTheDocument();
+    expect(screen.getByText("Juli 2026")).toBeInTheDocument();
+    expect(screen.getByText("Alles bereit.")).toBeInTheDocument();
+    expect(screen.getByText("Konten erkannt").previousSibling).toHaveTextContent("1");
     expect(commands[0][0]).toBe("AnalyzeImportFile");
     expect(commands[0][1]).toHaveProperty("source_file_reference", "file_token_01");
     expect(commands[0][1]).not.toHaveProperty("source_file_path");
+    expect(commands.some(([name]) => name === "MapImportSections")).toBe(true);
+    expect(commands.some(([name, payload]) => name === "ImportMappedSections" && payload.import_mode === "VALIDATE_ONLY")).toBe(true);
+
+    fireEvent.click(screen.getByText("Details anzeigen"));
+    expect(screen.getByText("Fingerprint")).toBeInTheDocument();
+    expect(screen.getByText("Parser")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Importieren" }));
+    expect(await screen.findByRole("heading", { name: "Import abgeschlossen" })).toBeInTheDocument();
+    expect(commands.some(([name, payload]) => name === "ImportMappedSections" && payload.import_mode === "IMPORT_NEW")).toBe(true);
+  });
+
+  it("übernimmt einen sicheren Carry-forward im bekannten Folgeformat ohne Zusatzschritt", async () => {
+    const { ipc, commands } = ipcFor(null, {}, {
+      requirements: [{
+        account_id: "acc_main", section_id: section.section_id, requirement_type: "OPENING_BALANCE",
+        required: true, satisfied: false, record: null,
+        suggested_opening_balance: {
+          eligible: true, reason_code: "ELIGIBLE", period_start: "2026-06-01", period_end: "2026-06-30",
+          suggested_value: "3145.24", currency: "EUR",
+          source_closing_balance_event_id: "evt_closing", source_reconciliation_id: "recon_june",
+        },
+      }],
+    });
+    window.__FINANCE_IPC__ = ipc;
+    render(<Imports uiMonth="2026-07" manifest={manifest} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Lokale CSV auswählen" }));
+
+    expect(await screen.findByText("Alles bereit.")).toBeInTheDocument();
+    expect(screen.getByText(/Anfangssaldo wurde aus bestätigten Endsalden/)).toBeInTheDocument();
+    const recorded = commands.find(([name]) => name === "RecordOpeningBalance")?.[1];
+    expect(recorded).toMatchObject({
+      account_id: "acc_main", booked_balance: "3145.24",
+      carry_forward_source_reconciliation_id: "recon_june", source: "PREVIOUS_SYSTEM",
+    });
   });
 
   it("zeigt einen Fehler der nativen Dateiauswahl anstatt die UI abzubrechen", async () => {
@@ -388,7 +453,11 @@ describe("Importassistent 1.2.0", () => {
     const { ipc } = ipcFor(5);
     window.__FINANCE_IPC__ = ipc;
     render(<Imports uiMonth="2026-07" manifest={manifest} />);
-    expect(await screen.findByRole("heading", { name: "Importergebnis" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Import abgeschlossen" })).toBeInTheDocument();
+    expect(screen.getByText(/2 Buchungen importiert/)).toBeInTheDocument();
+    expect(screen.getByText(/1 Konto verarbeitet/)).toBeInTheDocument();
+    expect(screen.getByText("1 Punkt benötigt Prüfung")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Importdetails"));
     expect(screen.getByText("2", { selector: ".result-metrics strong" })).toBeInTheDocument();
     expect(screen.getByText("BANK_A · 2026-07")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Details" }));

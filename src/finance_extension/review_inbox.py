@@ -27,6 +27,24 @@ REVIEW_TYPES = (
 )
 
 
+class _ReviewAccumulator(list[dict[str, Any]]):
+    """Count every review while optionally retaining only renderable items."""
+
+    def __init__(self, materialize_limit: int | None) -> None:
+        super().__init__()
+        self.materialize_limit = materialize_limit
+        self.total_open = 0
+        self.type_counts: Counter[str] = Counter()
+        self.severity_counts: Counter[str] = Counter()
+
+    def append(self, item: dict[str, Any]) -> None:
+        self.total_open += 1
+        self.type_counts[str(item["review_type"])] += 1
+        self.severity_counts[str(item["severity"])] += 1
+        if self.materialize_limit is None or len(self) < self.materialize_limit:
+            super().append(item)
+
+
 def _item(
     review_type: str,
     entity_id: str,
@@ -72,13 +90,15 @@ def _event_times(store: LocalFinanceStore) -> dict[tuple[str, str], str]:
     return times
 
 
-def review_inbox(store: LocalFinanceStore) -> dict[str, Any]:
+def review_inbox(
+    store: LocalFinanceStore, *, materialize_limit: int | None = None
+) -> dict[str, Any]:
     """Build the current inbox without persisting a second source of truth."""
 
     events = store.events()
     fallback_time = events[-1]["occurred_at"] if events else "1970-01-01T00:00:00+00:00"
     times = _event_times(store)
-    items: list[dict[str, Any]] = []
+    items = _ReviewAccumulator(materialize_limit)
     transaction_accounts = {
         str(event["payload"]["transaction_id"]): str(event["payload"]["account_id"])
         for event in store.events("TransactionNormalized")
@@ -341,16 +361,16 @@ def review_inbox(store: LocalFinanceStore) -> dict[str, Any]:
             item["review_id"],
         )
     )
-    counts = Counter(item["review_type"] for item in items)
-    severity_counts = Counter(item["severity"] for item in items)
     return {
-        "total_open": len(items),
-        "items_by_type": {review_type: counts[review_type] for review_type in REVIEW_TYPES},
+        "total_open": items.total_open,
+        "items_by_type": {
+            review_type: items.type_counts[review_type] for review_type in REVIEW_TYPES
+        },
         "severity": {
-            severity: severity_counts[severity]
+            severity: items.severity_counts[severity]
             for severity in ("ERROR", "WARNING", "INFO")
         },
-        "items": items,
+        "items": list(items),
     }
 
 

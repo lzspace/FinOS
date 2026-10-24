@@ -112,6 +112,46 @@ class ApplicationServiceTests(unittest.TestCase):
         self._validate(transactions, "transaction_list.response.schema.json")
         self._validate(details, "transaction_detail.response.schema.json")
 
+    def test_latest_sequence_and_request_read_context_do_not_repeat_decoding(self) -> None:
+        expected = self.store.events()[-1]["sequence_number"]
+        self.assertEqual(self.store.latest_sequence(), expected)
+
+        with self.store.read_context() as context:
+            first = self.store.events_by_type("TransactionNormalized")
+            decoded_after_first = context.events_decoded
+            second = self.store.events_by_type("TransactionNormalized")
+            self.assertEqual(first, second)
+            self.assertEqual(context.events_decoded, decoded_after_first)
+            self.assertGreater(context.request_cache_hits, 0)
+
+    def test_transaction_cursor_pages_are_stable_and_reject_stale_state(self) -> None:
+        first = self.application.query(
+            "ListTransactions", {"month": "2026-07", "limit": 1}
+        )
+        self.assertEqual(len(first["data"]["items"]), 1)
+        self.assertTrue(first["data"]["has_more"])
+        cursor = first["data"]["next_cursor"]
+        second = self.application.query(
+            "ListTransactions",
+            {"month": "2026-07", "limit": 1, "cursor": cursor},
+        )
+        self.assertNotEqual(
+            first["data"]["items"][0]["transaction_id"],
+            second["data"]["items"][0]["transaction_id"],
+        )
+
+        transaction_id = first["data"]["items"][0]["transaction_id"]
+        confirm_classification(self.store, transaction_id, "OTHER_EXPENSE")
+        with self.assertRaisesRegex(ApplicationContractError, "QUERY_CURSOR_STALE"):
+            self.application.query(
+                "ListTransactions",
+                {"month": "2026-07", "limit": 1, "cursor": cursor},
+            )
+
+    def test_query_limit_is_bounded(self) -> None:
+        with self.assertRaisesRegex(ApplicationContractError, "QUERY_LIMIT_INVALID"):
+            self.application.query("ListTransactions", {"month": "2026-07", "limit": 0})
+
     def test_transaction_query_uses_shared_period_selection(self) -> None:
         response = self.application.query(
             "ListTransactions",

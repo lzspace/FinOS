@@ -20,7 +20,7 @@ from .accounts import (
     balance_reconciliations,
 )
 from .classification import active_classifications
-from .financial_time_series import financial_time_series
+from .financial_time_series import account_cashflow_summaries, financial_time_series
 from .multi_account_import import (
     PARSER_VERSION,
     PROFILE_VERSION,
@@ -189,6 +189,27 @@ def account_overview_for_period(
 ) -> list[dict[str, Any]]:
     base_rows = account_overview(store, period["end_date"])
     review_counts = account_review_counts(store)
+    cashflow_by_account = account_cashflow_summaries(store, period)
+    latest_import_by_account: dict[str, dict[str, Any]] = {}
+    for event in store.events("ImportSectionCompleted"):
+        item = {**event["payload"], "occurred_at": event["occurred_at"]}
+        account_id = item["account_id"]
+        current = latest_import_by_account.get(account_id)
+        if current is None or (item.get("period_start") or "", item["occurred_at"]) > (
+            current.get("period_start") or "",
+            current["occurred_at"],
+        ):
+            latest_import_by_account[account_id] = item
+    reconciliations = balance_reconciliations(store)
+    positions_by_account: dict[str, list[dict[str, Any]]] = {}
+    for item in security_positions(store).values():
+        positions_by_account.setdefault(item["account_id"], []).append(item)
+    openings_by_account: dict[str, list[dict[str, Any]]] = {}
+    for item in opening_security_positions(store).values():
+        openings_by_account.setdefault(item["account_id"], []).append(item)
+    position_reconciliations_by_account: dict[str, list[dict[str, Any]]] = {}
+    for item in imported_security_position_reconciliations(store).values():
+        position_reconciliations_by_account.setdefault(item["account_id"], []).append(item)
     rows: list[dict[str, Any]] = []
     for base in base_rows:
         if base["status"] == "CLOSED" and not include_closed:
@@ -197,8 +218,16 @@ def account_overview_for_period(
             continue
         if currency and base["currency"] != currency:
             continue
-        cashflow = _period_cashflow(store, base["account_id"], period)
-        last_import = account_last_import(store, base["account_id"])
+        cashflow = cashflow_by_account.get(
+            base["account_id"],
+            {"period_income": "0", "period_expenses": "0", "period_net_cashflow": "0"},
+        )
+        last_import_row = latest_import_by_account.get(base["account_id"])
+        last_import = ({
+            "report_month": (last_import_row.get("period_start") or "")[:7],
+            "status": last_import_row["status"],
+            "export_id": last_import_row["export_id"],
+        } if last_import_row else None)
         row = {
             "account_id": base["account_id"],
             "display_name": base["display_name"],
@@ -223,27 +252,18 @@ def account_overview_for_period(
             "projection_sequence": None,
             "projection_version": "1.0.0",
         }
-        reconciliation = balance_reconciliations(store).get(base["account_id"])
+        reconciliation = reconciliations.get(base["account_id"])
         if reconciliation:
             row["calculated_balance"] = reconciliation.get("calculated_balance")
             row["balance_difference"] = reconciliation.get("balance_difference")
         if base["account_type"] == "BROKERAGE":
-            positions = [
-                item for item in security_positions(store).values() if item["account_id"] == base["account_id"]
-            ]
+            positions = positions_by_account.get(base["account_id"], [])
             row["position_count"] = len(positions)
-            opening = [
-                item
-                for item in opening_security_positions(store).values()
-                if item["account_id"] == base["account_id"]
-            ]
+            opening = openings_by_account.get(base["account_id"], [])
             row["acquisition_value"] = str(
                 sum((Decimal(item["market_value"]) for item in opening if item.get("market_value")), Decimal("0"))
             ) if opening else None
-            position_reconciliations = [
-                item for item in imported_security_position_reconciliations(store).values()
-                if item["account_id"] == base["account_id"]
-            ]
+            position_reconciliations = position_reconciliations_by_account.get(base["account_id"], [])
             if position_reconciliations:
                 latest_position_reconciliation = max(
                     position_reconciliations,

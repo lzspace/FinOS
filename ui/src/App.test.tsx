@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { App, CriticalState, DesktopBridgeUnavailableState, DesktopServiceErrorState, localRuntimeSummary, normalizeCategory } from "./App";
 import { mockQuery } from "./mockData";
 import { statusLabel } from "./statusLabels";
@@ -77,6 +77,27 @@ describe("Finance UI contract", () => {
     expect(categoryReview).not.toBeNull();
     fireEvent.click(within(categoryReview as HTMLElement).getByRole("button", { name: "Öffnen" }));
     expect(await screen.findByRole("dialog", { name: "Markthalle Süd" })).toBeInTheDocument();
+  });
+
+  it("loads category tab data only when the tab becomes visible", async () => {
+    const original = window.__FINANCE_IPC__!;
+    const invoke = vi.fn(original.invoke.bind(original));
+    window.__FINANCE_IPC__ = { ...original, invoke };
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Kategorien/ }));
+    await screen.findByRole("heading", { name: "Ausgaben nach Kategorien" });
+    const initialQueries = invoke.mock.calls.map((call) => String(call[2].name));
+    expect(initialQueries).toContain("GetCategoryBreakdown");
+    expect(initialQueries).toContain("GetCategorySuggestionReviewSummary");
+    expect(initialQueries).not.toContain("ListPendingCategorySuggestions");
+    expect(initialQueries).not.toContain("ListClassificationRules");
+    expect(initialQueries).not.toContain("ListCategories");
+
+    fireEvent.click(screen.getByRole("tab", { name: /Vorschläge/ }));
+    await waitFor(() => expect(invoke.mock.calls.map((call) => String(call[2].name)))
+      .toContain("ListPendingCategorySuggestions"));
+    window.__FINANCE_IPC__ = original;
   });
 
   it("renders account projections and stale balances explicitly", async () => {
@@ -188,6 +209,20 @@ describe("Finance UI contract", () => {
     expect(screen.queryByText(/Wahrscheinlichkeit, dass es richtig ist/i)).not.toBeInTheDocument();
   });
 
+  it("shows all open AI suggestions by default and makes the selected month an explicit filter", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Kategorien/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: /Vorschläge/ }));
+
+    expect(await screen.findByRole("button", { name: "Alle offenen (2)" })).toHaveClass("active");
+    expect(screen.getByText("Café Morgen")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Nur Oktober 2026/ }));
+
+    expect(await screen.findByText("Keine offenen Vorschläge im Oktober 2026")).toBeInTheDocument();
+    expect(screen.getByText(/Wechsle zu „Alle offenen“/)).toBeInTheDocument();
+    expect(screen.queryByText("Für diesen Zeitraum liegen keine Daten vor.")).not.toBeInTheDocument();
+  });
+
   it("offers understandable category management", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Kategorien/ }));
@@ -235,6 +270,46 @@ describe("Finance UI contract", () => {
     expect(within(group).getByLabelText("Enddatum")).toBeInTheDocument();
     expect(within(group).getByRole("button", { name: "Vorheriger Zeitraum" })).toBeInTheDocument();
     expect(within(group).getByRole("button", { name: "Nächster Zeitraum" })).toBeInTheDocument();
+  });
+
+  it("keeps an incomplete custom range out of finance queries until it is valid and applied", async () => {
+    render(<App />);
+    const group = await screen.findByRole("group", { name: "Zeitraumsteuerung" });
+    fireEvent.click(within(group).getByRole("tab", { name: "Zeitraum" }));
+
+    const start = within(group).getByLabelText("Startdatum");
+    const end = within(group).getByLabelText("Enddatum");
+    fireEvent.change(start, { target: { value: "" } });
+
+    expect(within(group).getByRole("alert")).toHaveTextContent("vollständig angegeben");
+    expect(within(group).getByRole("button", { name: "Anwenden" })).toBeDisabled();
+    expect(await screen.findByRole("heading", { name: /auf einen Blick/ })).toBeInTheDocument();
+
+    fireEvent.change(start, { target: { value: "2026-10-20" } });
+    fireEvent.change(end, { target: { value: "2026-10-01" } });
+    expect(within(group).getByRole("alert")).toHaveTextContent("nicht vor dem Startdatum");
+
+    fireEvent.change(start, { target: { value: "2020-01-01" } });
+    fireEvent.change(end, { target: { value: "2026-10-22" } });
+    expect(within(group).getByRole("alert")).toHaveTextContent("höchstens 1.096 Tage");
+
+    fireEvent.change(start, { target: { value: "2026-10-01" } });
+    fireEvent.change(end, { target: { value: "2026-10-22" } });
+    fireEvent.click(within(group).getByRole("button", { name: "Anwenden" }));
+
+    expect(await screen.findByRole("heading", { name: "01.10.2026 – 22.10.2026 auf einen Blick" })).toBeInTheDocument();
+  });
+
+  it("moves an applied custom range atomically", async () => {
+    render(<App />);
+    const group = await screen.findByRole("group", { name: "Zeitraumsteuerung" });
+    fireEvent.click(within(group).getByRole("tab", { name: "Zeitraum" }));
+    fireEvent.change(within(group).getByLabelText("Startdatum"), { target: { value: "2026-10-01" } });
+    fireEvent.change(within(group).getByLabelText("Enddatum"), { target: { value: "2026-10-22" } });
+    fireEvent.click(within(group).getByRole("button", { name: "Anwenden" }));
+    fireEvent.click(within(group).getByRole("button", { name: "Vorheriger Zeitraum" }));
+
+    expect(await screen.findByRole("heading", { name: "09.09.2026 – 30.09.2026 auf einen Blick" })).toBeInTheDocument();
   });
 
   it("hides the period control on settings and imports where it does not apply", async () => {

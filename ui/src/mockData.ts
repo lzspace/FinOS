@@ -288,7 +288,7 @@ export function mockQuery(name: string, payload: Record<string, unknown> = {}): 
       })),
     }),
     GetCategorySuggestionReviewSummary: envelope({ unclassified_count: 2, pending_count: 2, confirmed_today_count: 1, corrected_count: 1, stale_count: 0, automatic_acceptance: false }),
-    ListPendingCategorySuggestions: envelope({ suggestions: [
+    ListPendingCategorySuggestions: payload.period ? envelope({ suggestions: [] }, "EMPTY") : envelope({ suggestions: [
       { suggestion_id: "csg_11111111111111111111111111111111", transaction_id: "txn_108", category_code: "FOOD_RESTAURANTS", status: "PENDING", raw_confidence: 0.982, confidence_kind: "MODEL_SELF_REPORTED_CONFIDENCE", alternatives: [{ category_code: "FOOD_GROCERIES", confidence: 0.012 }, { category_code: "OTHER_EXPENSE", confidence: 0.006 }], reason_codes: ["MERCHANT_SEMANTICS", "DESCRIPTION_SEMANTICS"], model_id: "finance-assistant-small", model_version: "1.0.0", merchant: "Café Morgen", description: "Kartenzahlung", amount: "-11.80", currency: "EUR", historical_accuracy: null },
       { suggestion_id: "csg_22222222222222222222222222222222", transaction_id: "txn_109", category_code: "SUBSCRIPTIONS", status: "PENDING", raw_confidence: 0.913, confidence_kind: "MODEL_SELF_REPORTED_CONFIDENCE", alternatives: [{ category_code: "LEISURE", confidence: 0.061 }, { category_code: "OTHER_EXPENSE", confidence: 0.026 }], reason_codes: ["KNOWN_SERVICE_TYPE", "RECURRING_PATTERN"], model_id: "finance-assistant-small", model_version: "1.0.0", merchant: "Digital Services", description: "Monatlicher Dienst", amount: "-8.99", currency: "EUR", historical_accuracy: null },
     ] }),

@@ -13,9 +13,8 @@ from .store import LocalFinanceStore
 
 def _latest_refunds(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
-    for event in store.events():
-        if event["event_type"].startswith("RefundRelation"):
-            latest[event["aggregate_id"]] = event
+    for event in store.events_by_type_prefix("RefundRelation"):
+        latest[event["aggregate_id"]] = event
     return latest
 
 
@@ -145,4 +144,56 @@ def financial_time_series(
             "covered_bucket_count": covered_buckets,
             "missing_bucket_count": len(points) - covered_buckets,
         },
+    }
+
+
+def account_cashflow_summaries(
+    store: LocalFinanceStore, period: dict[str, Any]
+) -> dict[str, dict[str, str]]:
+    """Aggregate every account in one reconciliation-aware event pass."""
+
+    start = period["start_date"]
+    end = period["end_date"]
+    transactions = {
+        event["payload"]["transaction_id"]: event["payload"]
+        for event in store.events("TransactionNormalized")
+    }
+    reconciled = reconciled_transactions(store)
+    totals: dict[str, dict[str, Decimal | int]] = defaultdict(
+        lambda: {"income": Decimal("0"), "expenses": Decimal("0"), "count": 0}
+    )
+    for transaction_id, transaction in transactions.items():
+        if not start <= transaction["booking_date"] <= end:
+            continue
+        account = totals[transaction["account_id"]]
+        account["count"] = int(account["count"]) + 1
+        view = reconciled[transaction_id]
+        if (
+            view["duplicate_status"] == "CONFIRMED"
+            or view["transfer_status"] == "CONFIRMED"
+            or view["investment_funding_status"] == "CONFIRMED"
+            or view["refund_status"] == "REFUND"
+        ):
+            continue
+        amount = Decimal(transaction["amount"])
+        account["income"] = Decimal(account["income"]) + max(amount, Decimal("0"))
+        account["expenses"] = Decimal(account["expenses"]) + max(-amount, Decimal("0"))
+    for event in _latest_refunds(store).values():
+        if event["payload"].get("status") != "CONFIRMED":
+            continue
+        refund = transactions.get(event["payload"]["refund_transaction_id"])
+        if refund and start <= refund["booking_date"] <= end:
+            account = totals[refund["account_id"]]
+            account["expenses"] = Decimal(account["expenses"]) - Decimal(
+                event["payload"]["confirmed_amount"]
+            )
+    return {
+        account_id: {
+            "period_income": str(values["income"]),
+            "period_expenses": str(values["expenses"]),
+            "period_net_cashflow": str(
+                Decimal(values["income"]) - Decimal(values["expenses"])
+            ),
+        }
+        for account_id, values in totals.items()
     }

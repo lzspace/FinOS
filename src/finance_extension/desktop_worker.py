@@ -15,6 +15,7 @@ from typing import Any, TextIO
 
 from .application import ApplicationContractError, FinanceApplicationService
 from .crypto import KeychainKeyProvider, StaticKeyProvider
+from .diagnostics import LocalDiagnosticRecorder
 from .local_model import LocalModelService
 from .store import LocalFinanceStore, StoreInvariantError
 from .workspace_lock import (
@@ -77,7 +78,7 @@ class DesktopProtocolError(ValueError):
 def _error_code(error: Exception) -> str:
     candidate = str(error).split(":", 1)[0]
     if (
-        candidate.startswith(("FINANCE_", "IMPORT_"))
+        candidate.startswith(("FINANCE_", "IMPORT_", "QUERY_", "READ_CONTEXT_", "PERFORMANCE_"))
         or candidate in LOCAL_MODEL_ERROR_CODES
         or candidate in CATEGORY_SHADOW_ERROR_CODES
     ):
@@ -278,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
             store,
             network_egress_disabled=True,
             local_model_service=local_model,
+            diagnostic_recorder=LocalDiagnosticRecorder(data_dir, provider),
         )
         try:
             return serve(DesktopRequestHandler(application), sys.stdin, sys.stdout)

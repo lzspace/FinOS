@@ -65,9 +65,8 @@ def _raw_hashes(store: LocalFinanceStore) -> dict[str, str]:
 
 def _latest_relations(store: LocalFinanceStore, event_prefix: str) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
-    for event in store.events():
-        if event["event_type"].startswith(event_prefix):
-            latest[event["aggregate_id"]] = event
+    for event in store.events_by_type_prefix(event_prefix):
+        latest[event["aggregate_id"]] = event
     return latest
 
 
@@ -528,8 +527,11 @@ def reconcile(store: LocalFinanceStore, month: str | None = None) -> dict[str, i
     }
 
 
-def reconciled_transactions(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
-    transactions = _transactions(store)
+def reconciled_transactions(
+    store: LocalFinanceStore,
+    transactions: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    transactions = transactions if transactions is not None else _transactions(store)
     duplicates = _latest_relations(store, "DuplicateTransaction")
     transfers = _latest_relations(store, "TransferMatch")
     refunds = _latest_relations(store, "RefundRelation")

@@ -100,13 +100,13 @@ def _user_rules(store: LocalFinanceStore) -> list[Rule]:
 
 def active_classifications(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
     active: dict[str, dict[str, Any]] = {}
-    relevant = {
+    relevant = (
         "TransactionClassificationProposed",
         "TransactionClassificationConfirmed",
         "TransactionClassificationRejected",
-    }
-    for event in store.events():
-        if event["event_type"] in relevant:
+    )
+    for event_type in relevant:
+        for event in store.events(event_type):
             active[event["payload"]["transaction_id"]] = event
     return active
 

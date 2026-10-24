@@ -59,6 +59,9 @@ type ReviewInbox = {
   items_by_type: Record<ReviewType, number>;
   severity: Record<"ERROR" | "WARNING" | "INFO", number>;
   items: ReviewItem[];
+  next_cursor?: string | null;
+  has_more?: boolean;
+  page_size?: number;
 };
 type NavigationTarget = ReviewItem["action_target"] | null;
 
@@ -102,10 +105,11 @@ export const localRuntimeSummary = (status: Partial<LocalModelStatus> | undefine
 const relationStatusLabel = (value: string) => value === "NONE" ? "Nicht erkannt" : label(value);
 const localISODate = (value = new Date()) => `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
 
-function useFinanceQuery<T>(name: string, payload: Record<string, unknown> = {}): QueryResult<T> {
+function useFinanceQuery<T>(name: string, payload: Record<string, unknown> = {}, enabled = true): QueryResult<T> {
   const signature = JSON.stringify(payload);
   const [result, setResult] = useState<QueryResult<T>>({ state: "LOADING" });
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
     setResult({ state: "LOADING" });
     financeBridge.query<T>(name, JSON.parse(signature) as Record<string, unknown>)
@@ -118,7 +122,7 @@ function useFinanceQuery<T>(name: string, payload: Record<string, unknown> = {})
         error: error instanceof Error ? error.message : "Unbekannter Fehler",
       }));
     return () => { active = false; };
-  }, [name, signature]);
+  }, [enabled, name, signature]);
   return result;
 }
 
@@ -152,6 +156,35 @@ function useModalFocus(first: RefObject<HTMLButtonElement | null>, onClose: () =
 const MONTH_NAMES = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
 const pad2 = (value: number) => String(value).padStart(2, "0");
 const monthEnd = (year: number, month: number) => new Date(year, month, 0).getDate();
+const MAX_CUSTOM_RANGE_DAYS = 1096;
+
+const parseLocalISODate = (value: string): Date | null => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day] = match.map(Number);
+  const parsed = new Date(year, month - 1, day, 12);
+  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day
+    ? parsed
+    : null;
+};
+
+const customRangeError = (startValue: string, endValue: string): string | null => {
+  const start = parseLocalISODate(startValue);
+  const end = parseLocalISODate(endValue);
+  if (!start || !end) return "Start- und Enddatum müssen vollständig angegeben sein.";
+  const span = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+  if (span < 1) return "Das Enddatum darf nicht vor dem Startdatum liegen.";
+  if (span > MAX_CUSTOM_RANGE_DAYS) return "Der Zeitraum darf höchstens 1.096 Tage umfassen.";
+  return null;
+};
+
+const rangeLabel = (start: string, end: string) => {
+  const format = (value: string) => {
+    const [year, month, day] = value.split("-");
+    return `${day}.${month}.${year}`;
+  };
+  return `${format(start)} – ${format(end)}`;
+};
 
 function usePeriodSelection() {
   const today = new Date();
@@ -160,35 +193,61 @@ function usePeriodSelection() {
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [rangeStart, setRangeStart] = useState(`${today.getFullYear()}-${pad2(today.getMonth() + 1)}-01`);
   const [rangeEnd, setRangeEnd] = useState(localISODate(today));
+  const [appliedRangeStart, setAppliedRangeStart] = useState(rangeStart);
+  const [appliedRangeEnd, setAppliedRangeEnd] = useState(rangeEnd);
+  const rangeValidationError = customRangeError(rangeStart, rangeEnd);
+
+  const applyCustomRange = () => {
+    if (rangeValidationError) return;
+    setAppliedRangeStart(rangeStart);
+    setAppliedRangeEnd(rangeEnd);
+  };
+
+  const replaceCustomRange = (start: string, end: string) => {
+    if (customRangeError(start, end)) return;
+    setRangeStart(start);
+    setRangeEnd(end);
+    setAppliedRangeStart(start);
+    setAppliedRangeEnd(end);
+  };
+
+  const shiftCustomRange = (direction: -1 | 1) => {
+    const start = parseLocalISODate(appliedRangeStart);
+    const end = parseLocalISODate(appliedRangeEnd);
+    if (!start || !end) return;
+    const span = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+    if (span < 1 || span > MAX_CUSTOM_RANGE_DAYS) return;
+    start.setDate(start.getDate() + direction * span);
+    end.setDate(end.getDate() + direction * span);
+    replaceCustomRange(localISODate(start), localISODate(end));
+  };
 
   const period: PeriodSelection = useMemo(() => {
     if (mode === "YEAR") {
       return { mode, start_date: `${year}-01-01`, end_date: `${year}-12-31`, display_label: String(year), aggregation: "MONTH", timezone: "Europe/Berlin" };
     }
     if (mode === "CUSTOM_RANGE") {
-      return { mode, start_date: rangeStart, end_date: rangeEnd, display_label: `${rangeStart} – ${rangeEnd}`, aggregation: "DAY", timezone: "Europe/Berlin" };
+      return { mode, start_date: appliedRangeStart, end_date: appliedRangeEnd, display_label: rangeLabel(appliedRangeStart, appliedRangeEnd), aggregation: "DAY", timezone: "Europe/Berlin" };
     }
     const start = `${year}-${pad2(month)}-01`;
     const end = `${year}-${pad2(month)}-${pad2(monthEnd(year, month))}`;
     return { mode, start_date: start, end_date: end, display_label: `${MONTH_NAMES[month - 1]} ${year}`, aggregation: "DAY", timezone: "Europe/Berlin" };
-  }, [mode, year, month, rangeStart, rangeEnd]);
+  }, [mode, year, month, appliedRangeStart, appliedRangeEnd]);
 
   return {
     mode, setMode, year, setYear, month, setMonth, rangeStart, setRangeStart, rangeEnd, setRangeEnd,
-    period,
-    payload: { mode: period.mode, year: mode !== "CUSTOM_RANGE" ? year : undefined, month: mode === "MONTH" ? month : undefined, start_date: mode === "CUSTOM_RANGE" ? rangeStart : undefined, end_date: mode === "CUSTOM_RANGE" ? rangeEnd : undefined },
+    period, rangeValidationError, applyCustomRange, replaceCustomRange, shiftCustomRange,
+    payload: { mode: period.mode, year: mode !== "CUSTOM_RANGE" ? year : undefined, month: mode === "MONTH" ? month : undefined, start_date: mode === "CUSTOM_RANGE" ? appliedRangeStart : undefined, end_date: mode === "CUSTOM_RANGE" ? appliedRangeEnd : undefined },
   };
 }
 
 type PeriodControls = ReturnType<typeof usePeriodSelection>;
 
 function PeriodSelector({ controls }: { controls: PeriodControls }) {
-  const { mode, setMode, year, setYear, month, setMonth, rangeStart, setRangeStart, rangeEnd, setRangeEnd } = controls;
-  const shiftCustomRange = (direction: -1 | 1) => {
-    const start = new Date(`${rangeStart}T12:00:00`); const end = new Date(`${rangeEnd}T12:00:00`);
-    const span = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
-    start.setDate(start.getDate() + direction * span); end.setDate(end.getDate() + direction * span);
-    setRangeStart(localISODate(start)); setRangeEnd(localISODate(end));
+  const { mode, setMode, year, setYear, month, setMonth, rangeStart, setRangeStart, rangeEnd, setRangeEnd, rangeValidationError, applyCustomRange, replaceCustomRange, shiftCustomRange } = controls;
+  const updateYear = (value: string) => {
+    const next = Number(value);
+    if (Number.isInteger(next) && next >= 1 && next <= 9999) setYear(next);
   };
   return (
     <div className="period-selector" role="group" aria-label="Zeitraumsteuerung">
@@ -199,34 +258,38 @@ function PeriodSelector({ controls }: { controls: PeriodControls }) {
       </div>
       {mode === "MONTH" && (
         <div className="period-fields">
-          <button className="icon-button" aria-label="Vorheriger Monat" onClick={() => (month === 1 ? (setYear(year - 1), setMonth(12)) : setMonth(month - 1))}>‹</button>
+          <button className="icon-button" aria-label="Vorheriger Monat" disabled={year === 1 && month === 1} onClick={() => (month === 1 ? (setYear(Math.max(1, year - 1)), setMonth(12)) : setMonth(month - 1))}>‹</button>
           <label className="sr-only" htmlFor="period-month-select">Monat auswählen</label>
           <select id="period-month-select" value={month} onChange={(event) => setMonth(Number(event.target.value))}>
             {MONTH_NAMES.map((name, index) => <option key={name} value={index + 1}>{name}</option>)}
           </select>
           <label className="sr-only" htmlFor="period-year-select">Jahr auswählen</label>
-          <input id="period-year-select" type="number" value={year} onChange={(event) => setYear(Number(event.target.value))} aria-label="Jahr auswählen" />
-          <button className="icon-button" aria-label="Nächster Monat" onClick={() => (month === 12 ? (setYear(year + 1), setMonth(1)) : setMonth(month + 1))}>›</button>
+          <input id="period-year-select" type="number" min="1" max="9999" value={year} onChange={(event) => updateYear(event.target.value)} aria-label="Jahr auswählen" />
+          <button className="icon-button" aria-label="Nächster Monat" disabled={year === 9999 && month === 12} onClick={() => (month === 12 ? (setYear(Math.min(9999, year + 1)), setMonth(1)) : setMonth(month + 1))}>›</button>
         </div>
       )}
       {mode === "YEAR" && (
         <div className="period-fields">
-          <button className="icon-button" aria-label="Vorheriges Jahr" onClick={() => setYear(year - 1)}>‹</button>
+          <button className="icon-button" aria-label="Vorheriges Jahr" disabled={year === 1} onClick={() => setYear(Math.max(1, year - 1))}>‹</button>
           <label className="sr-only" htmlFor="period-year-only">Jahr auswählen</label>
-          <input id="period-year-only" type="number" value={year} onChange={(event) => setYear(Number(event.target.value))} aria-label="Jahr auswählen" />
-          <button className="icon-button" aria-label="Nächstes Jahr" onClick={() => setYear(year + 1)}>›</button>
+          <input id="period-year-only" type="number" min="1" max="9999" value={year} onChange={(event) => updateYear(event.target.value)} aria-label="Jahr auswählen" />
+          <button className="icon-button" aria-label="Nächstes Jahr" disabled={year === 9999} onClick={() => setYear(Math.min(9999, year + 1))}>›</button>
         </div>
       )}
       {mode === "CUSTOM_RANGE" && (
-        <div className="period-fields">
-          <button className="icon-button" aria-label="Vorheriger Zeitraum" onClick={() => shiftCustomRange(-1)}>‹</button>
-          <label className="sr-only" htmlFor="period-range-start">Startdatum</label>
-          <input id="period-range-start" type="date" value={rangeStart} onChange={(event) => setRangeStart(event.target.value)} aria-label="Startdatum" />
-          <span aria-hidden="true">–</span>
-          <label className="sr-only" htmlFor="period-range-end">Enddatum</label>
-          <input id="period-range-end" type="date" value={rangeEnd} onChange={(event) => setRangeEnd(event.target.value)} aria-label="Enddatum" />
-          <button className="icon-button" aria-label="Nächster Zeitraum" onClick={() => shiftCustomRange(1)}>›</button>
-          <button className="text-button" onClick={() => { const now = new Date(); setRangeStart(`${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`); setRangeEnd(localISODate(now)); }}>Zurücksetzen</button>
+        <div className="period-range-control">
+          <div className="period-fields">
+            <button className="icon-button" aria-label="Vorheriger Zeitraum" onClick={() => shiftCustomRange(-1)}>‹</button>
+            <label className="sr-only" htmlFor="period-range-start">Startdatum</label>
+            <input id="period-range-start" type="date" value={rangeStart} onChange={(event) => setRangeStart(event.target.value)} aria-label="Startdatum" aria-invalid={Boolean(rangeValidationError)} />
+            <span aria-hidden="true">–</span>
+            <label className="sr-only" htmlFor="period-range-end">Enddatum</label>
+            <input id="period-range-end" type="date" value={rangeEnd} onChange={(event) => setRangeEnd(event.target.value)} aria-label="Enddatum" aria-invalid={Boolean(rangeValidationError)} />
+            <button className="icon-button" aria-label="Nächster Zeitraum" onClick={() => shiftCustomRange(1)}>›</button>
+            <button className="secondary small" disabled={Boolean(rangeValidationError)} onClick={applyCustomRange}>Anwenden</button>
+            <button className="text-button" onClick={() => { const now = new Date(); replaceCustomRange(`${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`, localISODate(now)); }}>Zurücksetzen</button>
+          </div>
+          {rangeValidationError && <small className="period-error" role="alert">{rangeValidationError}</small>}
         </div>
       )}
     </div>
@@ -249,7 +312,7 @@ export function App() {
   const startup = useFinanceQuery<StartupStatus>("GetStartupStatus");
   const manifest = useFinanceQuery<CapabilityManifest>("GetCapabilityManifest");
   const [reviewRefresh, setReviewRefresh] = useState(0);
-  const reviewInbox = useFinanceQuery<ReviewInbox>("GetReviewInbox", { refresh: reviewRefresh });
+  const reviewInbox = useFinanceQuery<ReviewInbox>("GetReviewInbox", { limit: 200, refresh: reviewRefresh });
   const [page, setPage] = useState<PageId>("overview");
   const [navigationTarget, setNavigationTarget] = useState<NavigationTarget>(null);
   const periodControls = usePeriodSelection();
@@ -311,7 +374,7 @@ export function App() {
         {page === "forecast" && <Forecast month={month} />}
         {page === "wealth" && <Wealth asOf={asOf} />}
         {page === "reviews" && <Reviews inbox={reviewInbox} focusAccountId={navigationTarget?.page === "reviews" && navigationTarget.view === "account" ? navigationTarget.entity_id : undefined} onOpen={(target) => navigate(target.page, target)} />}
-        {page === "imports" && <Imports uiMonth={month} manifest={manifest.envelope.data} focusExportId={navigationTarget?.page === "imports" ? navigationTarget.entity_id : undefined} focusView={navigationTarget?.page === "imports" ? navigationTarget.view : undefined} />}
+        {page === "imports" && <Imports uiMonth={month} manifest={manifest.envelope.data} focusExportId={navigationTarget?.page === "imports" ? navigationTarget.entity_id : undefined} focusView={navigationTarget?.page === "imports" ? navigationTarget.view : undefined} onOpenReviews={() => navigate("reviews")} />}
         {page === "settings" && <Settings manifest={manifest.envelope.data} />}
       </main>
     </div>
@@ -374,10 +437,10 @@ function FullState({ state, message }: { state: ViewState; message?: string }) {
   return <div className="full-state"><span className="brand-mark">A</span><h1>{content[state][0]}</h1><p>{content[state][1]}</p>{state === "LOADING" && <span className="loader" />}</div>;
 }
 
-function QueryBoundary<T>({ result, children, empty = "Für diesen Zeitraum liegen keine Daten vor." }: { result: QueryResult<T>; children: (data: T) => ReactNode; empty?: string }) {
+function QueryBoundary<T>({ result, children, empty = "Für diesen Zeitraum liegen keine Daten vor.", renderEmpty = false }: { result: QueryResult<T>; children: (data: T) => ReactNode; empty?: string; renderEmpty?: boolean }) {
   if (result.state === "LOADING") return <div className="page-state"><span className="loader" /><p>Projektion wird geladen …</p></div>;
   if (result.state === "ERROR" || result.state === "INCOMPATIBLE_SCHEMA" || result.state === "LOCKED") return <div className="page-state error"><h2>{result.state === "INCOMPATIBLE_SCHEMA" ? "Schema nicht kompatibel" : result.state === "LOCKED" ? "Daten gesperrt" : "Daten nicht verfügbar"}</h2><p>{result.error}</p></div>;
-  if (result.state === "EMPTY") return <div className="page-state"><span className="empty-icon">○</span><h2>Noch nichts zu zeigen</h2><p>{empty}</p></div>;
+  if (result.state === "EMPTY" && !(renderEmpty && result.envelope)) return <div className="page-state"><span className="empty-icon">○</span><h2>Noch nichts zu zeigen</h2><p>{empty}</p></div>;
   if (!result.envelope) return null;
   return <>{(result.state === "STALE" || result.state === "PARTIAL") && <div className="status-banner" role="status"><strong>{result.state === "STALE" ? statusLabel("STALE") : "Teilprojektion"}</strong><span>{result.envelope.projection_sequence < result.envelope.event_store_sequence ? "Die lokale Ansicht wird noch aktualisiert." : result.state === "STALE" ? "Mindestens ein fachlicher Snapshot ist nicht aktuell." : "Ein Teil der lokalen Daten ist noch nicht verfügbar."}</span><details><summary>Technische Details</summary><code>Projektion #{result.envelope.projection_sequence} · Event Store #{result.envelope.event_store_sequence}</code></details></div>}{children(result.envelope.data)}</>;
 }
@@ -698,10 +761,12 @@ function PanelHeader({ title, subtitle, action, onAction }: { title: string; sub
 
 function Transactions({ month, periodPayload, focusId, onNavigate }: { month: string; periodPayload: Record<string, unknown>; focusId?: string; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
   const [refresh, setRefresh] = useState(0);
-  const result = useFinanceQuery<{ transactions: Transaction[] }>("ListTransactions", { ...periodPayload, refresh });
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [loadedTransactions, setLoadedTransactions] = useState<Transaction[]>([]);
+  const result = useFinanceQuery<{ transactions: Transaction[]; next_cursor?: string | null; has_more?: boolean }>("ListTransactions", { ...periodPayload, cursor, limit: 50, refresh });
   const categories = useFinanceQuery<CategoryList>("ListCategories", { refresh });
   const accounts = useFinanceQuery<{ accounts: Account[] }>("ListAccounts");
-  const suggestions = useFinanceQuery<{ suggestions: CategorySuggestionRow[] }>("ListPendingCategorySuggestions", { refresh });
+  const suggestions = useFinanceQuery<{ suggestions: CategorySuggestionRow[] }>("ListPendingCategorySuggestions", { limit: 200, refresh });
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState("");
@@ -713,6 +778,15 @@ function Transactions({ month, periodPayload, focusId, onNavigate }: { month: st
   const accountNames = Object.fromEntries(accountRows.map((item) => [item.account_id, item.display_name]));
   const pendingSuggestions = suggestions.envelope?.data.suggestions ?? [];
   const suggestionByTransaction = new Map(pendingSuggestions.map((item) => [item.transaction_id, item]));
+  const periodSignature = JSON.stringify(periodPayload);
+  useEffect(() => { setCursor(undefined); setLoadedTransactions([]); }, [periodSignature, refresh]);
+  useEffect(() => {
+    const page = result.envelope?.data.transactions;
+    if (!page) return;
+    setLoadedTransactions((current) => cursor
+      ? [...current, ...page.filter((item) => !current.some((existing) => existing.transaction_id === item.transaction_id))]
+      : page);
+  }, [cursor, result.envelope]);
   useEffect(() => {
     if (!focusId || !result.envelope) return;
     const transaction = result.envelope.data.transactions.find((item) => item.transaction_id === focusId);
@@ -726,7 +800,8 @@ function Transactions({ month, periodPayload, focusId, onNavigate }: { month: st
     setCategoryOverrides((current) => ({ ...current, ...Object.fromEntries(Array.from(selectedIds).map((id) => [id, bulkCategory])) }));
     setMessage(`${selectedIds.size} Transaktionen wurden kategorisiert.`); setSelectedIds(new Set()); setRefresh((value) => value + 1);
   };
-  return <QueryBoundary result={result}>{({ transactions }) => {
+  return <QueryBoundary result={result}>{({ transactions: currentPage, next_cursor, has_more }) => {
+    const transactions = loadedTransactions.length || cursor ? loadedTransactions : currentPage;
     const importIds = Array.from(new Set(transactions.map((item) => item.export_id).filter(Boolean))) as string[];
     const visible = transactions.filter((item) => {
       const category = categoryOverrides[item.transaction_id] ?? item.category_code;
@@ -758,7 +833,7 @@ function Transactions({ month, periodPayload, focusId, onNavigate }: { month: st
         <button className="text-button" onClick={() => setFilters({ account: "ALL", category: "ALL", direction: "ALL", minimum: "", maximum: "", classification: "ALL", ai: "ALL", importId: "ALL" })}>Filter zurücksetzen</button>
       </section>
       {selectedIds.size > 0 && <section className="panel bulk-bar" aria-label="Mehrfachauswahl"><strong>{selectedIds.size} ausgewählt</strong><select aria-label="Kategorie für Auswahl" value={bulkCategory} onChange={(event) => setBulkCategory(event.target.value)}><option value="">Kategorie wählen</option>{catalogue.filter((item) => item.status === "ACTIVE").map((item) => <option value={item.category_code} key={item.category_code}>{item.display_name}</option>)}</select><button className="primary small" disabled={!bulkCategory} onClick={setBulkClassification}>Kategorie setzen</button><button className="secondary small" disabled={!Array.from(selectedIds).some((id) => suggestionByTransaction.has(id))} onClick={() => { const id = Array.from(selectedIds).find((candidate) => suggestionByTransaction.has(candidate)); const item = transactions.find((transaction) => transaction.transaction_id === id); if (item) setSelected({ ...item, category_code: categoryOverrides[item.transaction_id] ?? item.category_code }); }}>AI-Vorschläge prüfen</button><small>Relationen und Salden können nicht gesammelt geändert werden.</small></section>}
-      <section className="panel table-panel transaction-worktable"><table><thead><tr><th><input aria-label="Alle sichtbaren Transaktionen markieren" type="checkbox" checked={allVisibleSelected} onChange={() => setSelectedIds(allVisibleSelected ? new Set() : new Set(visible.map((item) => item.transaction_id)))} /></th><th>Datum</th><th>Händler</th><th>Beschreibung</th><th>Kategorie</th><th>Konto</th><th className="numeric">Betrag</th><th>Status</th></tr></thead><tbody>{visible.map((item) => { const category = categoryOverrides[item.transaction_id] ?? item.category_code; const suggestion = suggestionByTransaction.get(item.transaction_id); return <tr key={item.transaction_id} tabIndex={0} className={selected?.transaction_id === item.transaction_id ? "active-row" : ""} onKeyDown={(event) => { if (event.key === "Enter") setSelected({ ...item, category_code: category }); if (event.key === " ") { event.preventDefault(); setSelectedIds((current) => { const next = new Set(current); next.has(item.transaction_id) ? next.delete(item.transaction_id) : next.add(item.transaction_id); return next; }); } }} onDoubleClick={() => setSelected({ ...item, category_code: category })}><td><input aria-label={`${item.counterparty} markieren`} type="checkbox" checked={selectedIds.has(item.transaction_id)} onChange={() => setSelectedIds((current) => { const next = new Set(current); next.has(item.transaction_id) ? next.delete(item.transaction_id) : next.add(item.transaction_id); return next; })} /></td><td>{date(item.booking_date)}</td><td><button className="table-link" onClick={() => setSelected({ ...item, category_code: category })}>{item.counterparty || "Unbekannter Händler"}</button></td><td>{item.description || item.normalized_description || "–"}</td><td><span className={`category-tag ${category === "UNCLASSIFIED" ? "warn" : ""}`}>{categoryLabel(category)}</span></td><td>{accountNames[item.account_id ?? ""] ?? item.account_id ?? "–"}</td><td className={`numeric amount ${Number(item.amount) >= 0 ? "positive-text" : ""}`}>{money(item.amount, item.currency)}</td><td><span className={`status-badge ${suggestion ? "paused" : category === "UNCLASSIFIED" ? "missed" : "confirmed"}`}>{suggestion ? "AI-Vorschlag offen" : category === "UNCLASSIFIED" ? "Kategorie offen" : "Kategorisiert"}</span></td></tr>; })}</tbody></table></section>
+      <section className="panel table-panel transaction-worktable"><table><thead><tr><th><input aria-label="Alle sichtbaren Transaktionen markieren" type="checkbox" checked={allVisibleSelected} onChange={() => setSelectedIds(allVisibleSelected ? new Set() : new Set(visible.map((item) => item.transaction_id)))} /></th><th>Datum</th><th>Händler</th><th>Beschreibung</th><th>Kategorie</th><th>Konto</th><th className="numeric">Betrag</th><th>Status</th></tr></thead><tbody>{visible.map((item) => { const category = categoryOverrides[item.transaction_id] ?? item.category_code; const suggestion = suggestionByTransaction.get(item.transaction_id); return <tr key={item.transaction_id} tabIndex={0} className={selected?.transaction_id === item.transaction_id ? "active-row" : ""} onKeyDown={(event) => { if (event.key === "Enter") setSelected({ ...item, category_code: category }); if (event.key === " ") { event.preventDefault(); setSelectedIds((current) => { const next = new Set(current); next.has(item.transaction_id) ? next.delete(item.transaction_id) : next.add(item.transaction_id); return next; }); } }} onDoubleClick={() => setSelected({ ...item, category_code: category })}><td><input aria-label={`${item.counterparty} markieren`} type="checkbox" checked={selectedIds.has(item.transaction_id)} onChange={() => setSelectedIds((current) => { const next = new Set(current); next.has(item.transaction_id) ? next.delete(item.transaction_id) : next.add(item.transaction_id); return next; })} /></td><td>{date(item.booking_date)}</td><td><button className="table-link" onClick={() => setSelected({ ...item, category_code: category })}>{item.counterparty || "Unbekannter Händler"}</button></td><td>{item.description || item.normalized_description || "–"}</td><td><span className={`category-tag ${category === "UNCLASSIFIED" ? "warn" : ""}`}>{categoryLabel(category)}</span></td><td>{accountNames[item.account_id ?? ""] ?? item.account_id ?? "–"}</td><td className={`numeric amount ${Number(item.amount) >= 0 ? "positive-text" : ""}`}>{money(item.amount, item.currency)}</td><td><span className={`status-badge ${suggestion ? "paused" : category === "UNCLASSIFIED" ? "missed" : "confirmed"}`}>{suggestion ? "AI-Vorschlag offen" : category === "UNCLASSIFIED" ? "Kategorie offen" : "Kategorisiert"}</span></td></tr>; })}</tbody></table>{has_more && next_cursor && <footer className="table-pagination"><button className="secondary" onClick={() => setCursor(next_cursor)}>Weitere 50 laden</button></footer>}</section>
       {selected && <TransactionSidePanel transaction={selected} accountName={accountNames[selected.account_id ?? ""]} suggestion={suggestionByTransaction.get(selected.transaction_id)} categories={catalogue} onClose={() => setSelected(null)} onOpenImport={(exportId) => onNavigate("imports", { page: "imports", view: "detail", entity_id: exportId })} onSaved={(category) => { setCategoryOverrides((current) => ({ ...current, [selected.transaction_id]: category })); setSelected((current) => current ? { ...current, category_code: category } : current); setMessage("Entscheidung wurde gespeichert."); setRefresh((value) => value + 1); }} />}
     </>;
   }}</QueryBoundary>;
@@ -820,16 +895,17 @@ function Categories({ month, initialTab, focusId }: { month: string; initialTab?
   const initialCategoryTab = (["overview", "manage", "suggestions", "rules"] as string[]).includes(initialTab ?? "") ? initialTab as "overview" | "manage" | "suggestions" | "rules" : "overview";
   const [tab, setTab] = useState<"overview" | "manage" | "suggestions" | "rules">(initialCategoryTab);
   const [confidence, setConfidence] = useState<"all" | "high" | "medium" | "low">("all");
+  const [suggestionScope, setSuggestionScope] = useState<"all" | "period">("all");
   const [refresh, setRefresh] = useState(0);
   const [message, setMessage] = useState("");
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [remember, setRemember] = useState<Record<string, boolean>>({});
-  const breakdown = useFinanceQuery<{ categories: Record<string, { category_code: string; effective_expense: string; transaction_count: number }> }>("GetCategoryBreakdown", { month, refresh });
+  const breakdown = useFinanceQuery<{ categories: Record<string, { category_code: string; effective_expense: string; transaction_count: number }> }>("GetCategoryBreakdown", { month, refresh }, tab === "overview");
   const summary = useFinanceQuery<{ unclassified_count: number; pending_count: number; confirmed_today_count: number; corrected_count: number; stale_count: number }>("GetCategorySuggestionReviewSummary", { refresh });
   const confidenceFilter = confidence === "high" ? { confidence_min: 0.95 } : confidence === "medium" ? { confidence_min: 0.9, confidence_max: 0.949999 } : confidence === "low" ? { confidence_max: 0.899999 } : {};
-  const suggestions = useFinanceQuery<{ suggestions: CategorySuggestionRow[] }>("ListPendingCategorySuggestions", { period: month, ...confidenceFilter, refresh });
-  const rules = useFinanceQuery<{ rules: Array<{ rule_id: string; field: string; value: string; category_code: string; source: string }> }>("ListClassificationRules", { refresh });
-  const catalogue = useFinanceQuery<CategoryList>("ListCategories", { refresh });
+  const suggestions = useFinanceQuery<{ suggestions: CategorySuggestionRow[]; has_more?: boolean }>("ListPendingCategorySuggestions", { ...(suggestionScope === "period" ? { period: month } : {}), ...confidenceFilter, limit: 200, refresh }, tab === "suggestions");
+  const rules = useFinanceQuery<{ rules: Array<{ rule_id: string; field: string; value: string; category_code: string; source: string }> }>("ListClassificationRules", { refresh }, tab === "rules");
+  const catalogue = useFinanceQuery<CategoryList>("ListCategories", { refresh }, tab === "manage");
   const decide = async (item: CategorySuggestionRow, action: "confirm" | "correct" | "reject") => {
     setMessage("");
     try {
@@ -848,7 +924,7 @@ function Categories({ month, initialTab, focusId }: { month: string; initialTab?
     {focusId && tab === "manage" && <div className="toast compact" role="status">Die Kategorie „{categoryLabel(focusId)}“ wurde aus der Kontotransaktion geöffnet.</div>}
     {tab === "overview" && <QueryBoundary result={breakdown}>{({ categories }) => { const rows = Object.values(categories).sort((a, b) => Number(b.effective_expense) - Number(a.effective_expense)); const total = rows.reduce((sum, item) => sum + Number(item.effective_expense), 0); return <><section className="suggestion-summary"><Metric label="Unklassifiziert" value={String(summary.envelope?.data.unclassified_count ?? 0)} tone="warn" note="manuell oder per Vorschlag prüfbar" /><Metric label="AI-Vorschläge offen" value={String(summary.envelope?.data.pending_count ?? 0)} tone="accent" note="keine automatische Wirkung" /><Metric label="Heute bestätigt" value={String(summary.envelope?.data.confirmed_today_count ?? 0)} tone="positive" note="durch Nutzerentscheidung" /><Metric label="Korrekturen" value={String(summary.envelope?.data.corrected_count ?? 0)} tone="ink" note="AI-Vorschlag geändert" /></section><section className="section-intro"><div><h2>Ausgaben nach Kategorien</h2><p>Nur bestätigte Klassifikationen; offene AI-Vorschläge verändern diese Auswertung nicht.</p></div><strong className="section-total">{money(String(total))}<small>effektive Ausgaben</small></strong></section><section className="panel category-list">{rows.map((item, index) => <div className="category-row" key={item.category_code}><span className={`category-symbol color-${index % 5}`}>{item.category_code.slice(0, 2)}</span><div><strong>{categoryLabel(item.category_code)}</strong><small>{item.transaction_count} Buchungen</small></div><div className="bar"><span style={{ width: `${Math.max(4, total ? Number(item.effective_expense) / total * 100 : 0)}%` }} /></div><strong>{money(item.effective_expense)}</strong></div>)}</section></>; }}</QueryBoundary>}
     {tab === "manage" && <QueryBoundary result={catalogue}>{({ categories }) => <CategoryManagement categories={categories.map(normalizeCategory)} onChanged={() => setRefresh((value) => value + 1)} onMessage={setMessage} />}</QueryBoundary>}
-    {tab === "suggestions" && <><section className="section-intro"><div><h2>AI-Kategorievorschläge prüfen</h2><p>Vorschläge des lokalen Modells werden erst durch deine Bestätigung oder Korrektur fachlich wirksam.</p></div><span className="privacy-badge">Lokal · kein Auto-Accept</span></section><div className="suggestion-filters" role="group" aria-label="Modell-Confidence filtern">{([['all','Alle'],['high','> 95 %'],['medium','90–95 %'],['low','< 90 %']] as const).map(([value, text]) => <button key={value} className={confidence === value ? "active" : ""} onClick={() => setConfidence(value)}>{text}</button>)}</div><QueryBoundary result={suggestions}>{({ suggestions: rows }) => <section className="suggestion-review-list">{rows.length === 0 ? <div className="panel empty-state"><strong>Keine offenen Vorschläge</strong><p>Manuelle Kategorisierung und bestehende Regeln bleiben jederzeit verfügbar.</p></div> : rows.map((item) => <article className="panel suggestion-review-card" key={item.suggestion_id}><div className="suggestion-transaction"><div><span className="eyebrow">LOKALES MODELL</span><h3>{item.merchant || "Unbekannter Anbieter"}</h3><p>{item.description || "Keine Beschreibung"}</p></div><strong className="amount">{money(item.amount, item.currency)}</strong></div><div className="suggestion-proposal"><div><small>Vorgeschlagene Kategorie</small><strong>{categoryLabel(item.category_code)}</strong></div><div><small>Modell-Confidence</small><strong>{percent(item.raw_confidence)}</strong></div><div><small>Modell</small><strong>{item.model_id} {item.model_version}</strong></div></div><details><summary>Details zum Vorschlag</summary><div className="suggestion-details"><div><h4>Begründungsmerkmale</h4><ul>{item.reason_codes.map((reason) => <li key={reason}>{reasonLabels[reason] ?? label(reason)}</li>)}</ul></div><div><h4>Alternativen</h4>{item.alternatives.map((alternative) => <p key={alternative.category_code}><span>{categoryLabel(alternative.category_code)}</span><b>{percent(alternative.confidence)}</b></p>)}</div></div>{item.historical_accuracy ? <p className="calibration-note">Historische Genauigkeit dieses Modells ab {Number(item.historical_accuracy.threshold) * 100} %: <strong>{percent(item.historical_accuracy.accuracy)}</strong> bei {item.historical_accuracy.sample_count} Fällen</p> : <p className="calibration-note">Noch nicht genügend lokale Vergleichsdaten.</p>}</details><div className="suggestion-decision"><select aria-label={`Kategorie für ${item.merchant}`} value={selected[item.suggestion_id] ?? item.category_code} onChange={(event) => setSelected((current) => ({ ...current, [item.suggestion_id]: event.target.value }))}>{Array.from(new Set([item.category_code, ...item.alternatives.map((alternative) => alternative.category_code)])).map((code) => <option key={code} value={code}>{categoryLabel(code)}</option>)}</select><label><input type="checkbox" checked={remember[item.suggestion_id] ?? false} onChange={(event) => setRemember((current) => ({ ...current, [item.suggestion_id]: event.target.checked }))} /> Für ähnliche Transaktionen merken</label><div><button className="primary small" onClick={() => decide(item, (selected[item.suggestion_id] ?? item.category_code) === item.category_code ? "confirm" : "correct")}>{(selected[item.suggestion_id] ?? item.category_code) === item.category_code ? "Bestätigen" : "Geänderte Kategorie übernehmen"}</button><button className="secondary small" onClick={() => decide(item, "reject")}>Ablehnen</button></div></div></article>)}</section>}</QueryBoundary></>}
+    {tab === "suggestions" && <><section className="section-intro"><div><h2>AI-Kategorievorschläge prüfen</h2><p>Vorschläge des lokalen Modells werden erst durch deine Bestätigung oder Korrektur fachlich wirksam.</p></div><span className="privacy-badge">Lokal · kein Auto-Accept</span></section><div className="suggestion-toolbar"><div className="suggestion-filters" role="group" aria-label="Zeitraum der Vorschläge"><button className={suggestionScope === "all" ? "active" : ""} onClick={() => setSuggestionScope("all")}>Alle offenen ({summary.envelope?.data.pending_count ?? 0})</button><button className={suggestionScope === "period" ? "active" : ""} onClick={() => setSuggestionScope("period")}>Nur {monthLabel(month)}</button></div><div className="suggestion-filters" role="group" aria-label="Modell-Confidence filtern">{([['all','Alle Confidence-Werte'],['high','> 95 %'],['medium','90–95 %'],['low','< 90 %']] as const).map(([value, text]) => <button key={value} className={confidence === value ? "active" : ""} onClick={() => setConfidence(value)}>{text}</button>)}</div></div><QueryBoundary result={suggestions} renderEmpty>{({ suggestions: rows }) => { const orderedRows = focusId ? [...rows].sort((left, right) => Number(right.suggestion_id === focusId) - Number(left.suggestion_id === focusId)) : rows; return <section className="suggestion-review-list">{orderedRows.length === 0 ? <div className="panel empty-state"><strong>{suggestionScope === "period" ? `Keine offenen Vorschläge im ${monthLabel(month)}` : "Keine offenen Vorschläge"}</strong><p>{suggestionScope === "period" ? "Wechsle zu „Alle offenen“, um Vorschläge aus anderen Zeiträumen zu prüfen." : "Manuelle Kategorisierung und bestehende Regeln bleiben jederzeit verfügbar."}</p></div> : orderedRows.map((item) => <article className={`panel suggestion-review-card ${item.suggestion_id === focusId ? "focused" : ""}`} key={item.suggestion_id}><div className="suggestion-transaction"><div><span className="eyebrow">LOKALES MODELL</span><h3>{item.merchant || "Unbekannter Anbieter"}</h3><p>{item.description || "Keine Beschreibung"}</p></div><strong className="amount">{money(item.amount, item.currency)}</strong></div><div className="suggestion-proposal"><div><small>Vorgeschlagene Kategorie</small><strong>{categoryLabel(item.category_code)}</strong></div><div><small>Modell-Confidence</small><strong>{percent(item.raw_confidence)}</strong></div><div><small>Modell</small><strong>{item.model_id} {item.model_version}</strong></div></div><details><summary>Details zum Vorschlag</summary><div className="suggestion-details"><div><h4>Begründungsmerkmale</h4><ul>{item.reason_codes.map((reason) => <li key={reason}>{reasonLabels[reason] ?? label(reason)}</li>)}</ul></div><div><h4>Alternativen</h4>{item.alternatives.map((alternative) => <p key={alternative.category_code}><span>{categoryLabel(alternative.category_code)}</span><b>{percent(alternative.confidence)}</b></p>)}</div></div>{item.historical_accuracy ? <p className="calibration-note">Historische Genauigkeit dieses Modells ab {Number(item.historical_accuracy.threshold) * 100} %: <strong>{percent(item.historical_accuracy.accuracy)}</strong> bei {item.historical_accuracy.sample_count} Fällen</p> : <p className="calibration-note">Noch nicht genügend lokale Vergleichsdaten.</p>}</details><div className="suggestion-decision"><select aria-label={`Kategorie für ${item.merchant}`} value={selected[item.suggestion_id] ?? item.category_code} onChange={(event) => setSelected((current) => ({ ...current, [item.suggestion_id]: event.target.value }))}>{Array.from(new Set([item.category_code, ...item.alternatives.map((alternative) => alternative.category_code)])).map((code) => <option key={code} value={code}>{categoryLabel(code)}</option>)}</select><label><input type="checkbox" checked={remember[item.suggestion_id] ?? false} onChange={(event) => setRemember((current) => ({ ...current, [item.suggestion_id]: event.target.checked }))} /> Für ähnliche Transaktionen merken</label><div><button className="primary small" onClick={() => decide(item, (selected[item.suggestion_id] ?? item.category_code) === item.category_code ? "confirm" : "correct")}>{(selected[item.suggestion_id] ?? item.category_code) === item.category_code ? "Bestätigen" : "Geänderte Kategorie übernehmen"}</button><button className="secondary small" onClick={() => decide(item, "reject")}>Ablehnen</button></div></div></article>)}</section>; }}</QueryBoundary></>}
     {tab === "rules" && <><section className="section-intro"><div><h2>Deterministische Regeln</h2><p>Nutzerregeln haben Vorrang vor dem lokalen Modell und vermeiden wiederholte AI-Aufrufe.</p></div></section><QueryBoundary result={rules}>{({ rules: rows }) => <section className="panel table-panel"><table><thead><tr><th>Merkmal</th><th>Wert</th><th>Kategorie</th><th>Quelle</th></tr></thead><tbody>{rows.map((rule) => <tr key={rule.rule_id}><td>{label(rule.field)}</td><td>{rule.value}</td><td>{categoryLabel(rule.category_code)}</td><td>{rule.source === "USER_FROM_AI_SUGGESTION" ? "Nutzer · aus AI-Vorschlag" : "Nutzer"}</td></tr>)}</tbody></table></section>}</QueryBoundary></>}
   </>;
 }

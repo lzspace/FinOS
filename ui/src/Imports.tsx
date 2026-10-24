@@ -133,6 +133,14 @@ const previousDay = (value: string) => {
   current.setUTCDate(current.getUTCDate() - 1);
   return current.toISOString().slice(0, 10);
 };
+const reportMonthLabel = (value: string) => {
+  const [year, month] = value.split("-").map(Number);
+  return year && month ? new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" }).format(new Date(year, month - 1, 1, 12)) : value;
+};
+const needsFormatRecovery = (message: string) => [
+  "IMPORT_PROFILE_MISMATCH", "IMPORT_DATE_FORMAT_INVALID", "IMPORT_DECIMAL_FORMAT_INVALID",
+  "IMPORT_UNKNOWN_SECTION", "IMPORT_FORMAT_UNKNOWN", "IMPORT_FORMAT_CHANGED",
+].some((code) => message.includes(code));
 
 async function query<T>(name: string, payload: Json = {}): Promise<QueryState<T>> {
   try {
@@ -147,7 +155,7 @@ async function query<T>(name: string, payload: Json = {}): Promise<QueryState<T>
   }
 }
 
-export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMonth: string; manifest: CapabilityManifest; focusExportId?: string; focusView?: string }) {
+export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenReviews }: { uiMonth: string; manifest: CapabilityManifest; focusExportId?: string; focusView?: string; onOpenReviews?: () => void }) {
   const [wizard, setWizard] = useState<QueryState<Wizard | null>>({ state: "LOADING" });
   const [history, setHistory] = useState<QueryState<{ imports: HistoryRow[] }>>({ state: "LOADING" });
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -176,6 +184,8 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMon
   const [mappingComment, setMappingComment] = useState("");
   const [allowAdditionalColumns, setAllowAdditionalColumns] = useState(false);
   const [openedFocus, setOpenedFocus] = useState<string | null>(null);
+  const [happyPath, setHappyPath] = useState(false);
+  const [formatRecoveryNeeded, setFormatRecoveryNeeded] = useState(false);
 
   const refresh = useCallback(async (exportId?: string) => {
     const [wizardResult, historyResult, accountResult] = await Promise.all([
@@ -190,7 +200,13 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMon
       setStep(wizardResult.data.current_step);
       setBankIdentifier(wizardResult.data.analysis.bank_identifier);
       setMappings(Object.fromEntries(wizardResult.data.analysis.sections.filter((item) => item.mapped_account_id).map((item) => [item.section_id, String(item.mapped_account_id)])));
-      setResult(wizardResult.data.execution_result);
+      let restoredResult = wizardResult.data.execution_result;
+      if (wizardResult.data.current_step === 5) {
+        const historyDetail = await query<Json | null>("GetImportHistoryDetail", { export_id: wizardResult.data.export_id });
+        const reviewSummary = historyDetail.data?.review_summary as Json | undefined;
+        if (restoredResult && reviewSummary) restoredResult = { ...restoredResult, review_summary: reviewSummary };
+      }
+      setResult(restoredResult);
       if (wizardResult.data.current_step >= 4) {
         const restoredPreviews = await Promise.all(
           wizardResult.data.analysis.sections.map(async (section) => {
@@ -232,16 +248,87 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMon
   const activeAccounts = useMemo(() => accounts.filter((item) => item.status === "ACTIVE"), [accounts]);
   const busy = operation === "VALIDATING" || operation === "EXECUTING";
 
-  const run = async (state: ViewState, action: () => Promise<void>) => {
+  const run = async (state: ViewState, action: () => Promise<void>, onError?: (message: string) => void) => {
     setOperation(state);
     setMessage("");
     try {
       await action();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Der lokale Vorgang ist fehlgeschlagen.");
+      const errorMessage = error instanceof Error ? error.message : "Der lokale Vorgang ist fehlgeschlagen.";
+      setMessage(errorMessage);
+      onError?.(errorMessage);
     } finally {
       setOperation("READY");
     }
+  };
+
+  const buildPreview = async (target: Analysis) => {
+    const sectionPreviews = await Promise.all(target.sections.map(async (section) => {
+      const response = await financeBridge.query<Json>("GetImportSectionPreview", { analysis_id: target.analysis_id, section_id: section.section_id });
+      return response.data;
+    }));
+    const validated = await financeBridge.command("ImportMappedSections", {
+      analysis_id: target.analysis_id, parser_profile: target.import_profile,
+      parser_version: target.profile_version, import_mode: "VALIDATE_ONLY",
+    }) as { result?: Json };
+    const validationResult = validated.result ?? null;
+    setPreviews(sectionPreviews);
+    setValidation(validationResult);
+    setPreviewConfirmed(false);
+    setStep(4);
+    return validationResult;
+  };
+
+  const prepareKnownFollowUp = async (target: Analysis): Promise<boolean> => {
+    const supported = target.sections.filter((section) => section.import_supported && section.section_type !== "UNKNOWN");
+    const deterministic = Boolean(target.import_profile)
+      && target.warnings.length === 0
+      && supported.length === target.sections.length
+      && supported.every((section) => section.warnings.length === 0 && section.mapped_account_id);
+    if (!deterministic) return false;
+
+    const automaticMappings = supported.map((section) => ({
+      section_id: section.section_id,
+      action: "USE_EXISTING_ACCOUNT",
+      account_id: section.mapped_account_id,
+    }));
+    await financeBridge.command("MapImportSections", { analysis_id: target.analysis_id, section_mappings: automaticMappings });
+    setMappings(Object.fromEntries(supported.map((section) => [section.section_id, String(section.mapped_account_id)])));
+
+    const mappedWizard = await financeBridge.query<Wizard | null>("GetImportWizardState", { export_id: target.export_id });
+    const requirements = mappedWizard.data?.requirements ?? [];
+    const unresolved = requirements.filter((requirement) => Boolean(requirement.required) && !Boolean(requirement.satisfied));
+    for (const requirement of unresolved) {
+      const suggestion = requirement.suggested_opening_balance as Json | undefined;
+      if (requirement.requirement_type !== "OPENING_BALANCE" || !suggestion?.eligible || !suggestion.suggested_value || !suggestion.source_reconciliation_id) {
+        await refresh(target.export_id);
+        setStep(3);
+        return false;
+      }
+      const accountId = String(requirement.account_id);
+      const value = String(suggestion.suggested_value);
+      await financeBridge.command("RecordOpeningBalance", {
+        account_id: accountId,
+        balance_date: previousDay(target.period_start),
+        booked_balance: value,
+        available_balance: null,
+        currency: String(suggestion.currency ?? "EUR"),
+        source: "PREVIOUS_SYSTEM",
+        confirmation: true,
+        comment: "Bestätigter Endsaldo der Vorperiode automatisch übernommen",
+        carry_forward_source_reconciliation_id: String(suggestion.source_reconciliation_id ?? ""),
+        suggested_value: value,
+      });
+      setOpeningBalances((current) => ({ ...current, [accountId]: value }));
+      setOpeningSuggestions((current) => ({ ...current, [accountId]: suggestion }));
+    }
+
+    const validationResult = await buildPreview(target);
+    await refresh(target.export_id);
+    setStep(4);
+    const blockers = ((validationResult?.section_results as Json[] | undefined) ?? [])
+      .filter((item) => item.status === "FAILED" || item.status === "REVIEW_REQUIRED");
+    return blockers.length === 0;
   };
 
   const chooseFile = async () => {
@@ -252,6 +339,8 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMon
         return;
       }
       setSelectedFile(selected);
+      setHappyPath(false);
+      setFormatRecoveryNeeded(false);
       await run("VALIDATING", async () => {
         const response = await financeBridge.command("AnalyzeImportFile", {
           source_file_reference: selected.file_ref,
@@ -260,12 +349,22 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMon
         }) as { result?: Analysis };
         const analyzed = response.result;
         if (!analyzed) throw new Error("Die Importanalyse lieferte kein Ergebnis.");
+        const prepared = await prepareKnownFollowUp(analyzed);
+        setHappyPath(prepared);
+        if (prepared) {
+          setMessage("Format, Konten und Salden wurden erkannt. Die geprüfte Vorschau ist bereit.");
+          return;
+        }
         await refresh(analyzed.export_id);
-        setStep(1);
-        setMessage("Datei wurde lokal analysiert. Bank und Berichtsmonat müssen vor der Zuordnung geprüft werden.");
-      });
+        const needsAnalysisReview = analyzed.warnings.length > 0 || analyzed.sections.some((section) => section.warnings.length > 0 || !section.import_supported);
+        setFormatRecoveryNeeded(needsAnalysisReview);
+        setStep(needsAnalysisReview ? 1 : analyzed.sections.every((section) => section.mapped_account_id) ? 3 : 2);
+        setMessage(needsAnalysisReview ? "Die Analyse enthält Hinweise und muss geprüft werden." : "Der Import benötigt noch eine fachliche Zuordnung oder einen Anfangswert.");
+      }, (errorMessage) => setFormatRecoveryNeeded(needsFormatRecovery(errorMessage)));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Die lokale Dateiauswahl ist fehlgeschlagen.");
+      const errorMessage = error instanceof Error ? error.message : "Die lokale Dateiauswahl ist fehlgeschlagen.";
+      setFormatRecoveryNeeded(needsFormatRecovery(errorMessage));
+      setMessage(errorMessage);
     }
   };
 
@@ -485,24 +584,14 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMon
           }
         }
       }
-      const sectionPreviews = await Promise.all(analysis.sections.map(async (section) => {
-        const response = await financeBridge.query<Json>("GetImportSectionPreview", { analysis_id: analysis.analysis_id, section_id: section.section_id });
-        return response.data;
-      }));
-      const validated = await financeBridge.command("ImportMappedSections", {
-        analysis_id: analysis.analysis_id, parser_profile: analysis.import_profile,
-        parser_version: analysis.profile_version, import_mode: "VALIDATE_ONLY",
-      }) as { result?: Json };
-      setPreviews(sectionPreviews);
-      setValidation(validated.result ?? null);
-      setPreviewConfirmed(false);
-      setStep(4);
+      await buildPreview(analysis);
+      setHappyPath(false);
       setMessage("Anfangswerte wurden gespeichert; die vollständige Vorschau ist bereit.");
     });
   };
 
-  const executeImport = async () => {
-    if (!analysis || !previewConfirmed) {
+  const executeImport = async (explicitConfirmation = previewConfirmed) => {
+    if (!analysis || !explicitConfirmation) {
       setMessage("Bestätige die geprüfte Vorschau ausdrücklich.");
       return;
     }
@@ -514,8 +603,13 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMon
       await financeBridge.command("DetectInvestmentFundingRelations", {});
       setResult(response.result ?? null);
       await refresh(analysis.export_id);
-      const execution = await query<Json | null>("GetImportExecutionResult", { export_id: analysis.export_id });
-      setResult(execution.data ?? response.result ?? null);
+      const [execution, historyDetail] = await Promise.all([
+        query<Json | null>("GetImportExecutionResult", { export_id: analysis.export_id }),
+        query<Json | null>("GetImportHistoryDetail", { export_id: analysis.export_id }),
+      ]);
+      const baseResult = execution.data ?? response.result ?? null;
+      const reviewSummary = historyDetail.data?.review_summary as Json | undefined;
+      setResult(baseResult && reviewSummary ? { ...baseResult, review_summary: reviewSummary } : baseResult);
       setStep(5);
       setMessage("Der bestätigte Import wurde lokal abgeschlossen.");
     });
@@ -609,7 +703,7 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMon
     <section className="import-hero panel">
       <span className="import-icon" aria-hidden="true">⇩</span>
       <div><h2>Monatlichen Bankexport importieren</h2><p>Eine lokale Datei, eine Bank, ein Berichtsmonat – mehrere getrennt geprüfte Kontoabschnitte.</p></div>
-      <div className="import-hero-actions"><button className="primary" disabled={busy} onClick={chooseFile}>{selectedFile ? "Andere CSV wählen" : "CSV auswählen"}</button><button className="secondary" disabled={busy || !bankIdentifier.trim()} onClick={chooseUnknownFile}>{unknownFormat ? "Vorschlag neu erzeugen" : "Unbekanntes Format analysieren"}</button></div>
+      <div className="import-hero-actions"><button className="primary" disabled={busy} onClick={chooseFile}>{selectedFile ? "Andere CSV wählen" : "CSV auswählen"}</button>{(analysis || unknownFormat) && (formatRecoveryNeeded || unknownFormat) && <button className="secondary" disabled={busy || !bankIdentifier.trim()} onClick={chooseUnknownFile}>{unknownFormat ? "Vorschlag neu erzeugen" : "Formatproblem lösen"}</button>}</div>
     </section>
     <ol className="import-stepper" aria-label="Importfortschritt">
       {steps.map((title, index) => <li key={title} className={step === index + 1 ? "active" : step > index + 1 ? "complete" : ""} aria-current={step === index + 1 ? "step" : undefined}><span>{step > index + 1 ? "✓" : index + 1}</span><strong>{title}</strong>{index < steps.length - 1 && <i aria-hidden="true" />}</li>)}
@@ -619,14 +713,15 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView }: { uiMon
     {unknownFormat && <ImportMappingEditor result={unknownFormat} mapping={editableMapping} validation={mappingValidation} comment={mappingComment} onComment={setMappingComment} allowAdditionalColumns={allowAdditionalColumns} onAllowAdditionalColumns={setAllowAdditionalColumns} onMapping={updateEditableMapping} onValidate={() => editableMapping && validateEditedMapping(editableMapping)} onConfirm={confirmEditedMapping} onReject={rejectEditedMapping} busy={busy} />}
     {wizard.state === "LOADING" && <section className="panel page-state"><span className="loader" /><p>Gespeicherten Importstand laden …</p></section>}
     {(wizard.state === "ERROR" || wizard.state === "INCOMPATIBLE_SCHEMA") && <section className="panel page-state error" role="alert"><h2>Importprojektion nicht verfügbar</h2><p>{wizard.error}</p><button className="secondary" onClick={() => refresh()}>Erneut versuchen</button></section>}
-    {!analysis && !unknownFormat && wizard.state !== "LOADING" && <section className="panel import-empty"><h2>Neuen Import beginnen</h2><p>Wähle einen monatlichen CSV-Export. React erhält nur eine kurzlebige Dateireferenz, niemals den lokalen Pfad.</p><label>Bankkennung, falls nicht im Export enthalten<input value={bankIdentifier} onChange={(event) => setBankIdentifier(event.target.value)} placeholder="z. B. BANK_A" /></label><div className="empty-actions"><button className="primary" onClick={chooseFile}>Lokale CSV auswählen</button><button className="secondary" disabled={!bankIdentifier.trim()} onClick={chooseUnknownFile}>Unbekanntes Format analysieren</button></div></section>}
+    {!analysis && !unknownFormat && wizard.state !== "LOADING" && <section className="panel import-empty"><h2>Neuen Import beginnen</h2><p>Wähle einen monatlichen CSV-Export. React erhält nur eine kurzlebige Dateireferenz, niemals den lokalen Pfad.</p><label>Bankkennung, falls nicht im Export enthalten<input value={bankIdentifier} onChange={(event) => setBankIdentifier(event.target.value)} placeholder="z. B. BANK_A" /></label><div className="empty-actions"><button className="primary" onClick={chooseFile}>Lokale CSV auswählen</button>{formatRecoveryNeeded && <button className="secondary" disabled={!bankIdentifier.trim()} onClick={chooseUnknownFile}>Formatproblem lösen</button>}</div></section>}
     {analysis && <>
       {uiMonth !== analysis.report_month && <div className="status-banner"><strong>Abweichender Auswertungsmonat</strong><span>UI: {uiMonth} · Importdatei: {analysis.report_month}. Importiert wird ausschließlich der Dateizeitraum.</span></div>}
       {step === 1 && <AnalysisStep analysis={analysis} fileName={selectedFile?.display_name} bankIdentifier={bankIdentifier} onBankIdentifier={setBankIdentifier} onConfirm={confirmAnalysis} />}
       {step === 2 && <MappingStep analysis={analysis} accounts={activeAccounts} mappings={mappings} skips={skipConfirmed} names={newAccountName} onMap={(id, value) => setMappings((current) => ({ ...current, [id]: value }))} onSkip={(id, value) => setSkipConfirmed((current) => ({ ...current, [id]: value }))} onName={(id, value) => setNewAccountName((current) => ({ ...current, [id]: value }))} onCreate={createAccountFor} onSave={saveMappings} busy={busy} />}
       {step === 3 && <ValuesStep analysis={analysis} mappings={mappings} opening={openingBalances} closing={closingBalances} suggestions={openingSuggestions} reasons={adjustmentReasons} emptyPositions={emptyPositions} positions={positions} onOpening={(id, value) => setOpeningBalances((current) => ({ ...current, [id]: value }))} onClosing={(id, value) => setClosingBalances((current) => ({ ...current, [id]: value }))} onReason={(id, value) => setAdjustmentReasons((current) => ({ ...current, [id]: value }))} onEmpty={(id, value) => setEmptyPositions((current) => ({ ...current, [id]: value }))} onAddPosition={addPosition} onPosition={editPosition} onSave={saveInitialValues} busy={busy} />}
-      {step === 4 && <PreviewStep analysis={analysis} previews={previews} validation={validation} confirmed={previewConfirmed} onConfirmed={setPreviewConfirmed} onExecute={executeImport} busy={busy} />}
-      {step === 5 && <ResultStep analysis={analysis} result={result} onReconcile={reconcile} onRelation={relationAction} busy={busy} />}
+      {step === 4 && happyPath && <HappyPathPreview analysis={analysis} previews={previews} validation={validation} requirements={wizard.data?.requirements ?? []} onExecute={() => void executeImport(true)} busy={busy} />}
+      {step === 4 && !happyPath && <PreviewStep analysis={analysis} previews={previews} validation={validation} confirmed={previewConfirmed} onConfirmed={setPreviewConfirmed} onExecute={() => void executeImport()} busy={busy} />}
+      {step === 5 && <ResultStep analysis={analysis} result={result} onReconcile={reconcile} onRelation={relationAction} onOpenReviews={onOpenReviews} busy={busy} />}
     </>}
     <History result={history} onOpen={openHistory} onResume={resume} />
     {detail && <HistoryDetail detail={detail} onClose={() => setDetail(null)} />}
@@ -762,31 +857,72 @@ function ValuesStep({ analysis, mappings, opening, closing, suggestions, reasons
   })}</div><footer><button className="primary" disabled={busy} onClick={onSave}>Anfangswerte bestätigen und Vorschau erstellen</button></footer></section>;
 }
 
+function HappyPathPreview({ analysis, previews, validation, requirements, onExecute, busy }: { analysis: Analysis; previews: Json[]; validation: Json | null; requirements: Json[]; onExecute: () => void; busy: boolean }) {
+  const records = analysis.sections.reduce((sum, section) => sum + section.record_count, 0);
+  const accountIds = new Set(analysis.sections.map((section) => section.mapped_account_id).filter(Boolean));
+  const carried = requirements.filter((item) => Boolean((item.suggested_opening_balance as Json | undefined)?.eligible)).length;
+  const validationRows = (validation?.section_results as Json[] | undefined) ?? [];
+  return <section className="panel import-stage happy-import">
+    <header><span className="eyebrow">BEREIT ZUM IMPORT</span><h2>{analysis.bank_identifier}</h2><p>{reportMonthLabel(analysis.report_month)}</p></header>
+    <div className="happy-import-summary" aria-label="Importzusammenfassung">
+      <div><strong>{accountIds.size}</strong><span>Konten erkannt</span></div>
+      <div><strong>{records}</strong><span>Buchungen</span></div>
+      <div><strong>✓</strong><span>Salden vollständig</span></div>
+    </div>
+    {carried > 0 && <p className="carry-forward-note">{carried === 1 ? "Ein Anfangssaldo wurde" : `${carried} Anfangssalden wurden`} aus bestätigten Endsalden der Vorperiode übernommen.</p>}
+    <div className="happy-ready"><span aria-hidden="true">✓</span><div><strong>Alles bereit.</strong><small>Die Vorschau wurde lokal geprüft. Der Import beginnt erst nach deiner Bestätigung.</small></div></div>
+    <div className="happy-import-actions"><button className="primary" disabled={busy} onClick={onExecute}>Importieren</button></div>
+    <details className="import-technical-details"><summary>Details anzeigen</summary>
+      <dl className="technical-facts">
+        <div><dt>Fingerprint</dt><dd><code>{shortHash(analysis.source_file_hash)}</code></dd></div>
+        <div><dt>Parser</dt><dd>{analysis.import_profile} · {analysis.profile_version}</dd></div>
+        <div><dt>Format</dt><dd>{analysis.encoding} · Trennzeichen „{analysis.delimiter}“</dd></div>
+        <div><dt>Validierung</dt><dd>{String(validation?.status ?? "VALID")} · {validationRows.length || analysis.sections.length} Abschnitte</dd></div>
+      </dl>
+      <div className="happy-section-list">{analysis.sections.map((section) => { const preview = previews.find((item) => item.section_id === section.section_id); return <article key={section.section_id}><div><strong>{section.original_title}</strong><small>{section.mapped_account_id} · {section.section_type}</small></div><span>{section.record_count} Buchungen</span><small>{String(preview?.first_booking_date ?? analysis.period_start)} – {String(preview?.last_booking_date ?? analysis.period_end)}</small></article>; })}</div>
+      <p className="technical-note">{accountIds.size} eindeutige Kontozuordnungen · Hash und Mapping bleiben im Audit nachvollziehbar.</p>
+    </details>
+  </section>;
+}
+
 function PreviewStep({ analysis, previews, validation, confirmed, onConfirmed, onExecute, busy }: { analysis: Analysis; previews: Json[]; validation: Json | null; confirmed: boolean; onConfirmed: (value: boolean) => void; onExecute: () => void; busy: boolean }) {
   const blockers = ((validation?.section_results as Json[] | undefined) ?? []).filter((item) => item.status === "FAILED" || item.status === "REVIEW_REQUIRED");
   return <section className="panel import-stage"><header><span className="eyebrow">SCHRITT 4</span><h2>Vollständige Importvorschau</h2><p>Noch wurden keine Buchungen importiert. Prüfe jeden Abschnitt vor der verbindlichen Ausführung.</p></header>{blockers.length > 0 && <div className="status-banner" role="alert"><strong>{blockers.length} Blocker oder Prüfhinweise</strong><span>Der Import bleibt bis zur Klärung gesperrt.</span></div>}<div className="preview-list">{analysis.sections.map((section) => { const preview = previews.find((item) => item.section_id === section.section_id) ?? section as unknown as Json; const rows = (preview.preview as Json[] | undefined) ?? []; return <article key={section.section_id}><header><div><strong>{section.original_title}</strong><small>{section.section_type}</small></div><span className="status-badge">{section.empty ? "EMPTY_COMPLETED" : `${section.record_count} DATENSÄTZE`}</span></header><dl><div><dt>Erste Buchung</dt><dd>{String(preview.first_booking_date ?? "–")}</dd></div><div><dt>Letzte Buchung</dt><dd>{String(preview.last_booking_date ?? "–")}</dd></div><div><dt>Summe</dt><dd>{String(preview.amount_sum ?? "0")} EUR</dd></div><div><dt>Dublettenkandidaten</dt><dd>{String(preview.duplicate_candidate_count ?? 0)}</dd></div></dl>{rows.length > 0 && <div className="preview-rows">{rows.slice(0, 5).map((row, index) => <code key={index}>{String(row.booking_date ?? row.trade_date ?? "")} · {String(row.description ?? row.security_name ?? "")} · {String(row.amount ?? row.settlement_amount ?? "")}</code>)}</div>}{section.warnings.map((warning) => <small className="warning" key={warning}>{warning}</small>)}</article>; })}</div><label className="final-confirm"><input type="checkbox" checked={confirmed} onChange={(event) => onConfirmed(event.target.checked)} /> Ich habe Bank, Zeitraum, Kontenzuordnung, Anfangswerte, Summen und Warnungen geprüft. Der Import darf jetzt als neue Events ausgeführt werden.</label><footer><button className="primary" disabled={busy || !confirmed || blockers.some((item) => item.status === "FAILED")} onClick={onExecute}>Import verbindlich ausführen</button></footer></section>;
 }
 
-function ResultStep({ analysis, result, onReconcile, onRelation, busy }: { analysis: Analysis; result: Json | null; onReconcile: (section: Section) => void; onRelation: (id: string, action: "Confirm" | "Reject" | "Break") => void; busy: boolean }) {
+function ResultStep({ analysis, result, onReconcile, onRelation, onOpenReviews, busy }: { analysis: Analysis; result: Json | null; onReconcile: (section: Section) => void; onRelation: (id: string, action: "Confirm" | "Reject" | "Break") => void; onOpenReviews?: () => void; busy: boolean }) {
   const sections = (result?.section_results as Json[] | undefined) ?? [];
   const relations = (result?.relations as Json[] | undefined) ?? [];
+  const balanceReconciliations = (result?.balance_reconciliations as Json[] | undefined) ?? [];
+  const positionReconciliations = (result?.position_reconciliations as Json[] | undefined) ?? [];
   const status = String(result?.status ?? analysis.status);
   const completed = status === "COMPLETED";
+  const transactionCount = Number(result?.normalized_transaction_count ?? 0) + Number(result?.security_transaction_count ?? 0);
+  const accountCount = new Set(sections.map((item) => item.account_id).filter(Boolean)).size || analysis.sections.filter((section) => section.mapped_account_id).length;
+  const calculatedReviewCount = relations.filter((item) => item.status === "PROPOSED").length
+    + balanceReconciliations.filter((item) => item.status !== "MATCHED").length
+    + positionReconciliations.filter((item) => item.status !== "MATCHED").length
+    + sections.filter((item) => item.status === "REVIEW_REQUIRED" || item.status === "FAILED").length;
+  const reviewCount = Number((result?.review_summary as Json | undefined)?.total_open_count ?? calculatedReviewCount);
   return <section className="panel import-stage">
-    <header><span className="eyebrow">SCHRITT 5</span><h2>Importergebnis</h2><p>Ergebnisse, Relationen und Abgleiche bleiben nach einem Neustart vollständig rekonstruierbar.</p></header>
-    <div className={`result-status ${completed ? "success" : "review"}`}><span aria-hidden="true">{completed ? "✓" : "!"}</span><div><strong>{completed ? "Import erfolgreich abgeschlossen" : "Import benötigt weitere Prüfung"}</strong><small>Status: {status}</small></div></div>
-    <div className="result-metrics"><div><span>Kontobuchungen</span><strong>{String(result?.normalized_transaction_count ?? 0)}</strong><small>normalisiert importiert</small></div><div><span>Depotbuchungen</span><strong>{String(result?.security_transaction_count ?? 0)}</strong><small>Wertpapierbewegungen</small></div><div><span>Relationsvorschläge</span><strong>{relations.length}</strong><small>noch zu prüfen</small></div><div><span>Kontoabschnitte</span><strong>{analysis.sections.length}</strong><small>getrennt verarbeitet</small></div></div>
-    <div className="result-sections">{analysis.sections.map((section) => {
+    <header><span className="eyebrow">IMPORTERGEBNIS</span><h2>{completed ? "Import abgeschlossen" : "Import verarbeitet"}</h2><p>{transactionCount} Buchungen importiert<br />{accountCount} {accountCount === 1 ? "Konto" : "Konten"} verarbeitet</p></header>
+    <div className={`result-status ${reviewCount === 0 && completed ? "success" : "review"}`}><span aria-hidden="true">{reviewCount === 0 && completed ? "✓" : "!"}</span><div><strong>{reviewCount === 0 ? "Keine weitere Prüfung erforderlich" : `${reviewCount} ${reviewCount === 1 ? "Punkt benötigt" : "Punkte benötigen"} Prüfung`}</strong><small>Der Import und alle Entscheidungen bleiben vollständig auditierbar.</small></div></div>
+    {reviewCount > 0 && onOpenReviews && <div className="result-primary-action"><button className="primary" onClick={onOpenReviews}>Prüfung öffnen</button></div>}
+    <details className="import-technical-details result-details"><summary>Importdetails</summary>
+      <div className="result-metrics"><div><span>Kontobuchungen</span><strong>{String(result?.normalized_transaction_count ?? 0)}</strong><small>normalisiert importiert</small></div><div><span>Depotbuchungen</span><strong>{String(result?.security_transaction_count ?? 0)}</strong><small>Wertpapierbewegungen</small></div><div><span>Relationsvorschläge</span><strong>{relations.length}</strong><small>erkannt</small></div><div><span>Kontoabschnitte</span><strong>{analysis.sections.length}</strong><small>getrennt verarbeitet</small></div></div>
+      <div className="result-sections">{analysis.sections.map((section) => {
       const row = sections.find((item) => item.section_id === section.section_id);
       const reconciliation = row?.balance_reconciliation as Json | undefined ?? row?.position_reconciliation as Json | undefined;
       const count = String(row?.normalized_transaction_count ?? row?.security_transaction_count ?? row?.record_count ?? 0);
       return <article key={section.section_id}>
-        <div className="result-section-title"><div><strong>{section.original_title}</strong><small>{String(row?.local_account_name ?? row?.account_id ?? section.mapped_account_id ?? "übersprungen")}</small></div><span className={`status-badge ${String(row?.status ?? section.import_status).toLowerCase()}`}>{String(row?.status ?? section.import_status)}</span></div>
+        <div className="result-section-title"><div><strong>{section.original_title}</strong><small>{String(row?.local_account_name ?? row?.account_id ?? section.mapped_account_id ?? "übersprungen")}</small></div><span className={`status-badge ${String(row?.status ?? section.import_status).toLowerCase()}`}>{importStatus(String(row?.status ?? section.import_status))}</span></div>
         <div className="result-section-meta"><span><b>{count}</b> verarbeitete Datensätze</span><span>{analysis.period_start} – {analysis.period_end}</span></div>
-        {reconciliation ? <div className="reconciliation-summary"><span>Abgleich</span><strong>{String(reconciliation.status)}</strong><small>Abweichung {String(reconciliation.balance_difference ?? "positionsbezogen")}</small></div> : section.section_type !== "UNKNOWN" && <button className="secondary small" disabled={busy} onClick={() => onReconcile(section)}>Endsaldo abgleichen</button>}
+        {reconciliation ? <div className="reconciliation-summary"><span>Abgleich</span><strong>{importStatus(String(reconciliation.status))}</strong><small>Abweichung {String(reconciliation.balance_difference ?? "positionsbezogen")}</small></div> : section.section_type !== "UNKNOWN" && <button className="secondary small" disabled={busy} onClick={() => onReconcile(section)}>Endsaldo abgleichen</button>}
       </article>;
-    })}</div>
-    {relations.length > 0 && <><h3 className="subheading">Wertpapier-Finanzierungen</h3><div className="relation-list">{relations.map((relation) => <article key={String(relation.relation_id)}><div><strong>{String(relation.amount)} {String(relation.currency)}</strong><small>{String(relation.booking_date ?? "–")} → {String(relation.security_identifier ?? "Wertpapier")}</small><p>{String(relation.match_reason ?? "Deterministischer Relationsmatch")}</p></div><span className="status-badge">{String(relation.status)}</span><div>{relation.status === "PROPOSED" && <><button className="primary small" onClick={() => onRelation(String(relation.relation_id), "Confirm")}>Bestätigen</button><button className="secondary small" onClick={() => onRelation(String(relation.relation_id), "Reject")}>Ablehnen</button></>}{relation.status === "CONFIRMED" && <button className="danger-link" onClick={() => onRelation(String(relation.relation_id), "Break")}>Verknüpfung lösen</button>}</div></article>)}</div></>}
+      })}</div>
+      {relations.length > 0 && <><h3 className="subheading">Wertpapier-Finanzierungen</h3><div className="relation-list">{relations.map((relation) => <article key={String(relation.relation_id)}><div><strong>{String(relation.amount)} {String(relation.currency)}</strong><small>{String(relation.booking_date ?? "–")} → {String(relation.security_identifier ?? "Wertpapier")}</small><p>{String(relation.match_reason ?? "Deterministischer Relationsmatch")}</p></div><span className="status-badge">{importStatus(String(relation.status))}</span><div>{relation.status === "PROPOSED" && <><button className="primary small" onClick={() => onRelation(String(relation.relation_id), "Confirm")}>Bestätigen</button><button className="secondary small" onClick={() => onRelation(String(relation.relation_id), "Reject")}>Ablehnen</button></>}{relation.status === "CONFIRMED" && <button className="danger-link" onClick={() => onRelation(String(relation.relation_id), "Break")}>Verknüpfung lösen</button>}</div></article>)}</div></>}
+      <p className="technical-note">Technischer Status: {status} · Export {analysis.export_id}</p>
+    </details>
   </section>;
 }
 

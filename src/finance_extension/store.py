@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
@@ -21,6 +22,34 @@ from .workspace_lock import WorkspaceLock
 
 class StoreInvariantError(ValueError):
     pass
+
+
+@dataclass
+class ApplicationReadContext:
+    """Request-local, sequence-bounded read state.
+
+    Rows may be fetched through different selectors, but an event is integrity
+    checked and decoded at most once for the lifetime of this context.
+    """
+
+    sequence: int
+    decoded_event_cache: dict[int, dict[str, Any]] = field(default_factory=dict)
+    event_query_cache: dict[tuple[Any, ...], list[dict[str, Any]]] = field(default_factory=dict)
+    projection_cache: dict[tuple[Any, ...], Any] = field(default_factory=dict)
+    events_loaded: int = 0
+    events_decoded: int = 0
+    store_queries: int = 0
+    request_cache_hits: int = 0
+    request_cache_misses: int = 0
+
+    def memoize(self, key: tuple[Any, ...], factory: Any) -> Any:
+        if key in self.projection_cache:
+            self.request_cache_hits += 1
+            return self.projection_cache[key]
+        self.request_cache_misses += 1
+        value = factory()
+        self.projection_cache[key] = value
+        return value
 
 
 class LocalFinanceStore:
@@ -49,6 +78,7 @@ class LocalFinanceStore:
         self.acquire_workspace_lock = acquire_workspace_lock
         self._connection: sqlite3.Connection | None = None
         self._workspace_lock = WorkspaceLock(self.data_dir) if acquire_workspace_lock else None
+        self._read_context: ApplicationReadContext | None = None
 
     def _guard(self) -> Path:
         return validate_runtime_path(
@@ -160,6 +190,16 @@ class LocalFinanceStore:
           applied_at TEXT NOT NULL, application_version TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS release_metadata (
           metadata_key TEXT PRIMARY KEY, metadata_value TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_event_store_type_sequence
+          ON event_store(event_type, sequence_number);
+        CREATE INDEX IF NOT EXISTS idx_event_store_aggregate_sequence
+          ON event_store(aggregate_type, aggregate_id, sequence_number);
+        CREATE INDEX IF NOT EXISTS idx_event_store_transaction_page
+          ON event_store(
+            event_type,
+            json_extract(payload, '$.booking_date') DESC,
+            json_extract(payload, '$.transaction_id') DESC
+          );
         """)
         stored = self.connection.execute(
             "SELECT metadata_value FROM store_metadata WHERE metadata_key='schema_version'"
@@ -275,18 +315,207 @@ class LocalFinanceStore:
         return sequences
 
     def events(self, event_type: str | None = None) -> list[dict[str, Any]]:
-        query = (
-            "SELECT * FROM event_store"
-            + (" WHERE event_type=?" if event_type else "")
-            + " ORDER BY sequence_number"
+        return self.events_snapshot(event_type=event_type)
+
+    def latest_sequence(self) -> int:
+        """Return the current event position without loading event payloads."""
+
+        row = self.connection.execute(
+            "SELECT COALESCE(MAX(sequence_number), 0) FROM event_store"
+        ).fetchone()
+        return int(row[0])
+
+    @contextmanager
+    def read_context(self) -> Iterator[ApplicationReadContext]:
+        if self._read_context is not None:
+            yield self._read_context
+            return
+        context = ApplicationReadContext(sequence=self.latest_sequence())
+        self._read_context = context
+        try:
+            yield context
+        finally:
+            self._read_context = None
+
+    @property
+    def current_read_context(self) -> ApplicationReadContext | None:
+        return self._read_context
+
+    def _decode_event_row(
+        self, row: sqlite3.Row, context: ApplicationReadContext | None
+    ) -> dict[str, Any]:
+        sequence = int(row["sequence_number"])
+        if context is not None and sequence in context.decoded_event_cache:
+            context.request_cache_hits += 1
+            return context.decoded_event_cache[sequence]
+        if hashlib.sha256(row["payload"]).hexdigest() != row["payload_hash"]:
+            raise StoreInvariantError("FINANCE_EVENT_INTEGRITY_FAILED")
+        decoded = {**dict(row), "payload": json.loads(row["payload"])}
+        if context is not None:
+            context.events_decoded += 1
+            context.decoded_event_cache[sequence] = decoded
+        return decoded
+
+    def events_snapshot(
+        self,
+        *,
+        event_type: str | None = None,
+        aggregate_type: str | None = None,
+        aggregate_id: str | None = None,
+        after_sequence: int | None = None,
+        through_sequence: int | None = None,
+    ) -> list[dict[str, Any]]:
+        context = self._read_context
+        upper = through_sequence if through_sequence is not None else (
+            context.sequence if context is not None else self.latest_sequence()
         )
-        rows = self.connection.execute(query, (() if not event_type else (event_type,))).fetchall()
-        result = []
-        for row in rows:
-            if hashlib.sha256(row["payload"]).hexdigest() != row["payload_hash"]:
-                raise StoreInvariantError("FINANCE_EVENT_INTEGRITY_FAILED")
-            result.append({**dict(row), "payload": json.loads(row["payload"])})
+        key = ("events", event_type, aggregate_type, aggregate_id, after_sequence, upper)
+        if context is not None and key in context.event_query_cache:
+            context.request_cache_hits += 1
+            return context.event_query_cache[key]
+        clauses = ["sequence_number <= ?"]
+        parameters: list[Any] = [upper]
+        for column, value in (
+            ("event_type", event_type),
+            ("aggregate_type", aggregate_type),
+            ("aggregate_id", aggregate_id),
+        ):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                parameters.append(value)
+        if after_sequence is not None:
+            clauses.append("sequence_number > ?")
+            parameters.append(after_sequence)
+        rows = self.connection.execute(
+            f"SELECT * FROM event_store WHERE {' AND '.join(clauses)} ORDER BY sequence_number",
+            tuple(parameters),
+        ).fetchall()
+        if context is not None:
+            context.store_queries += 1
+            context.events_loaded += len(rows)
+            context.request_cache_misses += 1
+        result = [self._decode_event_row(row, context) for row in rows]
+        if context is not None:
+            context.event_query_cache[key] = result
         return result
+
+    def events_by_type(self, event_type: str) -> list[dict[str, Any]]:
+        return self.events_snapshot(event_type=event_type)
+
+    def events_by_type_prefix(self, prefix: str) -> list[dict[str, Any]]:
+        context = self._read_context
+        upper = context.sequence if context is not None else self.latest_sequence()
+        key = ("events-prefix", prefix, upper)
+        if context is not None and key in context.event_query_cache:
+            context.request_cache_hits += 1
+            return context.event_query_cache[key]
+        rows = self.connection.execute(
+            "SELECT * FROM event_store WHERE sequence_number <= ? AND event_type LIKE ? "
+            "ORDER BY sequence_number",
+            (upper, f"{prefix}%"),
+        ).fetchall()
+        if context is not None:
+            context.store_queries += 1
+            context.events_loaded += len(rows)
+            context.request_cache_misses += 1
+        result = [self._decode_event_row(row, context) for row in rows]
+        if context is not None:
+            context.event_query_cache[key] = result
+        return result
+
+    def events_by_aggregate(
+        self, aggregate_type: str, aggregate_id: str
+    ) -> list[dict[str, Any]]:
+        return self.events_snapshot(
+            aggregate_type=aggregate_type, aggregate_id=aggregate_id
+        )
+
+    def events_in_sequence_range(
+        self, after_sequence: int, through_sequence: int
+    ) -> list[dict[str, Any]]:
+        return self.events_snapshot(
+            after_sequence=after_sequence, through_sequence=through_sequence
+        )
+
+    def events_by_ids(self, event_ids: list[str]) -> list[dict[str, Any]]:
+        if not event_ids:
+            return []
+        context = self._read_context
+        upper = context.sequence if context is not None else self.latest_sequence()
+        unique = tuple(sorted(set(event_ids)))
+        key = ("event-ids", unique, upper)
+        if context is not None and key in context.event_query_cache:
+            context.request_cache_hits += 1
+            return context.event_query_cache[key]
+        placeholders = ",".join("?" for _ in unique)
+        rows = self.connection.execute(
+            f"SELECT * FROM event_store WHERE sequence_number <= ? "
+            f"AND event_id IN ({placeholders}) ORDER BY sequence_number",
+            (upper, *unique),
+        ).fetchall()
+        if context is not None:
+            context.store_queries += 1
+            context.events_loaded += len(rows)
+            context.request_cache_misses += 1
+        result = [self._decode_event_row(row, context) for row in rows]
+        if context is not None:
+            context.event_query_cache[key] = result
+        return result
+
+    def transaction_events_page(
+        self,
+        *,
+        period_start: str | None,
+        period_end: str | None,
+        limit: int,
+        after: tuple[str, str] | None = None,
+        account_ids: list[str] | None = None,
+        direction: str | None = None,
+        search: str | None = None,
+    ) -> list[dict[str, Any]]:
+        context = self._read_context
+        upper = context.sequence if context is not None else self.latest_sequence()
+        clauses = ["sequence_number <= ?", "event_type = 'TransactionNormalized'"]
+        parameters: list[Any] = [upper]
+        if period_start:
+            clauses.append("json_extract(payload, '$.booking_date') >= ?")
+            parameters.append(period_start)
+        if period_end:
+            clauses.append("json_extract(payload, '$.booking_date') <= ?")
+            parameters.append(period_end)
+        if account_ids:
+            placeholders = ",".join("?" for _ in account_ids)
+            clauses.append(f"json_extract(payload, '$.account_id') IN ({placeholders})")
+            parameters.extend(account_ids)
+        if direction in {"INCOME", "CREDIT"}:
+            clauses.append("CAST(json_extract(payload, '$.amount') AS REAL) >= 0")
+        elif direction in {"EXPENSE", "DEBIT"}:
+            clauses.append("CAST(json_extract(payload, '$.amount') AS REAL) < 0")
+        if search:
+            clauses.append(
+                "lower(json_extract(payload, '$.counterparty') || ' ' || "
+                "json_extract(payload, '$.normalized_description')) LIKE ?"
+            )
+            parameters.append(f"%{search.casefold()}%")
+        if after:
+            clauses.append(
+                "(json_extract(payload, '$.booking_date') < ? OR "
+                "(json_extract(payload, '$.booking_date') = ? AND "
+                "json_extract(payload, '$.transaction_id') < ?))"
+            )
+            parameters.extend((after[0], after[0], after[1]))
+        parameters.append(limit)
+        rows = self.connection.execute(
+            f"SELECT * FROM event_store WHERE {' AND '.join(clauses)} "
+            "ORDER BY json_extract(payload, '$.booking_date') DESC, "
+            "json_extract(payload, '$.transaction_id') DESC LIMIT ?",
+            tuple(parameters),
+        ).fetchall()
+        if context is not None:
+            context.store_queries += 1
+            context.events_loaded += len(rows)
+            context.request_cache_misses += 1
+        return [self._decode_event_row(row, context) for row in rows]
 
     def next_aggregate_version(self, aggregate_type: str, aggregate_id: str) -> int:
         row = self.connection.execute(

@@ -10,6 +10,7 @@ from cryptography.fernet import Fernet
 
 from finance_extension.application import FinanceApplicationService
 from finance_extension.category_shadow import (
+    category_evaluation_summary,
     category_suggestion_states,
     confirm_category_suggestion,
     correct_category_suggestion,
@@ -259,6 +260,29 @@ class CategorySuggestionTests(unittest.TestCase):
         self.assertEqual(len(pending["suggestions"]), 1)
         self.assertEqual(summary["pending_count"], 1)
         self.assertFalse(summary["automatic_acceptance"])
+
+    def test_open_queue_reuses_transaction_and_evaluation_context(self) -> None:
+        extra = self.root / "more-transactions.csv"
+        extra.write_text(
+            "booking_date,value_date,amount,currency,counterparty,description\n"
+            "2026-08-03,2026-08-03,-18.40,EUR,Baeckerei Nord,Kartenzahlung\n",
+            encoding="utf-8",
+        )
+        normalize_batch(self.store, import_csv(self.store, extra, "acc_giro"))
+        classify_transactions(self.store)
+        result = generate_visible_category_suggestions(
+            self.store, MockSuggestionProvider()
+        )
+        self.assertEqual(result["generated"], 2)
+
+        with patch(
+            "finance_extension.category_shadow.category_evaluation_summary",
+            wraps=category_evaluation_summary,
+        ) as summary:
+            rows = list_category_suggestions(self.store, {"status": "PENDING"})
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(summary.call_count, 1)
 
 
 if __name__ == "__main__":

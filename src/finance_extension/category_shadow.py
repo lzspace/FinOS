@@ -831,9 +831,14 @@ def create_classification_rule_from_suggestion(
 
 
 def _suggestion_with_context(
-    store: LocalFinanceStore, suggestion: dict[str, Any]
+    store: LocalFinanceStore,
+    suggestion: dict[str, Any],
+    *,
+    transactions: dict[str, dict[str, Any]] | None = None,
+    evaluation_summaries: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    transaction = _transactions(store).get(suggestion["transaction_id"], {})
+    transaction_rows = _transactions(store) if transactions is None else transactions
+    transaction = transaction_rows.get(suggestion["transaction_id"], {})
     threshold = next(
         (
             key
@@ -844,15 +849,26 @@ def _suggestion_with_context(
     )
     metric = None
     if threshold:
-        summary = category_evaluation_summary(
-            store,
-            {
-                "model_id": suggestion["model_id"],
-                "model_version": suggestion["model_version"],
-                "policy_version": suggestion["inference_policy_version"],
-                "taxonomy_version": suggestion["taxonomy_version"],
-            },
+        summary_key = (
+            str(suggestion["model_id"]),
+            str(suggestion["model_version"]),
+            str(suggestion["inference_policy_version"]),
+            str(suggestion["taxonomy_version"]),
         )
+        if evaluation_summaries is not None and summary_key in evaluation_summaries:
+            summary = evaluation_summaries[summary_key]
+        else:
+            summary = category_evaluation_summary(
+                store,
+                {
+                    "model_id": summary_key[0],
+                    "model_version": summary_key[1],
+                    "policy_version": summary_key[2],
+                    "taxonomy_version": summary_key[3],
+                },
+            )
+            if evaluation_summaries is not None:
+                evaluation_summaries[summary_key] = summary
         candidate = summary["thresholds"][threshold]
         if candidate["status"] == "READY":
             metric = {"threshold": threshold, **candidate}
@@ -872,8 +888,15 @@ def list_category_suggestions(
     store: LocalFinanceStore, filters: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
     filters = filters or {}
+    transactions = _transactions(store)
+    evaluation_summaries: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     rows = [
-        _suggestion_with_context(store, item)
+        _suggestion_with_context(
+            store,
+            item,
+            transactions=transactions,
+            evaluation_summaries=evaluation_summaries,
+        )
         for item in category_suggestion_states(store).values()
     ]
     statuses = filters.get("status")
