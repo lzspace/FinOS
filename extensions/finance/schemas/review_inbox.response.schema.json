@@ -49,7 +49,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["review_id", "review_type", "severity", "entity_id", "entity_type", "account_ids", "title", "description", "action_target", "created_at"],
+            "required": ["review_id", "review_type", "severity", "entity_id", "entity_type", "account_ids", "title", "description", "action_target", "created_at", "period"],
             "properties": {
               "review_id": { "type": "string", "minLength": 1 },
               "review_type": { "enum": ["CATEGORY", "AI_SUGGESTION", "BALANCE", "IMPORT", "RELATION", "FORMAT_CHANGE"] },
@@ -73,7 +73,8 @@
                   "entity_id": { "type": "string" }
                 }
               },
-              "created_at": { "type": "string", "format": "date-time" }
+              "created_at": { "type": "string", "format": "date-time" },
+              "period": { "type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}$" }
             }
           }
         }

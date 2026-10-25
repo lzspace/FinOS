@@ -56,6 +56,7 @@ def _item(
     severity: str,
     action_target: dict[str, str],
     created_at: str,
+    period: str | None = None,
 ) -> dict[str, Any]:
     return {
         "review_id": f"review:{review_type.lower()}:{entity_id}",
@@ -68,6 +69,7 @@ def _item(
         "description": description,
         "action_target": action_target,
         "created_at": created_at,
+        "period": period,
     }
 
 
@@ -103,6 +105,12 @@ def review_inbox(
         str(event["payload"]["transaction_id"]): str(event["payload"]["account_id"])
         for event in store.events("TransactionNormalized")
     }
+    transaction_months = {
+        str(event["payload"]["transaction_id"]): str(event["payload"]["booking_date"])[:7]
+        for event in store.events("TransactionNormalized")
+    }
+    history = import_history(store)
+    export_months = {str(row["export_id"]): str(row["report_month"]) for row in history}
     export_accounts: dict[str, set[str]] = {}
     for event in store.events("ImportSectionCompleted"):
         payload = event["payload"]
@@ -129,6 +137,7 @@ def review_inbox(
                     "entity_id": suggestion_id,
                 },
                 created_at=times.get(("suggestion_id", suggestion_id), fallback_time),
+                period=transaction_months.get(str(row["transaction_id"])),
             )
         )
 
@@ -154,6 +163,7 @@ def review_inbox(
                     "entity_id": transaction_id,
                 },
                 created_at=times.get(("transaction_id", transaction_id), fallback_time),
+                period=transaction_months.get(transaction_id),
             )
         )
 
@@ -201,6 +211,13 @@ def review_inbox(
                     }
                 ),
                 created_at=times.get(("account_id", account_id), fallback_time),
+                period=(
+                    str(row.get("balance_date"))[:7]
+                    if row.get("balance_date")
+                    else str(row.get("reconciliation", {}).get("balance_date"))[:7]
+                    if row.get("reconciliation", {}).get("balance_date")
+                    else None
+                ),
             )
         )
 
@@ -232,10 +249,12 @@ def review_inbox(
                 created_at=times.get(
                     ("reconciliation_id", reconciliation_id), fallback_time
                 ),
+                period=str(row.get("period_start"))[:7]
+                if row.get("period_start") else None,
             )
         )
 
-    for row in import_history(store):
+    for row in history:
         if row["status"] not in {"REVIEW_REQUIRED", "PARTIALLY_COMPLETED", "FAILED"}:
             continue
         export_id = str(row["export_id"])
@@ -254,6 +273,7 @@ def review_inbox(
                     "entity_id": export_id,
                 },
                 created_at=str(row["imported_at"]),
+                period=str(row["report_month"]),
             )
         )
 
@@ -287,6 +307,7 @@ def review_inbox(
                         "entity_id": transaction_id or relation_id,
                     },
                     created_at=str(event["occurred_at"]),
+                    period=transaction_months.get(transaction_id),
                 )
             )
 
@@ -311,6 +332,7 @@ def review_inbox(
                     "entity_id": str(row.get("export_id") or relation_id),
                 },
                 created_at=times.get(("relation_id", relation_id), fallback_time),
+                period=export_months.get(str(row.get("export_id") or "")),
             )
         )
 
@@ -350,6 +372,7 @@ def review_inbox(
                     "entity_id": str(proposal["aggregate_id"]),
                 },
                 created_at=str(detection["occurred_at"]),
+                period=export_months.get(analysis_id),
             )
         )
 

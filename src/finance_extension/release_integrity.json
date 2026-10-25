@@ -83,9 +83,10 @@
       "liquidity_overview.response.schema.json": "ab5c253718580ca7b696d9754bc8b6f9020df0892afff8e7ea1a49b9a97ffd43",
       "map_import_sections.command.schema.json": "b063153e77c9f58f6516713c35da3817079ecba67b90779d6c7cf6933fbe912d",
       "migration_status.response.schema.json": "825dc59d7b47d9d69a9af72e567402e5fe021d388242631da5d0e427e472539e",
+      "monthly_workspace_status.response.schema.json": "e4eaaaa0cbad08bb061e920705981a449aab4460ee7f4a77f052e4b0a50e7433",
       "multi_account_import.response.schema.json": "c2987a72245e15d3ca633346230026fbfbd1eb3b5747fecc98cfa5353ff07f15",
-      "multi_account_import_commands.schema.json": "4ad39167eb2953870302a1163a084c79cc2ddc74acce20a7cdefd66eae9d2e2c",
-      "multi_account_import_events.schema.json": "20e4be31acb2cb4e9eafa0aa91caf2149f7acfdfd979de5911da8b00666a0f58",
+      "multi_account_import_commands.schema.json": "22b24998afa8fb68c363bc59428591844b529b84fee644d5b94f5cee112c9130",
+      "multi_account_import_events.schema.json": "369162489badde2a2014b6319b239a5f357f173944e9f1bdec568aaaaa5d0e73",
       "net_worth_history.response.schema.json": "6c3d5465c54936e6c700170848e2d3ef7f32f522124f584ddeca1cb46905f0e1",
       "net_worth_overview.response.schema.json": "21bad8d75d8db8a102c75085f14553120bcb371597b2cc57b1efb1f0e6bc7791",
       "opening_balance_recorded.event.schema.json": "2a5556fbb3c1297ca4047dcceddbf7a8a0da8c45a77ea6ecbf4d0311e8d74c6a",
@@ -103,7 +104,7 @@
       "record_opening_security_position.command.schema.json": "4aa156c1a9c71ee5253988e8a048a5319919d03c204e27e5eaf1f87302dfd92a",
       "recovery_commands.schema.json": "e3e8b0099e2172f7f7d93d286f1f828611cbe3e27b45e51f19d48747a963c67b",
       "recurring_pattern_list.response.schema.json": "f6be4c8553652d8817a8957f30a02e1c457a07c6ba742a76698662c696b8532e",
-      "review_inbox.response.schema.json": "487f119b483126fb43d1e228461100121c9bfffdec5cb96a873d3d630e28bb2b",
+      "review_inbox.response.schema.json": "c19d60d04bc8d830cd8477ec21114f745f2e95aaf34a0a299b1c55313d6d4bf4",
       "review_queue.response.schema.json": "25efe91c87a1efdc7ab3348d80996c8e7d7263212e285109548d6bb915afdc32",
       "runtime_security_status.response.schema.json": "5381fcfc0763a4876c702eb68835a11fe143235ca3af8d8fa295e7994fb2645a",
       "security_position_snapshot_corrected.event.schema.json": "8f89ffb6e0f9ec6a151dad9878e008f08fe57620cc01fe287f0b950af6898937",
@@ -116,14 +117,14 @@
       "transaction_list.response.schema.json": "8890f1ca321797367197faa00a19cc3a7ae4c8f8b98ce358fbda7855284d9532",
       "vertical_slice_events.schema.json": "091ea19d244cd66f3702303465a59d8a64b9f2a9732fe78390273e0c0fc79227"
     },
-    "sha256": "c516dadf40bf1d0a33103ce338f02dd75819cb32e9bc67ae75ef8d13d948f31a"
+    "sha256": "0b551175f01ba6961436ed4a3a3f54e2d3edd99457be8056444a4d04a9f9a7b7"
   },
   "ui_bundle": {
     "files": {
-      "assets/index-DEgYzXZJ.css": "d7b083e4165c9f306e5854189c98911f1105b2e37e7381539621cdc4ad5fd4ef",
-      "assets/index-YjD_EV9C.js": "c0af939202411f33664b0cbb7e1afd251acec2a1c5dd07d0628f2b88a528a72f",
-      "index.html": "ae4f24bebbec5864010dc6ea080184e89c759eed4462668c3012b4602767f326"
+      "assets/index-CKnps2IK.js": "582c5add10980f33d8d6c92d223b7d6a479af6761321c8d8caa86c9de47a6dd9",
+      "assets/index-HtVt3Gw9.css": "2afab5521ac94e8570d8c2b722f1ef151df1e6f355477c5170ae905e570e67b1",
+      "index.html": "ca64680e25e15bc6b98076221c587f409f574a37db818522d855590572ec5618"
     },
-    "sha256": "51583471cc3ceeb7048abb1067bb41bc6e75e58c63bfa2a0a66d3bd9554d4d3c"
+    "sha256": "0413dce411d0e0eb1237ac4d3a9fa8d06b519d0abb5d759688db8f439d196ce3"
   }
 }

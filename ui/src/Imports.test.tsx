@@ -305,6 +305,8 @@ describe("Importassistent 1.2.0", () => {
         suggested_opening_balance: {
           eligible: true, reason_code: "ELIGIBLE", period_start: "2026-06-01", period_end: "2026-06-30",
           suggested_value: "3145.24", currency: "EUR",
+          source: "REPORTED_PRIOR_CLOSING_BALANCE", source_period: "2026-06",
+          source_account_id: "acc_main", source_projection_sequence: 1842,
           source_closing_balance_event_id: "evt_closing", source_reconciliation_id: "recon_june",
         },
       }],
@@ -315,11 +317,14 @@ describe("Importassistent 1.2.0", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Lokale CSV auswählen" }));
 
     expect(await screen.findByText("Alles bereit.")).toBeInTheDocument();
-    expect(screen.getByText(/Anfangssaldo wurde aus bestätigten Endsalden/)).toBeInTheDocument();
+    expect(screen.getByText(/Anfangssaldo wurde aus den geprüften Endsalden/)).toBeInTheDocument();
     const recorded = commands.find(([name]) => name === "RecordOpeningBalance")?.[1];
     expect(recorded).toMatchObject({
       account_id: "acc_main", booked_balance: "3145.24",
       carry_forward_source_reconciliation_id: "recon_june", source: "PREVIOUS_SYSTEM",
+      opening_balance_source: "REPORTED_PRIOR_CLOSING_BALANCE",
+      source_period: "2026-06", source_account_id: "acc_main",
+      source_projection_sequence: 1842,
     });
   });
 
@@ -362,8 +367,8 @@ describe("Importassistent 1.2.0", () => {
     render(<Imports uiMonth="2026-07" manifest={manifest} />);
     expect(await screen.findByRole("heading", { name: "Anfangswerte prüfen" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText(/Anfangssaldo am/)).toHaveValue("3145.24"));
-    expect(screen.getByText(/Automatisch aus dem bestätigten Endsaldo des Vormonats übernommen/)).toBeInTheDocument();
-    expect(screen.getByText(/Quelle: Bestätigter Endsaldo/)).toHaveTextContent("2026-06-30");
+    expect(screen.getByText("Automatisch ermittelt")).toBeInTheDocument();
+    expect(screen.getByText(/Quelle: Bestätigter gemeldeter Endsaldo/)).toHaveTextContent("2026-06-30");
   });
 
   it("zeigt einen Hinweis, wenn der Anfangssaldo nicht automatisch übernommen werden kann", async () => {
@@ -381,6 +386,34 @@ describe("Importassistent 1.2.0", () => {
     expect(await screen.findByText(/Der Anfangssaldo konnte nicht automatisch übernommen werden/)).toBeInTheDocument();
     expect(screen.getByText(/ungelöste Saldodifferenz/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Anfangssaldo am/)).toHaveValue("");
+  });
+
+  it("zeigt Herkunft und Rechenweg eines berechneten Vormonatssaldos", async () => {
+    const { ipc } = ipcFor(3, {}, {
+      requirements: [{
+        account_id: "acc_main", section_id: section.section_id, requirement_type: "OPENING_BALANCE",
+        required: true, satisfied: false, record: null,
+        suggested_opening_balance: {
+          eligible: true, status: "AVAILABLE", reason_code: "ELIGIBLE",
+          period_start: "2026-06-01", period_end: "2026-06-30",
+          suggested_value: "3145.24", currency: "EUR",
+          source: "CALCULATED_PRIOR_CLOSING_BALANCE", source_period: "2026-06",
+          source_account_id: "acc_main", source_projection_sequence: 1842,
+          source_reconciliation_id: null,
+          calculation: {
+            opening_balance: "2000.00",
+            balance_relevant_movements: "1145.24",
+            calculated_closing_balance: "3145.24",
+          },
+        },
+      }],
+    });
+    window.__FINANCE_IPC__ = ipc;
+    render(<Imports uiMonth="2026-07" manifest={manifest} />);
+
+    expect(await screen.findByText(/Quelle: Berechneter Endsaldo/)).toHaveTextContent("2026-06");
+    expect(screen.getByText("Berechnung anzeigen")).toBeInTheDocument();
+    expect(screen.getByText("1145.24")).toBeInTheDocument();
   });
 
   it("verlangt eine Begründung, wenn der übernommene Anfangssaldo geändert wird", async () => {
@@ -415,6 +448,41 @@ describe("Importassistent 1.2.0", () => {
       suggested_value: "3145.24",
       adjustment_reason: "Bankkorrektur nach Rücklastschrift",
     });
+  });
+
+  it("zeigt fehlende Kontenzuordnungen direkt am Feld statt den Klick abzubrechen", async () => {
+    const { ipc, commands } = ipcFor(2);
+    window.__FINANCE_IPC__ = ipc;
+    render(<Imports uiMonth="2026-07" manifest={manifest} />);
+
+    const accountSelect = await screen.findByRole("combobox");
+    fireEvent.change(accountSelect, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Zuordnungen speichern" }));
+
+    expect(await screen.findByText("Wähle ein bestehendes Konto oder lege ein neues an.")).toBeInTheDocument();
+    expect(accountSelect).toHaveAttribute("aria-invalid", "true");
+    expect(commands.some(([name]) => name === "MapImportSections")).toBe(false);
+  });
+
+  it("stellt gespeicherte Salden beim Fortsetzen wieder in den Feldern her", async () => {
+    const { ipc } = ipcFor(3, {}, {
+      requirements: [{
+        account_id: "acc_main", section_id: section.section_id, requirement_type: "OPENING_BALANCE",
+        required: true, satisfied: false,
+        record: { booked_balance: "3145.24", balance_date: "2026-06-30", confirmation: true },
+        closing_record: { booked_balance: "3200.50", balance_date: "2026-07-31", confirmation: true },
+        suggested_opening_balance: { eligible: false, reason_code: "PRIOR_IMPORT_INCOMPLETE" },
+      }],
+    });
+    window.__FINANCE_IPC__ = ipc;
+    render(<Imports uiMonth="2026-07" manifest={manifest} />);
+
+    expect(await screen.findByLabelText(/Anfangssaldo am/)).toHaveValue("3145.24");
+    expect(screen.getByLabelText(/Gemeldeter Endsaldo am/)).toHaveValue("3200.50");
+    fireEvent.click(screen.getByRole("button", { name: "Fortsetzen" }));
+    expect(await screen.findByText(/wurde an der gespeicherten Stelle geöffnet/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Anfangssaldo am/)).toHaveValue("3145.24");
+    expect(screen.getByLabelText(/Gemeldeter Endsaldo am/)).toHaveValue("3200.50");
   });
 
   it("übersetzt technische Eventnamen im Auditverlauf und bietet eine Fallback-Darstellung für unbekannte Events", async () => {

@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { App, CriticalState, DesktopBridgeUnavailableState, DesktopServiceErrorState, localRuntimeSummary, normalizeCategory } from "./App";
+import { App, CriticalState, DesktopBridgeUnavailableState, DesktopServiceErrorState, effectiveAccountOverviewStatus, localRuntimeSummary, normalizeCategory } from "./App";
 import { mockQuery } from "./mockData";
 import { statusLabel } from "./statusLabels";
 
@@ -28,6 +28,11 @@ describe("Finance UI contract", () => {
       integrity: "MISSING",
     });
   });
+  it("never labels an account with a recorded balance as missing its balance", () => {
+    expect(effectiveAccountOverviewStatus("MISSING_BALANCE", "CURRENT", true)).toBe("REVIEW_REQUIRED");
+    expect(effectiveAccountOverviewStatus("MISSING_BALANCE", "STALE", true)).toBe("STALE");
+    expect(effectiveAccountOverviewStatus("MISSING_BALANCE", "CURRENT", false)).toBe("MISSING_BALANCE");
+  });
   it("derives navigation from the capability manifest", async () => {
     render(<App />);
 
@@ -46,7 +51,7 @@ describe("Finance UI contract", () => {
     ]);
   });
 
-  it("renders only real dashboard KPIs, a gap-aware time series and the inbox summary", async () => {
+  it("renders the real dashboard workspace and opens a recent transaction without mock-only cards", async () => {
     render(<App />);
 
     const metrics = await screen.findByRole("region", { name: "Zentrale Finanzkennzahlen" });
@@ -57,7 +62,14 @@ describe("Finance UI contract", () => {
     expect(screen.getByRole("img", { name: /Finanzverlauf mit 5 belegten und 2 unbelegten/ })).toBeInTheDocument();
     expect(screen.getByText(/2 Zeitabschnitte ohne Buchungsdaten/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "6 Dinge benötigen Aufmerksamkeit" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Alle prüfen" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Arbeitsbereich öffnen" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Datenaktualität" })).toHaveTextContent("3 von 4");
+    expect(screen.getByRole("heading", { name: "Wofür du Geld ausgegeben hast" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Letzte Transaktionen" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Miete.*1\.180,00.*69 %/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Markthalle Süd öffnen" }));
+    expect(await screen.findByRole("dialog", { name: "Markthalle Süd" })).toBeInTheDocument();
   });
 
   it("uses the unified inbox count and opens the affected record", async () => {
@@ -65,7 +77,7 @@ describe("Finance UI contract", () => {
     const reviewNavigation = await screen.findByRole("button", { name: /Prüfen.*6 offene Aufgaben/ });
     fireEvent.click(reviewNavigation);
 
-    expect((await screen.findByText("offene Aufgaben")).parentElement).toHaveTextContent("6offene Aufgaben");
+    expect(await screen.findByRole("region", { name: "Arbeitsstand" })).toHaveTextContent("6 Aufgaben benötigen Aufmerksamkeit");
     expect(screen.getByRole("button", { name: /Kategorien.*1/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /AI-Vorschläge.*1/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Saldenabweichungen.*1/ })).toBeInTheDocument();
@@ -75,8 +87,29 @@ describe("Finance UI contract", () => {
 
     const categoryReview = screen.getByText("Kategorie für Markthalle Süd festlegen").closest("article");
     expect(categoryReview).not.toBeNull();
-    fireEvent.click(within(categoryReview as HTMLElement).getByRole("button", { name: "Öffnen" }));
+    fireEvent.click(within(categoryReview as HTMLElement).getByRole("button", { name: /Aufgabe öffnen/ }));
     expect(await screen.findByRole("dialog", { name: "Markthalle Süd" })).toBeInTheDocument();
+  });
+
+  it("integrates the workspace and actionable months into the dashboard", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Arbeitsbereich/ }));
+    expect(await screen.findByRole("region", { name: "Arbeitsstand im Dashboard" })).toHaveTextContent("6");
+    expect(screen.getByRole("heading", { name: "Monatsübersicht" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Status der Monate" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Monate mit offenen Punkten" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Offene Aufgaben" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Alle in „Prüfen“ öffnen/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Jahr" }));
+    const year = screen.getByRole("combobox", { name: "Jahr der Monatsübersicht" });
+    expect(within(year).getByRole("option", { name: "2024" })).toBeInTheDocument();
+    expect(within(year).getByRole("option", { name: "2025" })).toBeInTheDocument();
+    expect(within(year).getByRole("option", { name: "2026" })).toBeInTheDocument();
+    fireEvent.change(year, { target: { value: "2024" } });
+    expect(year).toHaveValue("2024");
+    expect(screen.getByTitle(/November 2024/)).toBeInTheDocument();
   });
 
   it("loads category tab data only when the tab becomes visible", async () => {
@@ -256,13 +289,14 @@ describe("Finance UI contract", () => {
 
   it("supports switching the central period control between month, year and range", async () => {
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
     const group = await screen.findByRole("group", { name: "Zeitraumsteuerung" });
     expect(within(group).getByRole("tab", { name: "Monat" })).toHaveAttribute("aria-selected", "true");
 
     fireEvent.click(within(group).getByRole("tab", { name: "Jahr" }));
     expect(within(group).getByRole("tab", { name: "Jahr" })).toHaveAttribute("aria-selected", "true");
     expect(within(group).getByLabelText("Jahr auswählen")).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: /2026 auf einen Blick/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Kontenübersicht · 2026/ })).toBeInTheDocument();
 
     fireEvent.click(within(group).getByRole("tab", { name: "Zeitraum" }));
     expect(within(group).getByRole("tab", { name: "Zeitraum" })).toHaveAttribute("aria-selected", "true");
@@ -274,6 +308,7 @@ describe("Finance UI contract", () => {
 
   it("keeps an incomplete custom range out of finance queries until it is valid and applied", async () => {
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
     const group = await screen.findByRole("group", { name: "Zeitraumsteuerung" });
     fireEvent.click(within(group).getByRole("tab", { name: "Zeitraum" }));
 
@@ -283,7 +318,7 @@ describe("Finance UI contract", () => {
 
     expect(within(group).getByRole("alert")).toHaveTextContent("vollständig angegeben");
     expect(within(group).getByRole("button", { name: "Anwenden" })).toBeDisabled();
-    expect(await screen.findByRole("heading", { name: /auf einen Blick/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Kontenübersicht/ })).toBeInTheDocument();
 
     fireEvent.change(start, { target: { value: "2026-10-20" } });
     fireEvent.change(end, { target: { value: "2026-10-01" } });
@@ -297,11 +332,12 @@ describe("Finance UI contract", () => {
     fireEvent.change(end, { target: { value: "2026-10-22" } });
     fireEvent.click(within(group).getByRole("button", { name: "Anwenden" }));
 
-    expect(await screen.findByRole("heading", { name: "01.10.2026 – 22.10.2026 auf einen Blick" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Kontenübersicht · 01.10.2026 – 22.10.2026" })).toBeInTheDocument();
   });
 
   it("moves an applied custom range atomically", async () => {
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
     const group = await screen.findByRole("group", { name: "Zeitraumsteuerung" });
     fireEvent.click(within(group).getByRole("tab", { name: "Zeitraum" }));
     fireEvent.change(within(group).getByLabelText("Startdatum"), { target: { value: "2026-10-01" } });
@@ -309,7 +345,7 @@ describe("Finance UI contract", () => {
     fireEvent.click(within(group).getByRole("button", { name: "Anwenden" }));
     fireEvent.click(within(group).getByRole("button", { name: "Vorheriger Zeitraum" }));
 
-    expect(await screen.findByRole("heading", { name: "09.09.2026 – 30.09.2026 auf einen Blick" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Kontenübersicht · 09.09.2026 – 30.09.2026" })).toBeInTheDocument();
   });
 
   it("hides the period control on settings and imports where it does not apply", async () => {
@@ -340,12 +376,63 @@ describe("Finance UI contract", () => {
     expect(await within(dialog).findByText("Saldenabgleich durchgeführt")).toBeInTheDocument();
   });
 
+  it("allows opening and closing balances to be added from the account balance tab", async () => {
+    const original = window.__FINANCE_IPC__!;
+    const invoke = vi.fn(original.invoke.bind(original));
+    window.__FINANCE_IPC__ = { ...original, invoke };
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Konto Girokonto öffnen" }));
+    const dialog = await screen.findByRole("dialog", { name: "Girokonto" });
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Salden" }));
+    const entry = await within(dialog).findByRole("region", { name: "Saldo nachtragen" });
+    const suggestion = await within(dialog).findByRole("region", { name: "Automatischer Saldovorschlag" });
+    expect(within(suggestion).getAllByText(/5\.200,00/).length).toBeGreaterThan(0);
+    expect(within(suggestion).getByText(/bestätigten gemeldeten Endsaldo Juni 2026/)).toBeInTheDocument();
+    fireEvent.click(within(suggestion).getByRole("button", { name: "Vorschlag übernehmen" }));
+    await waitFor(() => expect(invoke.mock.calls.some((call) =>
+      call[1] === "command"
+      && call[2].name === "RecordOpeningBalance"
+      && (call[2].payload as Record<string, unknown>).booked_balance === "5200.00"
+      && (call[2].payload as Record<string, unknown>).opening_balance_source === "REPORTED_PRIOR_CLOSING_BALANCE",
+    )).toBe(true));
+    expect(await within(suggestion).findByRole("status")).toHaveTextContent("Anfangssaldo für Oktober 2026 wurde übernommen");
+    expect(within(suggestion).getByRole("button", { name: "Bereits übernommen" })).toBeDisabled();
+
+    fireEvent.change(within(entry).getByRole("textbox", { name: "Saldobetrag" }), { target: { value: "1.234,56" } });
+    fireEvent.change(within(entry).getByLabelText("Saldodatum"), { target: { value: "2026-06-30" } });
+    fireEvent.change(within(entry).getByRole("textbox", { name: "Begründung für die Abweichung" }), { target: { value: "Bestätigter Kontoauszug" } });
+    fireEvent.click(within(entry).getByRole("button", { name: "Anfangssaldo speichern" }));
+    await waitFor(() => expect(invoke.mock.calls.some((call) =>
+      call[1] === "command"
+      && call[2].name === "RecordOpeningBalance"
+      && (call[2].payload as Record<string, unknown>).booked_balance === "1234.56"
+      && (call[2].payload as Record<string, unknown>).opening_balance_source === "REPORTED_PRIOR_CLOSING_BALANCE"
+      && (call[2].payload as Record<string, unknown>).suggested_value === "5200.00"
+      && (call[2].payload as Record<string, unknown>).adjustment_reason === "Bestätigter Kontoauszug",
+    )).toBe(true));
+    expect(await within(entry).findByRole("status")).toHaveTextContent("Anfangssaldo wurde nachgetragen");
+
+    fireEvent.change(within(entry).getByRole("combobox", { name: "Saldoart" }), { target: { value: "CLOSING" } });
+    fireEvent.change(within(entry).getByRole("textbox", { name: "Saldobetrag" }), { target: { value: "2.000,00" } });
+    fireEvent.change(within(entry).getByLabelText("Saldodatum"), { target: { value: "2026-07-31" } });
+    fireEvent.click(within(entry).getByRole("button", { name: "Endsaldo speichern" }));
+    await waitFor(() => expect(invoke.mock.calls.some((call) =>
+      call[1] === "command"
+      && call[2].name === "RecordClosingBalance"
+      && (call[2].payload as Record<string, unknown>).booked_balance === "2000.00",
+    )).toBe(true));
+
+    window.__FINANCE_IPC__ = original;
+  });
+
   it("opens the canonical review inbox filtered to the selected account", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Offene Prüfungen: 4" }));
     expect(await screen.findByText("Offene Aufgaben dieses Kontos. Der Zähler stammt aus derselben zentralen Inbox.")).toBeInTheDocument();
-    expect(screen.getByText("4", { selector: ".review-center-head strong" })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Arbeitsstand" })).getByText("4", { selector: "dd" })).toBeInTheDocument();
   });
 
   it("keeps a depot's position table separate from a normal checking-account balance", async () => {
@@ -355,6 +442,26 @@ describe("Finance UI contract", () => {
     const dialog = await screen.findByRole("dialog", { name: "Wertpapierdepot" });
     fireEvent.click(within(dialog).getByRole("tab", { name: "Positionen" }));
     expect(await within(dialog).findByText("ABC123")).toBeInTheDocument();
+  });
+
+  it("navigates between months inside the account workspace", async () => {
+    const original = window.__FINANCE_IPC__!;
+    const invoke = vi.fn(original.invoke.bind(original));
+    window.__FINANCE_IPC__ = { ...original, invoke };
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Konto Girokonto öffnen" }));
+    const dialog = await screen.findByRole("dialog", { name: "Girokonto" });
+    const navigation = within(dialog).getByRole("group", { name: "Monat im Kontoarbeitsbereich" });
+    expect(within(navigation).getByText("Oktober 2026")).toBeInTheDocument();
+    fireEvent.click(within(navigation).getByRole("button", { name: "Vorheriger Monat" }));
+    expect(within(navigation).getByText("September 2026")).toBeInTheDocument();
+    await waitFor(() => expect(invoke.mock.calls.some((call) =>
+      call[1] === "query"
+      && call[2].name === "GetAccountDetail"
+      && ((call[2].payload as Record<string, unknown>).period as Record<string, unknown>).month === 9,
+    )).toBe(true));
+    window.__FINANCE_IPC__ = original;
   });
 
   it("displays explicit runtime version and projection metadata in settings, not hardcoded values", async () => {

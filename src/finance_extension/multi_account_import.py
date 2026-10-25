@@ -7,7 +7,7 @@ from calendar import monthrange
 import hashlib
 import re
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
@@ -674,6 +674,10 @@ def _record_balance(
     carry_forward_source_reconciliation_id: str | None = None,
     suggested_value: str | None = None,
     adjustment_reason: str | None = None,
+    opening_balance_source: str | None = None,
+    source_period: str | None = None,
+    source_account_id: str | None = None,
+    source_projection_sequence: int | None = None,
 ) -> str:
     account = accounts(store).get(account_id)
     if not account:
@@ -694,11 +698,28 @@ def _record_balance(
     adjusted = suggested is not None and suggested != booked
     if adjusted and not (adjustment_reason and adjustment_reason.strip()):
         raise StoreInvariantError("FINANCE_OPENING_BALANCE_ADJUSTMENT_REASON_REQUIRED")
+    allowed_opening_sources = {
+        None,
+        "MANUAL",
+        "REPORTED_PRIOR_CLOSING_BALANCE",
+        "CALCULATED_PRIOR_CLOSING_BALANCE",
+    }
+    if opening_balance_source not in allowed_opening_sources:
+        raise StoreInvariantError("FINANCE_OPENING_BALANCE_SOURCE_INVALID")
+    if source_projection_sequence is not None and (
+        isinstance(source_projection_sequence, bool) or source_projection_sequence < 0
+    ):
+        raise StoreInvariantError("FINANCE_OPENING_BALANCE_SOURCE_INVALID")
+    if opening_balance_source in {
+        "REPORTED_PRIOR_CLOSING_BALANCE",
+        "CALCULATED_PRIOR_CLOSING_BALANCE",
+    } and not all((source_period, source_account_id, source_projection_sequence is not None)):
+        raise StoreInvariantError("FINANCE_OPENING_BALANCE_SOURCE_INVALID")
+    if is_opening and source_account_id is not None and source_account_id != account_id:
+        raise StoreInvariantError("FINANCE_OPENING_BALANCE_SOURCE_INVALID")
     aggregate_type = "OpeningBalance" if is_opening else "ClosingBalance"
     aggregate_id = f"{aggregate_type.lower()}_{account_id}"
-    command_id = _id("cmd")
-    payload = {
-        "balance_id": aggregate_id,
+    comparable = {
         "account_id": account_id,
         "balance_date": balance_date,
         "booked_balance": str(booked),
@@ -706,13 +727,28 @@ def _record_balance(
         "currency": currency,
         "source": source,
         "confirmation": confirmation,
-        "comment": comment,
-        "recorded_at": _now(),
         "carry_forward_source_reconciliation_id": (
             carry_forward_source_reconciliation_id if is_opening else None
         ),
         "suggested_value": str(suggested) if suggested is not None else None,
         "adjustment_reason": adjustment_reason.strip() if adjusted and adjustment_reason else None,
+        "opening_balance_source": (
+            opening_balance_source or ("MANUAL" if is_opening else None)
+        ),
+        "source_period": source_period if is_opening else None,
+        "source_account_id": source_account_id if is_opening else None,
+        "source_projection_sequence": source_projection_sequence if is_opening else None,
+    }
+    for existing in reversed(store.events(kind)):
+        existing_payload = existing["payload"]
+        if all(existing_payload.get(key) == value for key, value in comparable.items()):
+            return str(existing_payload["balance_id"])
+    command_id = _id("cmd")
+    payload = {
+        "balance_id": aggregate_id,
+        **comparable,
+        "comment": comment,
+        "recorded_at": _now(),
     }
     base_version = store.next_aggregate_version(aggregate_type, aggregate_id)
     events = [_event(kind, aggregate_type, aggregate_id, base_version, command_id, payload)]
@@ -784,62 +820,154 @@ def _previous_period(period_start: str) -> tuple[str, str]:
 OPENING_BALANCE_SUGGESTION_REASONS = {
     "ELIGIBLE",
     "ACCOUNT_NOT_FOUND",
-    "MISSING_CLOSING_BALANCE",
-    "CLOSING_BALANCE_NOT_CONFIRMED",
     "CURRENCY_MISMATCH",
-    "PRIOR_MONTH_NOT_RECONCILED",
     "UNRESOLVED_DIFFERENCE",
     "PRIOR_IMPORT_INCOMPLETE",
+    "MISSING_PRIOR_OPENING_BALANCE",
+    "UNRESOLVED_DUPLICATES",
+    "INCONSISTENT_PROJECTION_DATA",
 }
 
 
 def suggested_opening_balance(
     store: LocalFinanceStore, *, account_id: str, period_start: str
 ) -> dict[str, Any]:
-    """Propose the confirmed, reconciled prior-month closing balance as the opening balance.
+    """Derive a traceable opening-balance proposal from the previous month.
 
-    Only an identical account, an immediately preceding calendar month, a
-    confirmed closing balance and a MATCHED reconciliation of a completed
-    prior import make the suggestion eligible; every other case returns a
-    stable reason_code instead of a value.
+    A matching reported closing balance has priority.  Without one, a fully
+    imported month can supply its calculated closing balance.  The function
+    is a query only: accepting its result still records OpeningBalanceRecorded.
     """
     prev_start, prev_end = _previous_period(period_start)
     account = accounts(store).get(account_id)
     if not account:
         return {
             "eligible": False,
+            "status": "UNAVAILABLE",
             "reason_code": "ACCOUNT_NOT_FOUND",
             "period_start": prev_start,
             "period_end": prev_end,
         }
-    closing_events = [
+    opening_events = [
         event
-        for event in store.events("ClosingBalanceRecorded")
+        for event in store.events("OpeningBalanceRecorded")
         if event["payload"]["account_id"] == account_id
+        and event["payload"]["confirmation"]
+        and event["payload"]["currency"] == account["currency"]
+        and event["payload"]["balance_date"]
+        == (date.fromisoformat(prev_start) - timedelta(days=1)).isoformat()
     ]
-    closing = closing_events[-1]["payload"] if closing_events else None
-    closing_event_id = closing_events[-1]["event_id"] if closing_events else None
-    if not closing or closing["balance_date"] != prev_end:
+    opening_event = opening_events[-1] if opening_events else None
+    if not opening_event:
         return {
             "eligible": False,
-            "reason_code": "MISSING_CLOSING_BALANCE",
+            "status": "UNAVAILABLE",
+            "reason_code": "MISSING_PRIOR_OPENING_BALANCE",
             "period_start": prev_start,
             "period_end": prev_end,
         }
-    if not closing["confirmation"]:
+
+    period_run_events = [
+        event
+        for event in store.events("ImportSectionCompleted")
+        if event["payload"]["account_id"] == account_id
+        and event["payload"]["period_start"] == prev_start
+        and event["payload"]["period_end"] == prev_end
+        and event["payload"]["section_type"] in {"CHECKING", "SAVINGS"}
+    ]
+    latest_run_by_section: dict[str, dict[str, Any]] = {}
+    for event in period_run_events:
+        latest_run_by_section[event["payload"]["section_id"]] = event
+    period_runs = list(latest_run_by_section.values())
+    if not period_runs or any(
+        event["payload"]["status"] not in {"IMPORTED", "EMPTY_COMPLETED"}
+        for event in period_runs
+    ):
         return {
             "eligible": False,
-            "reason_code": "CLOSING_BALANCE_NOT_CONFIRMED",
+            "status": "UNAVAILABLE",
+            "reason_code": "PRIOR_IMPORT_INCOMPLETE",
             "period_start": prev_start,
             "period_end": prev_end,
         }
-    if closing["currency"] != account["currency"]:
+    # A force re-import creates another completed section for the same period.
+    # Until duplicate decisions make that history unambiguous, it is not a
+    # safe basis for an automatic balance proposal.
+    completed_runs = [
+        event
+        for event in period_run_events
+        if event["payload"]["status"] in {"IMPORTED", "EMPTY_COMPLETED"}
+    ]
+    section_keys = {
+        (event["payload"]["import_batch_id"], event["payload"]["section_id"])
+        for event in completed_runs
+    }
+    transaction_events = [
+        event
+        for event in store.events("TransactionNormalized")
+        if event["payload"]["account_id"] == account_id
+        and prev_start <= event["payload"]["booking_date"] <= prev_end
+        and (
+            event["payload"]["import_batch_id"],
+            event["payload"].get("section_id"),
+        )
+        in section_keys
+    ]
+    expected_count = sum(event["payload"]["record_count"] for event in completed_runs)
+    if len(transaction_events) != expected_count or any(
+        event["payload"]["currency"] != account["currency"]
+        for event in transaction_events
+    ):
         return {
             "eligible": False,
-            "reason_code": "CURRENCY_MISMATCH",
+            "status": "UNAVAILABLE",
+            "reason_code": "INCONSISTENT_PROJECTION_DATA",
             "period_start": prev_start,
             "period_end": prev_end,
         }
+
+    latest_duplicates: dict[str, dict[str, Any]] = {}
+    for event in store.events_by_type_prefix("DuplicateTransaction"):
+        latest_duplicates[event["aggregate_id"]] = event
+    transaction_ids = {event["payload"]["transaction_id"] for event in transaction_events}
+    related_duplicate_events = [
+        event
+        for event in latest_duplicates.values()
+        if transaction_ids.intersection(
+            {
+                event["payload"].get("primary_transaction_id"),
+                event["payload"].get("duplicate_transaction_id"),
+            }
+        )
+    ]
+    unresolved_duplicate = any(
+        event["payload"].get("status") in {"DETECTED", "PROPOSED"}
+        for event in related_duplicate_events
+    )
+    if unresolved_duplicate:
+        return {
+            "eligible": False,
+            "status": "REVIEW_REQUIRED",
+            "reason_code": "UNRESOLVED_DUPLICATES",
+            "period_start": prev_start,
+            "period_end": prev_end,
+        }
+
+    from .reconciliation import reconciled_transactions
+
+    reconciliation_view = reconciled_transactions(store)
+    relevant = [
+        event
+        for event in transaction_events
+        if reconciliation_view[event["payload"]["transaction_id"]]["duplicate_status"]
+        != "CONFIRMED"
+    ]
+    opening_value = Decimal(opening_event["payload"]["booked_balance"])
+    movement_sum = sum(
+        (Decimal(event["payload"]["amount"]) for event in relevant), Decimal("0")
+    )
+    calculated_closing = opening_value + movement_sum
+
     reconciliations = [
         value
         for value in imported_period_reconciliations(store).values()
@@ -848,42 +976,85 @@ def suggested_opening_balance(
         and value["period_end"] == prev_end
     ]
     reconciliation = reconciliations[-1] if reconciliations else None
-    if not reconciliation or reconciliation["status"] != "MATCHED":
-        reason = (
-            "UNRESOLVED_DIFFERENCE"
-            if reconciliation and reconciliation["status"] == "DIFFERENCE"
-            else "PRIOR_MONTH_NOT_RECONCILED"
-        )
+    if reconciliation and reconciliation["status"] in {
+        "DIFFERENCE",
+        "INCOMPLETE_IMPORT",
+        "REVIEW_REQUIRED",
+    }:
         return {
             "eligible": False,
-            "reason_code": reason,
+            "status": "REVIEW_REQUIRED",
+            "reason_code": (
+                "UNRESOLVED_DIFFERENCE"
+                if reconciliation["status"] == "DIFFERENCE"
+                else "PRIOR_IMPORT_INCOMPLETE"
+            ),
             "period_start": prev_start,
             "period_end": prev_end,
         }
-    prior_import_complete = any(
-        run["account_id"] == account_id
-        and run["period_start"] == prev_start
-        and run["period_end"] == prev_end
-        and run["section_type"] in {"CHECKING", "SAVINGS"}
-        and run["status"] in {"IMPORTED", "EMPTY_COMPLETED"}
-        for run in imported_section_runs(store).values()
+
+    closing_events = [
+        event
+        for event in store.events("ClosingBalanceRecorded")
+        if event["payload"]["account_id"] == account_id
+        and event["payload"]["balance_date"] == prev_end
+    ]
+    closing = closing_events[-1]["payload"] if closing_events else None
+    closing_event_id = closing_events[-1]["event_id"] if closing_events else None
+    if closing and closing["currency"] != account["currency"]:
+        return {
+            "eligible": False,
+            "status": "UNAVAILABLE",
+            "reason_code": "CURRENCY_MISMATCH",
+            "period_start": prev_start,
+            "period_end": prev_end,
+        }
+    if closing and closing["confirmation"] and Decimal(closing["booked_balance"]) != calculated_closing:
+        return {
+            "eligible": False,
+            "status": "REVIEW_REQUIRED",
+            "reason_code": "UNRESOLVED_DIFFERENCE",
+            "period_start": prev_start,
+            "period_end": prev_end,
+        }
+
+    use_reported = bool(closing and closing["confirmation"])
+    value = closing["booked_balance"] if use_reported else str(calculated_closing)
+    source = (
+        "REPORTED_PRIOR_CLOSING_BALANCE"
+        if use_reported
+        else "CALCULATED_PRIOR_CLOSING_BALANCE"
     )
-    if not prior_import_complete:
-        return {
-            "eligible": False,
-            "reason_code": "PRIOR_IMPORT_INCOMPLETE",
-            "period_start": prev_start,
-            "period_end": prev_end,
-        }
+    relevant_sequences = [
+        opening_event["sequence_number"],
+        *(event["sequence_number"] for event in period_run_events),
+        *(event["sequence_number"] for event in transaction_events),
+        *(event["sequence_number"] for event in related_duplicate_events),
+        *(event["sequence_number"] for event in closing_events),
+    ]
     return {
         "eligible": True,
+        "status": "AVAILABLE",
         "reason_code": "ELIGIBLE",
         "period_start": prev_start,
         "period_end": prev_end,
-        "suggested_value": closing["booked_balance"],
-        "currency": closing["currency"],
+        "suggested_value": value,
+        "value": value,
+        "currency": account["currency"],
+        "source": source,
+        "source_period": prev_start[:7],
+        "source_account_id": account_id,
+        "source_projection_sequence": max(relevant_sequences),
         "source_closing_balance_event_id": closing_event_id,
-        "source_reconciliation_id": reconciliation["reconciliation_id"],
+        "source_reconciliation_id": (
+            reconciliation["reconciliation_id"] if reconciliation else None
+        ),
+        "calculation": {
+            "opening_balance": str(opening_value),
+            "balance_relevant_movements": str(movement_sum),
+            "calculated_closing_balance": str(calculated_closing),
+            "relevant_transaction_count": len(relevant),
+        },
     }
 
 
@@ -1283,25 +1454,38 @@ def initial_balance_requirements(store: LocalFinanceStore, analysis_id: str) -> 
     if not analysis:
         raise MultiAccountImportError("IMPORT_ANALYSIS_NOT_FOUND")
     mapped = section_mappings(store, analysis_id)
-    openings = opening_balances(store)
     positions = opening_security_positions(store)
     empty_position_confirmations = empty_opening_security_position_confirmations(store)
-    normalized_accounts = {event["payload"]["account_id"] for event in store.events("TransactionNormalized")}
     requirements: list[dict[str, Any]] = []
     for section in analysis["sections"]:
         mapping = mapped.get(section["section_id"])
         if not mapping or not mapping["account_id"]:
             continue
         account_id = mapping["account_id"]
-        first_import = account_id not in normalized_accounts
         if section["section_type"] in {"CHECKING", "SAVINGS"}:
-            opening = openings.get(account_id)
-            satisfied = not first_import or bool(
+            expected_opening_date = (
+                date.fromisoformat(analysis["period_start"]) - timedelta(days=1)
+            ).isoformat()
+            opening_events = [
+                event["payload"]
+                for event in store.events("OpeningBalanceRecorded")
+                if event["payload"]["account_id"] == account_id
+                and event["payload"]["balance_date"] == expected_opening_date
+            ]
+            opening = opening_events[-1] if opening_events else None
+            closing_events = [
+                event["payload"]
+                for event in store.events("ClosingBalanceRecorded")
+                if event["payload"]["account_id"] == account_id
+                and event["payload"]["balance_date"] == analysis["period_end"]
+            ]
+            closing = closing_events[-1] if closing_events else None
+            satisfied = bool(
                 opening
                 and opening["confirmation"]
-                and opening["balance_date"] < analysis["period_start"]
+                and opening["balance_date"] == expected_opening_date
             )
-            requirements.append({"account_id": account_id, "section_id": section["section_id"], "requirement_type": "OPENING_BALANCE", "required": first_import, "satisfied": satisfied, "record": opening, "suggested_opening_balance": suggested_opening_balance(store, account_id=account_id, period_start=analysis["period_start"])})
+            requirements.append({"account_id": account_id, "section_id": section["section_id"], "requirement_type": "OPENING_BALANCE", "required": True, "satisfied": satisfied, "record": opening, "closing_record": closing, "suggested_opening_balance": suggested_opening_balance(store, account_id=account_id, period_start=analysis["period_start"])})
         elif section["section_type"] == "BROKERAGE":
             existing = [value for value in positions.values() if value["account_id"] == account_id]
             first_security_import = not any(
@@ -1668,8 +1852,28 @@ def reconcile_imported_period_balance(
         raise StoreInvariantError("FINANCE_IMPORT_SECTION_RECONCILIATION_AMBIGUOUS")
     section_run = candidates[0]
     section_id = section_run["section_id"]
-    opening = opening_balances(store).get(account_id)
-    closing = closing_balances(store).get(account_id)
+    opening_candidates = [
+        event
+        for event in store.events("OpeningBalanceRecorded")
+        if event["payload"]["account_id"] == account_id
+        and event["payload"]["balance_date"] < period_start
+    ]
+    opening_event = max(
+        opening_candidates,
+        key=lambda event: (
+            event["payload"]["balance_date"],
+            event["sequence_number"],
+        ),
+        default=None,
+    )
+    opening = opening_event["payload"] if opening_event else None
+    closing_candidates = [
+        event["payload"]
+        for event in store.events("ClosingBalanceRecorded")
+        if event["payload"]["account_id"] == account_id
+        and event["payload"]["balance_date"] == period_end
+    ]
+    closing = closing_candidates[-1] if closing_candidates else None
     status = "MATCHED"
     calculated: Decimal | None = None
     difference: Decimal | None = None

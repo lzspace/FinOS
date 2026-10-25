@@ -140,6 +140,7 @@ from .multi_account_import import (
     security_positions,
     security_transactions,
     section_bindings,
+    suggested_opening_balance,
 )
 from .import_ui import (
     balance_reconciliation_context,
@@ -169,6 +170,7 @@ from .reconciliation import (
 )
 from .read_models import ProjectionDefinition, ProjectionRegistry
 from .review_inbox import review_inbox
+from .monthly_workspace import monthly_workspace_status
 from .recovery import (
     create_backup,
     delete_backup,
@@ -217,6 +219,7 @@ PROJECTION_VERSIONS: dict[str, str] = {
     "category_model_evaluation": "1.0.0",
     "category_suggestion_review": "1.0.0",
     "review_inbox": "1.0.0",
+    "monthly_workspace_status": "1.0.0",
 }
 
 
@@ -610,6 +613,7 @@ class FinanceApplicationService:
             "GetProjectedMonthEndBalance": self._projected_balance,
             "ListAccountReviews": self._account_reviews,
             "GetReviewInbox": self._review_inbox,
+            "GetMonthlyWorkspaceStatus": self._monthly_workspace_status,
             "GetCategoryBreakdown": self._category_breakdown,
             "ListCategories": self._categories,
             "ListClassificationReviews": self._classification_reviews,
@@ -632,6 +636,7 @@ class FinanceApplicationService:
             "ListImportSectionBindings": self._import_section_bindings,
             "GetImportSectionPreview": self._import_section_preview,
             "GetInitialBalanceRequirements": self._initial_balance_requirements,
+            "GetOpeningBalanceSuggestion": self._opening_balance_suggestion,
             "GetImportedPeriodReconciliation": self._imported_period_reconciliation,
             "GetImportedPeriodReconciliationContext": self._imported_period_reconciliation_context,
             "GetImportedSecurityPositionReconciliation": self._imported_security_position_reconciliation,
@@ -1494,6 +1499,14 @@ class FinanceApplicationService:
             projection_version=PROJECTION_VERSIONS["review_inbox"],
         )
 
+    def _monthly_workspace_status(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = monthly_workspace_status(self._store, as_of=payload.get("as_of"))
+        return self._envelope(
+            data,
+            status="EMPTY" if not data["months"] else "READY",
+            projection_version=PROJECTION_VERSIONS["monthly_workspace_status"],
+        )
+
     def _category_breakdown(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._persisted_response(
             "category_period_summary",
@@ -1673,6 +1686,14 @@ class FinanceApplicationService:
         return self._envelope(
             {"requirements": rows}, status="READY" if rows else "EMPTY"
         )
+
+    def _opening_balance_suggestion(self, payload: dict[str, Any]) -> dict[str, Any]:
+        row = suggested_opening_balance(
+            self._store,
+            account_id=_require_identifier(payload, "account_id"),
+            period_start=_require_identifier(payload, "period_start"),
+        )
+        return self._envelope(row, status="READY")
 
     def _imported_period_reconciliation(self, payload: dict[str, Any]) -> dict[str, Any]:
         account_id = _require_identifier(payload, "account_id")

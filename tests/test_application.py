@@ -112,6 +112,35 @@ class ApplicationServiceTests(unittest.TestCase):
         self._validate(transactions, "transaction_list.response.schema.json")
         self._validate(details, "transaction_detail.response.schema.json")
 
+    def test_monthly_workspace_is_derived_and_marks_following_months_missing(self) -> None:
+        before = len(self.store.events())
+        response = self.application.query(
+            "GetMonthlyWorkspaceStatus", {"as_of": "2026-09-30"}
+        )
+        self.assertEqual(len(self.store.events()), before)
+        self._validate(response, "monthly_workspace_status.response.schema.json")
+
+        data = response["data"]
+        rows = {item["month"]: item for item in data["months"]}
+        self.assertEqual(data["earliest_month"], "2026-07")
+        self.assertEqual(rows["2026-07"]["import_status"], "LEGACY_DATA")
+        self.assertEqual(rows["2026-07"]["status"], "REVIEW")
+        self.assertGreater(rows["2026-07"]["review_counts"]["CATEGORY"], 0)
+        self.assertEqual(rows["2026-08"]["status"], "MISSING")
+        self.assertEqual(
+            rows["2026-08"]["primary_action"],
+            {"page": "imports", "view": "month", "entity_id": "2026-08"},
+        )
+        self.assertEqual(rows["2026-09"]["expected_account_count"], 1)
+
+        rebuilt = FinanceApplicationService(
+            self.store,
+            archive_key_provider=self.archive_key,
+            backup_directory=self.root / "backups",
+            export_directory=self.root / "exports",
+        ).query("GetMonthlyWorkspaceStatus", {"as_of": "2026-09-30"})
+        self.assertEqual(response["data"], rebuilt["data"])
+
     def test_latest_sequence_and_request_read_context_do_not_repeat_decoding(self) -> None:
         expected = self.store.events()[-1]["sequence_number"]
         self.assertEqual(self.store.latest_sequence(), expected)

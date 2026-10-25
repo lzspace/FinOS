@@ -10,9 +10,9 @@
     "test": "vitest run",
     "build": "npm run generate:contracts && tsc --noEmit && vite build",
     "check:offline": "node scripts/offline-check.mjs",
-    "desktop:dev": "cd .. && ui/node_modules/.bin/tauri dev",
+    "desktop:dev": "npm run build && cd .. && PYTHONPATH=src .venv-alt/bin/python tools/build_desktop_sidecar.py && ui/node_modules/.bin/tauri dev",
     "desktop:test": "cargo test --manifest-path ../src-tauri/Cargo.toml",
-    "desktop:build": "cd .. && PYTHONPATH=src .venv-alt/bin/python tools/build_desktop_sidecar.py && ui/node_modules/.bin/tauri build",
+    "desktop:build": "cd .. && ui/node_modules/.bin/tauri build",
     "desktop:offline": "cd .. && PYTHONPATH=src .venv-alt/bin/python tools/check_desktop_offline.py"
   },
   "dependencies": {

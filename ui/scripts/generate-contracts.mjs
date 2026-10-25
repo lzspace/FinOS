@@ -15,6 +15,7 @@ const required = [
   "transaction_detail.response.schema.json",
   "review_queue.response.schema.json",
   "review_inbox.response.schema.json",
+  "monthly_workspace_status.response.schema.json",
   "recurring_pattern_list.response.schema.json",
   "forecast.response.schema.json",
   "forecast_evaluation.response.schema.json",

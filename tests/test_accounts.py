@@ -25,8 +25,13 @@ from finance_extension.accounts import (
     record_balance_snapshot,
     update_account,
 )
+from finance_extension.account_workspace import account_overview_for_period
 from finance_extension.crypto import StaticKeyProvider
 from finance_extension.importer import ImportErrorSafe, import_csv, normalize_batch
+from finance_extension.multi_account_import import (
+    record_closing_balance,
+    record_opening_balance,
+)
 from finance_extension.reconciliation import confirm_transfer, detect_transfers
 from finance_extension.store import LocalFinanceStore, StoreInvariantError
 
@@ -136,6 +141,58 @@ class AccountTests(unittest.TestCase):
         event = self.store.events("AccountBalanceReconciled")[-1]
         self.assertEqual(event["payload"]["status"], "OPENING_BALANCE_MISSING")
         self.assertIsNone(event["payload"]["calculated_balance"])
+
+    def test_confirmed_import_balance_is_visible_without_duplicate_snapshot(self) -> None:
+        self._account("acc_main")
+        record_closing_balance(
+            self.store,
+            account_id="acc_main",
+            balance_date="2026-07-31",
+            booked_balance="1234.56",
+            available_balance=None,
+            currency="EUR",
+            source="BANK_STATEMENT",
+            confirmation=True,
+        )
+
+        overview = account_overview(self.store, "2026-07-31")[0]
+        self.assertEqual(overview["latest_balance"], "1234.56")
+        self.assertEqual(overview["balance_source"], "IMPORT_SOURCE")
+        self.assertEqual(balance_snapshots(self.store), {})
+        self.assertFalse(
+            any(
+                row["review_type"] == "OPENING_BALANCE_MISSING"
+                for row in account_reviews(self.store, "2026-07-31")
+            )
+        )
+
+    def test_confirmed_opening_balance_clears_missing_balance_overview_status(self) -> None:
+        self._account("acc_main")
+        record_opening_balance(
+            self.store,
+            account_id="acc_main",
+            balance_date="2026-07-31",
+            booked_balance="6115.79",
+            available_balance=None,
+            currency="EUR",
+            source="MANUAL_ENTRY",
+            confirmation=True,
+            comment="Nachgetragen",
+            opening_balance_source="MANUAL",
+        )
+
+        overview = account_overview_for_period(
+            self.store,
+            {
+                "mode": "MONTH",
+                "start_date": "2026-08-01",
+                "end_date": "2026-08-31",
+                "display_label": "August 2026",
+                "aggregation": "DAY",
+            },
+        )[0]
+        self.assertEqual(overview["reported_balance"], "6115.79")
+        self.assertNotEqual(overview["overview_status"], "MISSING_BALANCE")
 
     def test_multi_account_net_worth_separates_assets_and_liabilities(self) -> None:
         self._account("acc_checking")

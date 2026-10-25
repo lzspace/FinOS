@@ -12,7 +12,18 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _prepare_integrity_manifest() -> None:
+    """Bind the embedded checksums to the UI and schemas being packaged."""
+    source_root = str(ROOT / "src")
+    if source_root not in sys.path:
+        sys.path.insert(0, source_root)
+    from finance_extension.release_build import prepare_embedded_integrity
+
+    prepare_embedded_integrity()
+
+
 def main() -> int:
+    _prepare_integrity_manifest()
     host = subprocess.run(
         ["rustc", "-vV"],
         check=True,

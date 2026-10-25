@@ -269,6 +269,58 @@ def balance_snapshots(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
     return _active_snapshots(store, "AccountBalanceSnapshot")
 
 
+def _effective_balance_snapshots(store: LocalFinanceStore) -> dict[str, dict[str, Any]]:
+    """Combine explicit snapshots with confirmed import balance facts for queries.
+
+    OpeningBalanceRecorded and ClosingBalanceRecorded remain the canonical
+    import events.  Exposing them as read-only virtual snapshots keeps account,
+    review and net-worth projections aligned without persisting a duplicate
+    balance event.
+    """
+    explicit = balance_snapshots(store)
+    result = dict(explicit)
+    explicit_points = {
+        (snapshot["account_id"], snapshot["balance_date"])
+        for snapshot in explicit.values()
+    }
+    for event in store.events():
+        if event["event_type"] not in {
+            "OpeningBalanceRecorded",
+            "ClosingBalanceRecorded",
+        }:
+            continue
+        payload = event["payload"]
+        if not payload.get("confirmation"):
+            continue
+        if (payload["account_id"], payload["balance_date"]) in explicit_points:
+            continue
+        snapshot_id = f"import_balance_{event['event_id']}"
+        currency = str(payload["currency"])
+        booked_balance = str(payload["booked_balance"])
+        available_balance = payload.get("available_balance")
+        result[snapshot_id] = {
+            "snapshot_id": snapshot_id,
+            "account_id": payload["account_id"],
+            "balance_date": payload["balance_date"],
+            "booked_balance": booked_balance,
+            "available_balance": available_balance,
+            "currency": currency,
+            "source": "IMPORT_SOURCE",
+            "source_priority": BALANCE_SOURCES.index("IMPORT_SOURCE"),
+            "source_import_id": payload.get("source_reconciliation_id"),
+            "confidence": "HIGH",
+            "supersedes_snapshot_id": None,
+            "created_at": payload.get("recorded_at", event["occurred_at"]),
+            "original_amount": booked_balance,
+            "original_currency": currency,
+            "valuation_currency": currency,
+            "exchange_rate": "1",
+            "valued_amount": booked_balance,
+            "valued_available_balance": available_balance,
+        }
+    return result
+
+
 def record_balance_snapshot(
     store: LocalFinanceStore,
     *,
@@ -678,7 +730,7 @@ def _latest_by_item(
 
 def account_overview(store: LocalFinanceStore, as_of: str | None = None) -> list[dict[str, Any]]:
     as_of = as_of or date.today().isoformat()
-    balances = _latest_by_item(balance_snapshots(store), as_of)
+    balances = _latest_by_item(_effective_balance_snapshots(store), as_of)
     reconciliations = balance_reconciliations(store)
     rows = []
     for account_id, account in accounts(store).items():

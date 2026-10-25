@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm --prefix ../ui run dev -- --host 127.0.0.1",
     "devUrl": "http://127.0.0.1:5173",
-    "beforeBuildCommand": "npm --prefix ../ui run build",
+    "beforeBuildCommand": "npm --prefix ../ui run build && cd .. && PYTHONPATH=src .venv-alt/bin/python tools/build_desktop_sidecar.py",
     "frontendDist": "../ui/dist"
   },
   "app": {

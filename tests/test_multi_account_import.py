@@ -374,6 +374,10 @@ class GermanMultiAccountImportTests(unittest.TestCase):
         )
         self.assertEqual(reconciliation["status"], "MATCHED")
         self.assertEqual(reconciliation["balance_difference"], "0.00")
+        suggestion_before_backup = suggested_opening_balance(
+            self.store, account_id="acc_checking", period_start="2025-01-01"
+        )
+        self.assertTrue(suggestion_before_backup["eligible"])
 
         archive_key = StaticKeyProvider(Fernet.generate_key())
         backup = create_backup(self.store, archive_key, self.root / "backups")
@@ -385,6 +389,12 @@ class GermanMultiAccountImportTests(unittest.TestCase):
         self.assertEqual(
             investment_funding_relations(self.store)[relation_id]["status"], "CONFIRMED"
         )
+        self.assertEqual(
+            suggested_opening_balance(
+                self.store, account_id="acc_checking", period_start="2025-01-01"
+            ),
+            suggestion_before_backup,
+        )
 
         analysis_id = analysis["analysis_id"]
         event_count = len(self.store.events())
@@ -393,6 +403,19 @@ class GermanMultiAccountImportTests(unittest.TestCase):
             self.root / "workspace", StaticKeyProvider(self.key)
         ).open()
         self.assertEqual(len(self.store.events()), event_count)
+        self.assertEqual(
+            suggested_opening_balance(
+                self.store, account_id="acc_checking", period_start="2025-01-01"
+            ),
+            suggestion_before_backup,
+        )
+        FinanceApplicationService(self.store).command("RebuildReadModels", {})
+        self.assertEqual(
+            suggested_opening_balance(
+                self.store, account_id="acc_checking", period_start="2025-01-01"
+            ),
+            suggestion_before_backup,
+        )
         self.assertIsNotNone(get_import_analysis(self.store, analysis_id))
         self.assertEqual(len(list_import_sections(self.store, analysis_id)), 3)
         self.assertEqual(len(security_positions(self.store)), 2)
@@ -670,6 +693,11 @@ class GermanMultiAccountImportTests(unittest.TestCase):
                 "BROKERAGE": "IMPORTED",
             },
         )
+        wizard = FinanceApplicationService(self.store).query(
+            "GetImportWizardState", {"export_id": invalid["export_id"]}
+        )["data"]
+        self.assertEqual(wizard["current_step"], 4)
+        self.assertTrue(wizard["can_resume"])
 
     def test_brokerage_positions_are_reconciled_per_section(self) -> None:
         analysis = self._analyze_and_map()
@@ -1167,12 +1195,25 @@ class GermanMultiAccountImportTests(unittest.TestCase):
         )
         self.assertEqual(reconciliation["status"], "MATCHED")
 
-        # Savings never received a closing balance: no eligible suggestion.
+        # Savings never received a reported closing balance. The complete,
+        # empty month can nevertheless be calculated from its opening value.
         savings_suggestion = suggested_opening_balance(
             self.store, account_id="acc_savings", period_start="2025-01-01"
         )
-        self.assertFalse(savings_suggestion["eligible"])
-        self.assertEqual(savings_suggestion["reason_code"], "MISSING_CLOSING_BALANCE")
+        self.assertTrue(savings_suggestion["eligible"])
+        self.assertEqual(
+            savings_suggestion["source"], "CALCULATED_PRIOR_CLOSING_BALANCE"
+        )
+        self.assertEqual(savings_suggestion["suggested_value"], "5000.00")
+        self.assertEqual(
+            savings_suggestion["calculation"],
+            {
+                "opening_balance": "5000.00",
+                "balance_relevant_movements": "0",
+                "calculated_closing_balance": "5000.00",
+                "relevant_transaction_count": 0,
+            },
+        )
 
         # Checking has a confirmed, MATCHED prior month: the closing balance
         # is proposed unchanged.
@@ -1181,7 +1222,16 @@ class GermanMultiAccountImportTests(unittest.TestCase):
         )
         self.assertTrue(suggestion["eligible"])
         self.assertEqual(suggestion["suggested_value"], "2246.15")
+        self.assertEqual(suggestion["source"], "REPORTED_PRIOR_CLOSING_BALANCE")
+        self.assertEqual(suggestion["source_period"], "2024-12")
+        self.assertGreater(suggestion["source_projection_sequence"], 0)
         self.assertEqual(suggestion["source_reconciliation_id"], reconciliation["reconciliation_id"])
+
+        queried = FinanceApplicationService(self.store).query(
+            "GetOpeningBalanceSuggestion",
+            {"account_id": "acc_checking", "period_start": "2025-01-01"},
+        )
+        self.assertEqual(queried["data"], suggestion)
 
         january_source = self.root / "synthetic-export-january.csv"
         january_source.write_bytes(SYNTHETIC_JANUARY_EXPORT.encode("cp1252"))
@@ -1207,6 +1257,8 @@ class GermanMultiAccountImportTests(unittest.TestCase):
         checking_requirement = next(
             item for item in requirements if item["account_id"] == "acc_checking"
         )
+        self.assertTrue(checking_requirement["required"])
+        self.assertFalse(checking_requirement["satisfied"])
         self.assertEqual(
             checking_requirement["suggested_opening_balance"]["suggested_value"], "2246.15"
         )
@@ -1223,8 +1275,40 @@ class GermanMultiAccountImportTests(unittest.TestCase):
             confirmation=True,
             carry_forward_source_reconciliation_id=suggestion["source_reconciliation_id"],
             suggested_value=suggestion["suggested_value"],
+            opening_balance_source=suggestion["source"],
+            source_period=suggestion["source_period"],
+            source_account_id=suggestion["source_account_id"],
+            source_projection_sequence=suggestion["source_projection_sequence"],
         )
         self.assertEqual(len(self.store.events("OpeningBalanceCarryForwardAdjusted")), 0)
+        accepted = self.store.events("OpeningBalanceRecorded")[-1]["payload"]
+        self.assertEqual(
+            accepted["opening_balance_source"], "REPORTED_PRIOR_CLOSING_BALANCE"
+        )
+        self.assertEqual(accepted["source_period"], "2024-12")
+        self.assertEqual(accepted["source_account_id"], "acc_checking")
+        recorded_count = len(self.store.events("OpeningBalanceRecorded"))
+        record_opening_balance(
+            self.store,
+            account_id="acc_checking",
+            balance_date="2024-12-31",
+            booked_balance=suggestion["suggested_value"],
+            available_balance=None,
+            currency="EUR",
+            source="BANK_STATEMENT",
+            confirmation=True,
+            carry_forward_source_reconciliation_id=suggestion[
+                "source_reconciliation_id"
+            ],
+            suggested_value=suggestion["suggested_value"],
+            opening_balance_source=suggestion["source"],
+            source_period=suggestion["source_period"],
+            source_account_id=suggestion["source_account_id"],
+            source_projection_sequence=suggestion["source_projection_sequence"],
+        )
+        self.assertEqual(
+            len(self.store.events("OpeningBalanceRecorded")), recorded_count
+        )
 
         # Overriding the suggestion without a reason is rejected …
         with self.assertRaisesRegex(
@@ -1275,6 +1359,58 @@ class GermanMultiAccountImportTests(unittest.TestCase):
         ).open()
         self.assertEqual(len(self.store.events()), event_count)
         self.assertEqual(len(self.store.events("OpeningBalanceCarryForwardAdjusted")), 1)
+        rebuilt_suggestion = suggested_opening_balance(
+            self.store, account_id="acc_checking", period_start="2025-01-01"
+        )
+        self.assertEqual(rebuilt_suggestion, suggestion)
+
+    def test_calculated_opening_suggestion_is_blocked_by_reported_difference(self) -> None:
+        december = self._analyze_and_map()
+        record_opening_balance(
+            self.store,
+            account_id="acc_checking",
+            balance_date="2024-11-30",
+            booked_balance="2000.00",
+            available_balance=None,
+            currency="EUR",
+            source="MANUAL_ENTRY",
+            confirmation=True,
+        )
+        # Other mapped sections need their own opening state so the import is complete.
+        record_opening_balance(
+            self.store,
+            account_id="acc_savings",
+            balance_date="2024-11-30",
+            booked_balance="0.00",
+            available_balance=None,
+            currency="EUR",
+            source="MANUAL_ENTRY",
+            confirmation=True,
+        )
+        confirm_empty_opening_security_positions(
+            self.store, account_id="acc_brokerage", valuation_date="2024-11-30"
+        )
+        self.assertEqual(
+            import_mapped_sections(self.store, december["analysis_id"])["status"],
+            "COMPLETED",
+        )
+        record_closing_balance(
+            self.store,
+            account_id="acc_checking",
+            balance_date="2024-12-31",
+            booked_balance="2240.00",
+            available_balance=None,
+            currency="EUR",
+            source="BANK_STATEMENT",
+            confirmation=True,
+        )
+
+        suggestion = suggested_opening_balance(
+            self.store, account_id="acc_checking", period_start="2025-01-01"
+        )
+        self.assertFalse(suggestion["eligible"])
+        self.assertEqual(suggestion["status"], "REVIEW_REQUIRED")
+        self.assertEqual(suggestion["reason_code"], "UNRESOLVED_DIFFERENCE")
 
 
 if __name__ == "__main__":

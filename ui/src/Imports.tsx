@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { financeBridge, SchemaCompatibilityError, type SelectedImportFile } from "./bridge";
 import type { Account, CapabilityManifest, Envelope, ViewState } from "./contracts/generated";
 import { EVENT_CATEGORY_ORDER, EVENT_CATEGORY_TITLES, eventLabel, type EventCategory } from "./eventLabels";
@@ -11,11 +11,15 @@ const OPENING_BALANCE_REASON_TEXT: Record<string, string> = {
   PRIOR_MONTH_NOT_RECONCILED: "Für den vorherigen Monat liegt noch kein Saldenabgleich vor.",
   UNRESOLVED_DIFFERENCE: "Der vorherige Monat weist eine ungelöste Saldodifferenz auf.",
   PRIOR_IMPORT_INCOMPLETE: "Der Import des vorherigen Monats wurde nicht vollständig abgeschlossen.",
+  MISSING_PRIOR_OPENING_BALANCE: "Für den vorherigen Monat fehlt ein bestätigter Anfangssaldo.",
+  UNRESOLVED_DUPLICATES: "Im vorherigen Monat müssen mögliche Dubletten zuerst geprüft werden.",
+  INCONSISTENT_PROJECTION_DATA: "Die Daten des vorherigen Monats sind nicht vollständig konsistent.",
   ACCOUNT_NOT_FOUND: "Für dieses Konto liegt kein Vormonat vor.",
 };
 
 type Json = Record<string, unknown>;
 type QueryState<T> = { state: ViewState; data?: T; error?: string };
+type FieldErrors = Record<string, string>;
 type Section = {
   section_id: string;
   section_type: "CHECKING" | "SAVINGS" | "BROKERAGE" | "UNKNOWN";
@@ -141,6 +145,24 @@ const needsFormatRecovery = (message: string) => [
   "IMPORT_PROFILE_MISMATCH", "IMPORT_DATE_FORMAT_INVALID", "IMPORT_DECIMAL_FORMAT_INVALID",
   "IMPORT_UNKNOWN_SECTION", "IMPORT_FORMAT_UNKNOWN", "IMPORT_FORMAT_CHANGED",
 ].some((code) => message.includes(code));
+const decimalValue = (value: string) => {
+  const compact = value.trim().replaceAll(" ", "");
+  return compact.includes(",") ? compact.replaceAll(".", "").replace(",", ".") : compact;
+};
+const isValidDecimal = (value: string) => /^[+-]?(?:\d+(?:[.,]\d+)?|\d{1,3}(?:\.\d{3})+(?:,\d+)?)$/.test(value.trim().replaceAll(" ", "")) && Number.isFinite(Number(decimalValue(value)));
+const stableErrorCode = (message: string) => message.match(/\b(?:IMPORT|FINANCE|DESKTOP|LOCAL_AI)_[A-Z0-9_]+\b/)?.[0] ?? null;
+const friendlyImportError = (message: string) => {
+  const code = stableErrorCode(message);
+  const texts: Record<string, string> = {
+    IMPORT_ANALYSIS_NOT_FOUND: "Der gespeicherte Importstand wurde nicht gefunden. Aktualisiere die Importhistorie und versuche es erneut.",
+    IMPORT_SECTION_MAPPING_MISSING: "Mindestens ein Kontoabschnitt ist noch keinem Konto zugeordnet.",
+    IMPORT_OPENING_BALANCE_REQUIRED: "Für mindestens ein Konto fehlt ein bestätigter Anfangssaldo.",
+    IMPORT_PERIOD_MISMATCH: "Mindestens eine Buchung liegt außerhalb des erkannten Importzeitraums.",
+    IMPORT_PROFILE_MISMATCH: "Das gespeicherte Importprofil passt nicht mehr zur ausgewählten Datei.",
+    FINANCE_IMPORT_ACCOUNT_CLOSED: "Mindestens ein Zielkonto war zum Buchungsdatum bereits geschlossen.",
+  };
+  return { text: code && texts[code] ? texts[code] : "Der Import konnte nicht fortgesetzt werden. Prüfe die markierten Angaben und versuche es erneut.", code };
+};
 
 async function query<T>(name: string, payload: Json = {}): Promise<QueryState<T>> {
   try {
@@ -186,6 +208,10 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
   const [openedFocus, setOpenedFocus] = useState<string | null>(null);
   const [happyPath, setHappyPath] = useState(false);
   const [formatRecoveryNeeded, setFormatRecoveryNeeded] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [messageIsError, setMessageIsError] = useState(false);
+  const [technicalErrorCode, setTechnicalErrorCode] = useState<string | null>(null);
+  const workspaceTop = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async (exportId?: string) => {
     const [wizardResult, historyResult, accountResult] = await Promise.all([
@@ -197,9 +223,39 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
     setHistory(historyResult);
     setAccounts(accountResult.data?.accounts ?? []);
     if (wizardResult.data) {
+      const restoredOpening: Record<string, string> = {};
+      const restoredClosing: Record<string, string> = {};
+      const restoredPositions: Record<string, Json[]> = {};
+      const restoredEmptyPositions: Record<string, boolean> = {};
+      for (const requirement of wizardResult.data.requirements) {
+        const accountId = String(requirement.account_id ?? "");
+        if (!accountId) continue;
+        const record = requirement.record as Json | undefined;
+        const closingRecord = requirement.closing_record as Json | undefined;
+        if (record?.booked_balance != null) restoredOpening[accountId] = String(record.booked_balance);
+        if (closingRecord?.booked_balance != null) restoredClosing[accountId] = String(closingRecord.booked_balance);
+        if (requirement.requirement_type === "OPENING_SECURITY_POSITIONS") {
+          restoredPositions[accountId] = ((requirement.records as Json[] | undefined) ?? []).map((item) => ({
+            security_identifier_type: item.security_identifier_type ?? "ISIN",
+            security_identifier: item.security_identifier ?? "",
+            security_name: item.security_name ?? "",
+            opening_quantity: item.quantity ?? "",
+            closing_quantity: "",
+          }));
+          restoredEmptyPositions[accountId] = Boolean(requirement.empty_confirmation);
+        }
+      }
       setStep(wizardResult.data.current_step);
       setBankIdentifier(wizardResult.data.analysis.bank_identifier);
       setMappings(Object.fromEntries(wizardResult.data.analysis.sections.filter((item) => item.mapped_account_id).map((item) => [item.section_id, String(item.mapped_account_id)])));
+      setOpeningBalances(restoredOpening);
+      setClosingBalances(restoredClosing);
+      setPositions(restoredPositions);
+      setEmptyPositions(restoredEmptyPositions);
+      setAdjustmentReasons({});
+      setFieldErrors({});
+      setPreviewConfirmed(false);
+      setHappyPath(false);
       let restoredResult = wizardResult.data.execution_result;
       if (wizardResult.data.current_step === 5) {
         const historyDetail = await query<Json | null>("GetImportHistoryDetail", { export_id: wizardResult.data.export_id });
@@ -220,6 +276,7 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
         setPreviews(restoredPreviews);
       }
     }
+    return wizardResult.data ?? null;
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -247,15 +304,32 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
   const incompatible = requiredCapabilities.filter((name) => manifest.capabilities[name] !== true);
   const activeAccounts = useMemo(() => accounts.filter((item) => item.status === "ACTIVE"), [accounts]);
   const busy = operation === "VALIDATING" || operation === "EXECUTING";
+  const clearFieldError = (key: string) => setFieldErrors((current) => {
+    if (!current[key]) return current;
+    const updated = { ...current };
+    delete updated[key];
+    return updated;
+  });
+  const showValidationErrors = (errors: FieldErrors) => {
+    setFieldErrors(errors);
+    setMessage("Bitte prüfe die markierten Pflichtfelder.");
+    setMessageIsError(true);
+    setTechnicalErrorCode(null);
+  };
 
   const run = async (state: ViewState, action: () => Promise<void>, onError?: (message: string) => void) => {
     setOperation(state);
     setMessage("");
+    setMessageIsError(false);
+    setTechnicalErrorCode(null);
     try {
       await action();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Der lokale Vorgang ist fehlgeschlagen.";
-      setMessage(errorMessage);
+      const friendly = friendlyImportError(errorMessage);
+      setMessage(friendly.text);
+      setMessageIsError(true);
+      setTechnicalErrorCode(friendly.code);
       onError?.(errorMessage);
     } finally {
       setOperation("READY");
@@ -300,7 +374,7 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
     const unresolved = requirements.filter((requirement) => Boolean(requirement.required) && !Boolean(requirement.satisfied));
     for (const requirement of unresolved) {
       const suggestion = requirement.suggested_opening_balance as Json | undefined;
-      if (requirement.requirement_type !== "OPENING_BALANCE" || !suggestion?.eligible || !suggestion.suggested_value || !suggestion.source_reconciliation_id) {
+      if (requirement.requirement_type !== "OPENING_BALANCE" || !suggestion?.eligible || !suggestion.suggested_value) {
         await refresh(target.export_id);
         setStep(3);
         return false;
@@ -315,9 +389,13 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
         currency: String(suggestion.currency ?? "EUR"),
         source: "PREVIOUS_SYSTEM",
         confirmation: true,
-        comment: "Bestätigter Endsaldo der Vorperiode automatisch übernommen",
-        carry_forward_source_reconciliation_id: String(suggestion.source_reconciliation_id ?? ""),
+        comment: "Anfangssaldo aus der geprüften Vorperiode automatisch übernommen",
+        carry_forward_source_reconciliation_id: suggestion.source_reconciliation_id ?? null,
         suggested_value: value,
+        opening_balance_source: suggestion.source ?? "REPORTED_PRIOR_CLOSING_BALANCE",
+        source_period: suggestion.source_period ?? null,
+        source_account_id: suggestion.source_account_id ?? accountId,
+        source_projection_sequence: suggestion.source_projection_sequence ?? null,
       });
       setOpeningBalances((current) => ({ ...current, [accountId]: value }));
       setOpeningSuggestions((current) => ({ ...current, [accountId]: suggestion }));
@@ -364,7 +442,10 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Die lokale Dateiauswahl ist fehlgeschlagen.";
       setFormatRecoveryNeeded(needsFormatRecovery(errorMessage));
-      setMessage(errorMessage);
+      const friendly = friendlyImportError(errorMessage);
+      setMessage(friendly.text);
+      setMessageIsError(true);
+      setTechnicalErrorCode(friendly.code);
     }
   };
 
@@ -465,6 +546,12 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
 
   const confirmAnalysis = () => {
     if (!analysis) return;
+    if (!bankIdentifier.trim()) {
+      showValidationErrors({ bank_identifier: "Gib eine Bankkennung an." });
+      return;
+    }
+    setFieldErrors({});
+    setMessageIsError(false);
     setStep(2);
     setMessage("Bank, Zeitraum und erkannte Abschnitte wurden geprüft.");
   };
@@ -472,9 +559,10 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
   const createAccountFor = async (section: Section) => {
     const displayName = newAccountName[section.section_id]?.trim();
     if (!displayName) {
-      setMessage("Gib zuerst einen Anzeigenamen für das neue Konto ein.");
+      showValidationErrors({ [`account_name:${section.section_id}`]: "Gib einen Namen für das neue Konto ein." });
       return;
     }
+    clearFieldError(`account_name:${section.section_id}`);
     await run("EXECUTING", async () => {
       const response = await financeBridge.command("CreateAccount", {
         display_name: displayName,
@@ -496,16 +584,22 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
 
   const saveMappings = async () => {
     if (!analysis) return;
+    const errors: FieldErrors = {};
     const sectionMappings = analysis.sections.map((section) => {
       const skip = section.section_type === "UNKNOWN" || mappings[section.section_id] === "__SKIP__";
-      if (skip && !skipConfirmed[section.section_id]) throw new Error(`Das Überspringen von „${section.original_title}“ muss ausdrücklich bestätigt werden.`);
-      if (!skip && !mappings[section.section_id]) throw new Error(`Für „${section.original_title}“ fehlt ein lokales Konto.`);
+      if (skip && !skipConfirmed[section.section_id]) errors[`skip:${section.section_id}`] = "Bestätige ausdrücklich, dass dieser Abschnitt übersprungen werden soll.";
+      if (!skip && !mappings[section.section_id]) errors[`mapping:${section.section_id}`] = "Wähle ein bestehendes Konto oder lege ein neues an.";
       return {
         section_id: section.section_id,
         action: skip ? "SKIP_SECTION" : "USE_EXISTING_ACCOUNT",
         account_id: skip ? null : mappings[section.section_id],
       };
     });
+    if (Object.keys(errors).length) {
+      showValidationErrors(errors);
+      return;
+    }
+    setFieldErrors({});
     await run("EXECUTING", async () => {
       await financeBridge.command("MapImportSections", { analysis_id: analysis.analysis_id, section_mappings: sectionMappings });
       await refresh(analysis.export_id);
@@ -529,6 +623,40 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
 
   const saveInitialValues = async () => {
     if (!analysis) return;
+    const errors: FieldErrors = {};
+    for (const section of analysis.sections) {
+      const accountId = mappings[section.section_id] ?? section.mapped_account_id;
+      if (!accountId || accountId === "__SKIP__") continue;
+      if (section.section_type === "CHECKING" || section.section_type === "SAVINGS") {
+        const opening = openingBalances[accountId]?.trim() ?? "";
+        const closing = closingBalances[accountId]?.trim() ?? "";
+        if (!opening) errors[`opening:${accountId}`] = "Der Anfangssaldo ist erforderlich.";
+        else if (!isValidDecimal(opening)) errors[`opening:${accountId}`] = "Gib einen gültigen Betrag ein, zum Beispiel 1.234,56 oder 1234.56.";
+        if (closing && !isValidDecimal(closing)) errors[`closing:${accountId}`] = "Gib einen gültigen Betrag ein oder lasse das optionale Feld leer.";
+        const suggestion = openingSuggestions[accountId];
+        const suggestedValue = suggestion?.eligible ? String(suggestion.suggested_value ?? "") : "";
+        const deviates = Boolean(opening && suggestedValue && decimalValue(opening) !== decimalValue(suggestedValue));
+        if (deviates && !adjustmentReasons[accountId]?.trim()) errors[`reason:${accountId}`] = "Eine Begründung für die Abweichung ist erforderlich.";
+      }
+      if (section.section_type === "BROKERAGE") {
+        const rows = positions[accountId] ?? [];
+        if (!rows.length && !emptyPositions[accountId]) errors[`positions:${accountId}`] = "Erfasse mindestens eine Anfangsposition oder bestätige den leeren Bestand.";
+        rows.forEach((row, index) => {
+          if (!String(row.security_identifier ?? "").trim()) errors[`position:${accountId}:${index}:identifier`] = "Die Wertpapierkennung fehlt.";
+          if (!String(row.security_name ?? "").trim()) errors[`position:${accountId}:${index}:name`] = "Der Wertpapiername fehlt.";
+          const openingQuantity = String(row.opening_quantity ?? "").trim();
+          const closingQuantity = String(row.closing_quantity ?? "").trim();
+          if (!openingQuantity) errors[`position:${accountId}:${index}:opening`] = "Der Anfangsbestand fehlt.";
+          else if (!isValidDecimal(openingQuantity)) errors[`position:${accountId}:${index}:opening`] = "Gib einen gültigen Bestand ein.";
+          if (closingQuantity && !isValidDecimal(closingQuantity)) errors[`position:${accountId}:${index}:closing`] = "Gib einen gültigen Bestand ein oder lasse das Feld leer.";
+        });
+      }
+    }
+    if (Object.keys(errors).length) {
+      showValidationErrors(errors);
+      return;
+    }
+    setFieldErrors({});
     await run("EXECUTING", async () => {
       for (const section of analysis.sections) {
         const accountId = mappings[section.section_id];
@@ -537,25 +665,30 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
           if (!openingBalances[accountId]) throw new Error(`Der bestätigte Anfangssaldo für „${section.original_title}“ fehlt.`);
           const suggestion = openingSuggestions[accountId];
           const suggestedValue = suggestion?.eligible ? String(suggestion.suggested_value) : undefined;
-          const deviatesFromSuggestion = suggestedValue !== undefined && suggestedValue !== openingBalances[accountId];
+          const deviatesFromSuggestion = suggestedValue !== undefined && decimalValue(suggestedValue) !== decimalValue(openingBalances[accountId]);
           const reason = adjustmentReasons[accountId]?.trim();
           if (deviatesFromSuggestion && !reason) {
             throw new Error(`Für die Abweichung vom automatisch übernommenen Anfangssaldo bei „${section.original_title}“ ist eine Begründung erforderlich.`);
           }
           await financeBridge.command("RecordOpeningBalance", {
             account_id: accountId, balance_date: previousDay(analysis.period_start),
-            booked_balance: openingBalances[accountId], available_balance: null, currency: "EUR",
+            booked_balance: decimalValue(openingBalances[accountId]), available_balance: null, currency: "EUR",
             source: "MANUAL_ENTRY", confirmation: true, comment: "Im Importassistenten bestätigt",
             ...(suggestedValue !== undefined ? {
               suggested_value: suggestedValue,
-              carry_forward_source_reconciliation_id: String(suggestion?.source_reconciliation_id ?? ""),
+              carry_forward_source_reconciliation_id: suggestion?.source_reconciliation_id ?? null,
+              opening_balance_source: suggestion?.source ?? "REPORTED_PRIOR_CLOSING_BALANCE",
+              source_period: suggestion?.source_period ?? null,
+              source_account_id: suggestion?.source_account_id ?? accountId,
+              source_projection_sequence: suggestion?.source_projection_sequence ?? null,
             } : {}),
+            ...(suggestedValue === undefined ? { opening_balance_source: "MANUAL" } : {}),
             ...(deviatesFromSuggestion ? { adjustment_reason: reason } : {}),
           });
-          if (closingBalances[accountId]) {
+          if (closingBalances[accountId]?.trim()) {
             await financeBridge.command("RecordClosingBalance", {
               account_id: accountId, balance_date: analysis.period_end,
-              booked_balance: closingBalances[accountId], available_balance: null, currency: "EUR",
+              booked_balance: decimalValue(closingBalances[accountId]), available_balance: null, currency: "EUR",
               source: "BANK_EXPORT", confirmation: true,
             });
           }
@@ -571,14 +704,14 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
             await financeBridge.command("RecordOpeningSecurityPosition", {
               account_id: accountId, valuation_date: previousDay(analysis.period_start),
               security_identifier_type: row.security_identifier_type, security_identifier: row.security_identifier,
-              security_name: row.security_name, quantity: row.opening_quantity, valuation_price: "0",
+              security_name: row.security_name, quantity: decimalValue(String(row.opening_quantity)), valuation_price: "0",
               price_currency: "EUR", market_value: "0", valuation_source: "MANUAL_ENTRY", confirmation: true,
             });
             if (row.closing_quantity !== "") {
               await financeBridge.command("RecordClosingSecurityPosition", {
                 account_id: accountId, valuation_date: analysis.period_end,
                 security_identifier_type: row.security_identifier_type, security_identifier: row.security_identifier,
-                security_name: row.security_name, quantity: row.closing_quantity, confirmation: true,
+                security_name: row.security_name, quantity: decimalValue(String(row.closing_quantity)), confirmation: true,
               });
             }
           }
@@ -644,9 +777,17 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
     setDetail(response.data ?? null);
   };
   const resume = async (row: HistoryRow) => {
-    await refresh(row.export_id);
-    setDetail(null);
-    setMessage(`Import ${row.report_month} wird an der gespeicherten Stelle fortgesetzt.`);
+    await run("VALIDATING", async () => {
+      const restored = await refresh(row.export_id);
+      if (!restored) throw new Error("IMPORT_ANALYSIS_NOT_FOUND");
+      if (!restored.can_resume || restored.status === "FAILED") throw new Error("IMPORT_RESUME_NOT_ALLOWED");
+      if (restored.current_step === 4) await buildPreview(restored.analysis);
+      setDetail(null);
+      setHappyPath(false);
+      setMessageIsError(false);
+      setMessage(`Import ${row.report_month} wurde an der gespeicherten Stelle geöffnet.`);
+      workspaceTop.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    });
   };
 
   useEffect(() => {
@@ -699,7 +840,7 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
     return <section className="panel import-blocker" role="alert"><h2>Import nicht kompatibel</h2><p>Die installierte lokale Extension stellt den vollständigen 1.5.0-Importvertrag nicht bereit.</p><code>{incompatible.join(", ") || `Vertrag ${manifest.contract_version}`}</code></section>;
   }
 
-  return <div className="imports-workspace">
+  return <div className="imports-workspace" ref={workspaceTop}>
     <section className="import-hero panel">
       <span className="import-icon" aria-hidden="true">⇩</span>
       <div><h2>Monatlichen Bankexport importieren</h2><p>Eine lokale Datei, eine Bank, ein Berichtsmonat – mehrere getrennt geprüfte Kontoabschnitte.</p></div>
@@ -709,16 +850,16 @@ export function Imports({ uiMonth, manifest, focusExportId, focusView, onOpenRev
       {steps.map((title, index) => <li key={title} className={step === index + 1 ? "active" : step > index + 1 ? "complete" : ""} aria-current={step === index + 1 ? "step" : undefined}><span>{step > index + 1 ? "✓" : index + 1}</span><strong>{title}</strong>{index < steps.length - 1 && <i aria-hidden="true" />}</li>)}
     </ol>
     {operation !== "READY" && <div className="status-banner" role="status"><strong>{operation === "VALIDATING" ? "Lokale Prüfung läuft" : "Import wird verarbeitet"}</strong><span>Bitte diesen Arbeitsbereich geöffnet lassen.</span></div>}
-    {message && <div className="toast" role="status" aria-live="polite">{message}</div>}
+    {message && <div className={`toast${messageIsError ? " error" : ""}`} role={messageIsError ? "alert" : "status"} aria-live="polite"><span>{message}</span>{technicalErrorCode && <details><summary>Technische Details</summary><code>{technicalErrorCode}</code></details>}</div>}
     {unknownFormat && <ImportMappingEditor result={unknownFormat} mapping={editableMapping} validation={mappingValidation} comment={mappingComment} onComment={setMappingComment} allowAdditionalColumns={allowAdditionalColumns} onAllowAdditionalColumns={setAllowAdditionalColumns} onMapping={updateEditableMapping} onValidate={() => editableMapping && validateEditedMapping(editableMapping)} onConfirm={confirmEditedMapping} onReject={rejectEditedMapping} busy={busy} />}
     {wizard.state === "LOADING" && <section className="panel page-state"><span className="loader" /><p>Gespeicherten Importstand laden …</p></section>}
     {(wizard.state === "ERROR" || wizard.state === "INCOMPATIBLE_SCHEMA") && <section className="panel page-state error" role="alert"><h2>Importprojektion nicht verfügbar</h2><p>{wizard.error}</p><button className="secondary" onClick={() => refresh()}>Erneut versuchen</button></section>}
     {!analysis && !unknownFormat && wizard.state !== "LOADING" && <section className="panel import-empty"><h2>Neuen Import beginnen</h2><p>Wähle einen monatlichen CSV-Export. React erhält nur eine kurzlebige Dateireferenz, niemals den lokalen Pfad.</p><label>Bankkennung, falls nicht im Export enthalten<input value={bankIdentifier} onChange={(event) => setBankIdentifier(event.target.value)} placeholder="z. B. BANK_A" /></label><div className="empty-actions"><button className="primary" onClick={chooseFile}>Lokale CSV auswählen</button>{formatRecoveryNeeded && <button className="secondary" disabled={!bankIdentifier.trim()} onClick={chooseUnknownFile}>Formatproblem lösen</button>}</div></section>}
     {analysis && <>
       {uiMonth !== analysis.report_month && <div className="status-banner"><strong>Abweichender Auswertungsmonat</strong><span>UI: {uiMonth} · Importdatei: {analysis.report_month}. Importiert wird ausschließlich der Dateizeitraum.</span></div>}
-      {step === 1 && <AnalysisStep analysis={analysis} fileName={selectedFile?.display_name} bankIdentifier={bankIdentifier} onBankIdentifier={setBankIdentifier} onConfirm={confirmAnalysis} />}
-      {step === 2 && <MappingStep analysis={analysis} accounts={activeAccounts} mappings={mappings} skips={skipConfirmed} names={newAccountName} onMap={(id, value) => setMappings((current) => ({ ...current, [id]: value }))} onSkip={(id, value) => setSkipConfirmed((current) => ({ ...current, [id]: value }))} onName={(id, value) => setNewAccountName((current) => ({ ...current, [id]: value }))} onCreate={createAccountFor} onSave={saveMappings} busy={busy} />}
-      {step === 3 && <ValuesStep analysis={analysis} mappings={mappings} opening={openingBalances} closing={closingBalances} suggestions={openingSuggestions} reasons={adjustmentReasons} emptyPositions={emptyPositions} positions={positions} onOpening={(id, value) => setOpeningBalances((current) => ({ ...current, [id]: value }))} onClosing={(id, value) => setClosingBalances((current) => ({ ...current, [id]: value }))} onReason={(id, value) => setAdjustmentReasons((current) => ({ ...current, [id]: value }))} onEmpty={(id, value) => setEmptyPositions((current) => ({ ...current, [id]: value }))} onAddPosition={addPosition} onPosition={editPosition} onSave={saveInitialValues} busy={busy} />}
+      {step === 1 && <AnalysisStep analysis={analysis} fileName={selectedFile?.display_name} bankIdentifier={bankIdentifier} error={fieldErrors.bank_identifier} onBankIdentifier={(value) => { setBankIdentifier(value); clearFieldError("bank_identifier"); }} onConfirm={confirmAnalysis} />}
+      {step === 2 && <MappingStep analysis={analysis} accounts={activeAccounts} mappings={mappings} skips={skipConfirmed} names={newAccountName} errors={fieldErrors} onMap={(id, value) => { setMappings((current) => ({ ...current, [id]: value })); clearFieldError(`mapping:${id}`); clearFieldError(`skip:${id}`); }} onSkip={(id, value) => { setSkipConfirmed((current) => ({ ...current, [id]: value })); clearFieldError(`skip:${id}`); }} onName={(id, value) => { setNewAccountName((current) => ({ ...current, [id]: value })); clearFieldError(`account_name:${id}`); }} onCreate={createAccountFor} onSave={saveMappings} busy={busy} />}
+      {step === 3 && <ValuesStep analysis={analysis} mappings={mappings} opening={openingBalances} closing={closingBalances} suggestions={openingSuggestions} reasons={adjustmentReasons} emptyPositions={emptyPositions} positions={positions} errors={fieldErrors} onOpening={(id, value) => { setOpeningBalances((current) => ({ ...current, [id]: value })); clearFieldError(`opening:${id}`); }} onClosing={(id, value) => { setClosingBalances((current) => ({ ...current, [id]: value })); clearFieldError(`closing:${id}`); }} onReason={(id, value) => { setAdjustmentReasons((current) => ({ ...current, [id]: value })); clearFieldError(`reason:${id}`); }} onEmpty={(id, value) => { setEmptyPositions((current) => ({ ...current, [id]: value })); clearFieldError(`positions:${id}`); }} onAddPosition={addPosition} onPosition={(id, index, field, value) => { editPosition(id, index, field, value); const suffix = field === "security_identifier" ? "identifier" : field === "security_name" ? "name" : field === "opening_quantity" ? "opening" : field === "closing_quantity" ? "closing" : field; clearFieldError(`position:${id}:${index}:${suffix}`); }} onSave={saveInitialValues} busy={busy} />}
       {step === 4 && happyPath && <HappyPathPreview analysis={analysis} previews={previews} validation={validation} requirements={wizard.data?.requirements ?? []} onExecute={() => void executeImport(true)} busy={busy} />}
       {step === 4 && !happyPath && <PreviewStep analysis={analysis} previews={previews} validation={validation} confirmed={previewConfirmed} onConfirmed={setPreviewConfirmed} onExecute={() => void executeImport()} busy={busy} />}
       {step === 5 && <ResultStep analysis={analysis} result={result} onReconcile={reconcile} onRelation={relationAction} onOpenReviews={onOpenReviews} busy={busy} />}
@@ -797,12 +938,12 @@ function ImportMappingEditor({ result, mapping, validation, comment, onComment, 
   </section>;
 }
 
-function AnalysisStep({ analysis, fileName, bankIdentifier, onBankIdentifier, onConfirm }: { analysis: Analysis; fileName?: string; bankIdentifier: string; onBankIdentifier: (value: string) => void; onConfirm: () => void }) {
+function AnalysisStep({ analysis, fileName, bankIdentifier, error, onBankIdentifier, onConfirm }: { analysis: Analysis; fileName?: string; bankIdentifier: string; error?: string; onBankIdentifier: (value: string) => void; onConfirm: () => void }) {
   return <section className="panel import-stage">
     <header><span className="eyebrow">SCHRITT 1</span><h2>Datei analysieren</h2><p>Prüfe Bank, Monat, Parserprofil und Abschnittsstruktur.</p></header>
     <dl className="import-facts">
       <div className="fact-file"><dt>Datei</dt><dd>{fileName ?? "Gespeicherte Dateireferenz"}</dd></div>
-      <div className="fact-bank"><dt>Bank</dt><dd><input value={bankIdentifier} onChange={(event) => onBankIdentifier(event.target.value)} aria-label="Bankkennung" /></dd></div>
+      <div className="fact-bank"><dt>Bank</dt><dd><input value={bankIdentifier} onChange={(event) => onBankIdentifier(event.target.value)} aria-label="Bankkennung" aria-invalid={Boolean(error)} aria-describedby={error ? "bank-identifier-error" : undefined} />{error && <small className="field-error" id="bank-identifier-error" role="alert">{error}</small>}</dd></div>
       <div className="fact-month"><dt>Berichtsmonat</dt><dd>{analysis.report_month}</dd></div>
       <div className="fact-period"><dt>Zeitraum</dt><dd>{analysis.period_start} – {analysis.period_end}</dd></div>
       <div className="fact-profile"><dt>Parserprofil</dt><dd>{analysis.import_profile}<small>Version {analysis.profile_version}</small></dd></div>
@@ -810,11 +951,11 @@ function AnalysisStep({ analysis, fileName, bankIdentifier, onBankIdentifier, on
       <div className="fact-content"><dt>Dateiinhalt</dt><dd><code>{shortHash(analysis.source_file_hash)}</code><small>{analysis.file_size.toLocaleString("de-DE")} Bytes</small></dd></div>
     </dl>
     <div className="section-overview"><div><h3>Erkannte Kontoabschnitte</h3><p>{analysis.sections.length} Abschnitt{analysis.sections.length === 1 ? "" : "e"} wurden getrennt geprüft.</p></div><div className="section-cards">{analysis.sections.map((section) => <article key={section.section_id}><div><strong>{section.original_title}</strong><span className="status-badge">{section.section_type}</span></div><p><b>{section.record_count}</b> Datensätze · {section.empty ? "leer und gültig" : "Daten erkannt"}</p>{section.account_reference && <small>{section.account_reference}</small>}{section.warnings.map((warning) => <small className="warning" key={warning}>{warning}</small>)}</article>)}</div></div>
-    <footer><button className="primary" disabled={!bankIdentifier.trim()} onClick={onConfirm}>Bank und Monat bestätigen</button></footer>
+    <footer><button className="primary" onClick={onConfirm}>Bank und Monat bestätigen</button></footer>
   </section>;
 }
 
-function MappingStep({ analysis, accounts, mappings, skips, names, onMap, onSkip, onName, onCreate, onSave, busy }: { analysis: Analysis; accounts: Account[]; mappings: Record<string, string>; skips: Record<string, boolean>; names: Record<string, string>; onMap: (id: string, value: string) => void; onSkip: (id: string, value: boolean) => void; onName: (id: string, value: string) => void; onCreate: (section: Section) => void; onSave: () => void; busy: boolean }) {
+function MappingStep({ analysis, accounts, mappings, skips, names, errors, onMap, onSkip, onName, onCreate, onSave, busy }: { analysis: Analysis; accounts: Account[]; mappings: Record<string, string>; skips: Record<string, boolean>; names: Record<string, string>; errors: FieldErrors; onMap: (id: string, value: string) => void; onSkip: (id: string, value: boolean) => void; onName: (id: string, value: string) => void; onCreate: (section: Section) => void; onSave: () => void; busy: boolean }) {
   return <section className="panel import-stage">
     <header><span className="eyebrow">SCHRITT 2</span><h2>Konten zuordnen</h2><p>Ordne jeden erkannten Abschnitt einem bestehenden Konto zu oder lege direkt ein neues an.</p></header>
     <div className="mapping-list">{analysis.sections.map((section) => {
@@ -823,8 +964,8 @@ function MappingStep({ analysis, accounts, mappings, skips, names, onMap, onSkip
       return <article key={section.section_id}>
         <div className="mapping-section"><span className="status-badge">{section.section_type}</span><strong>{section.original_title}</strong><small>{section.account_reference ?? "Keine Kontoreferenz im Export"}</small></div>
         <div className="mapping-controls">
-          <label>Bestehendes Konto<select value={section.section_type === "UNKNOWN" ? "__SKIP__" : mappings[section.section_id] ?? ""} onChange={(event) => onMap(section.section_id, event.target.value)}><option value="">Konto auswählen …</option>{compatible.map((account) => <option value={account.account_id} key={account.account_id}>{account.display_name} · {account.masked_reference ?? account.institution}</option>)}<option value="__SKIP__">Abschnitt bewusst überspringen</option></select></label>
-          {skipping ? <label className="danger-confirm"><input type="checkbox" checked={Boolean(skips[section.section_id])} onChange={(event) => onSkip(section.section_id, event.target.checked)} /> Überspringen ausdrücklich bestätigen</label> : <div className="inline-create"><label>Oder neues Konto anlegen<input placeholder="Kontoname, z. B. Girokonto" value={names[section.section_id] ?? ""} onChange={(event) => onName(section.section_id, event.target.value)} /></label><button className="secondary small" disabled={!names[section.section_id]?.trim()} onClick={() => onCreate(section)}>Konto anlegen</button></div>}
+          <label>Bestehendes Konto<select value={section.section_type === "UNKNOWN" ? "__SKIP__" : mappings[section.section_id] ?? ""} onChange={(event) => onMap(section.section_id, event.target.value)} aria-invalid={Boolean(errors[`mapping:${section.section_id}`])}><option value="">Konto auswählen …</option>{compatible.map((account) => <option value={account.account_id} key={account.account_id}>{account.display_name} · {account.masked_reference ?? account.institution}</option>)}<option value="__SKIP__">Abschnitt bewusst überspringen</option></select>{errors[`mapping:${section.section_id}`] && <small className="field-error" role="alert">{errors[`mapping:${section.section_id}`]}</small>}</label>
+          {skipping ? <label className="danger-confirm"><span><input type="checkbox" checked={Boolean(skips[section.section_id])} onChange={(event) => onSkip(section.section_id, event.target.checked)} aria-invalid={Boolean(errors[`skip:${section.section_id}`])} /> Überspringen ausdrücklich bestätigen</span>{errors[`skip:${section.section_id}`] && <small className="field-error" role="alert">{errors[`skip:${section.section_id}`]}</small>}</label> : <div className="inline-create"><label>Oder neues Konto anlegen<input placeholder="Kontoname, z. B. Girokonto" value={names[section.section_id] ?? ""} onChange={(event) => onName(section.section_id, event.target.value)} aria-invalid={Boolean(errors[`account_name:${section.section_id}`])} />{errors[`account_name:${section.section_id}`] && <small className="field-error" role="alert">{errors[`account_name:${section.section_id}`]}</small>}</label><button className="secondary small" onClick={() => onCreate(section)}>Konto anlegen</button></div>}
         </div>
       </article>;
     })}</div>
@@ -832,7 +973,7 @@ function MappingStep({ analysis, accounts, mappings, skips, names, onMap, onSkip
   </section>;
 }
 
-function ValuesStep({ analysis, mappings, opening, closing, suggestions, reasons, emptyPositions, positions, onOpening, onClosing, onReason, onEmpty, onAddPosition, onPosition, onSave, busy }: { analysis: Analysis; mappings: Record<string, string>; opening: Record<string, string>; closing: Record<string, string>; suggestions: Record<string, Json>; reasons: Record<string, string>; emptyPositions: Record<string, boolean>; positions: Record<string, Json[]>; onOpening: (id: string, value: string) => void; onClosing: (id: string, value: string) => void; onReason: (id: string, value: string) => void; onEmpty: (id: string, value: boolean) => void; onAddPosition: (id: string) => void; onPosition: (id: string, index: number, field: string, value: string) => void; onSave: () => void; busy: boolean }) {
+function ValuesStep({ analysis, mappings, opening, closing, suggestions, reasons, emptyPositions, positions, errors, onOpening, onClosing, onReason, onEmpty, onAddPosition, onPosition, onSave, busy }: { analysis: Analysis; mappings: Record<string, string>; opening: Record<string, string>; closing: Record<string, string>; suggestions: Record<string, Json>; reasons: Record<string, string>; emptyPositions: Record<string, boolean>; positions: Record<string, Json[]>; errors: FieldErrors; onOpening: (id: string, value: string) => void; onClosing: (id: string, value: string) => void; onReason: (id: string, value: string) => void; onEmpty: (id: string, value: boolean) => void; onAddPosition: (id: string) => void; onPosition: (id: string, index: number, field: string, value: string) => void; onSave: () => void; busy: boolean }) {
   return <section className="panel import-stage"><header><span className="eyebrow">SCHRITT 3</span><h2>Anfangswerte prüfen</h2><p>Salden und Depotbestände werden je Konto getrennt bestätigt.</p></header><div className="values-list">{analysis.sections.map((section) => {
     const accountId = mappings[section.section_id] ?? section.mapped_account_id ?? "";
     if (!accountId || accountId === "__SKIP__") return null;
@@ -840,20 +981,20 @@ function ValuesStep({ analysis, mappings, opening, closing, suggestions, reasons
       const suggestion = suggestions[accountId];
       const eligible = Boolean(suggestion?.eligible);
       const suggestedValue = eligible ? String(suggestion.suggested_value) : undefined;
-      const deviates = suggestedValue !== undefined && suggestedValue !== (opening[accountId] ?? "");
+      const deviates = suggestedValue !== undefined && decimalValue(suggestedValue) !== decimalValue(opening[accountId] ?? "");
       return <article key={section.section_id}>
         <h3>{section.original_title}</h3>
         <div className="field-grid">
-          <label>Anfangssaldo am {previousDay(analysis.period_start)}<input inputMode="decimal" value={opening[accountId] ?? ""} onChange={(event) => onOpening(accountId, event.target.value)} /></label>
-          <label>Gemeldeter Endsaldo am {analysis.period_end}<input inputMode="decimal" value={closing[accountId] ?? ""} onChange={(event) => onClosing(accountId, event.target.value)} placeholder="optional, für Abgleich" /></label>
+          <label>Anfangssaldo am {previousDay(analysis.period_start)} <span className="required-mark">Pflichtfeld</span><input inputMode="decimal" value={opening[accountId] ?? ""} onChange={(event) => onOpening(accountId, event.target.value)} aria-invalid={Boolean(errors[`opening:${accountId}`])} />{errors[`opening:${accountId}`] && <small className="field-error" role="alert">{errors[`opening:${accountId}`]}</small>}</label>
+          <label>Gemeldeter Endsaldo am {analysis.period_end} <span className="optional-mark">optional</span><input inputMode="decimal" value={closing[accountId] ?? ""} onChange={(event) => onClosing(accountId, event.target.value)} placeholder="z. B. 1.234,56" aria-invalid={Boolean(errors[`closing:${accountId}`])} />{errors[`closing:${accountId}`] && <small className="field-error" role="alert">{errors[`closing:${accountId}`]}</small>}</label>
         </div>
-        {eligible ? <p className="opening-balance-hint success">Automatisch aus dem bestätigten Endsaldo des Vormonats übernommen.<br /><small>Quelle: Bestätigter Endsaldo {String(suggestion.period_end ?? "")}</small></p>
+        {eligible ? <div className="opening-balance-hint success"><strong>Automatisch ermittelt</strong><br /><small>Quelle: {suggestion.source === "CALCULATED_PRIOR_CLOSING_BALANCE" ? "Berechneter" : "Bestätigter gemeldeter"} Endsaldo {String(suggestion.source_period ?? suggestion.period_end ?? "")}</small>{Boolean(suggestion.calculation) && <details><summary>Berechnung anzeigen</summary><dl className="balance-calculation"><div><dt>Anfangssaldo</dt><dd>{String((suggestion.calculation as Json).opening_balance ?? "–")}</dd></div><div><dt>Saldenbewegungen</dt><dd>{String((suggestion.calculation as Json).balance_relevant_movements ?? "–")}</dd></div><div><dt>Berechneter Endsaldo</dt><dd>{String((suggestion.calculation as Json).calculated_closing_balance ?? "–")}</dd></div></dl></details>}</div>
           : suggestion && <p className="opening-balance-hint warning">Der Anfangssaldo konnte nicht automatisch übernommen werden.<br /><small>{OPENING_BALANCE_REASON_TEXT[String(suggestion.reason_code ?? "")] ?? "Der vorherige Monat besitzt keinen abschließend bestätigten Endsaldo."}</small></p>}
-        {deviates && <label className="danger-confirm">Begründung für die Abweichung vom übernommenen Anfangssaldo<textarea required value={reasons[accountId] ?? ""} onChange={(event) => onReason(accountId, event.target.value)} /></label>}
+        {deviates && <label className="danger-confirm">Begründung für die Abweichung vom übernommenen Anfangssaldo <span className="required-mark">Pflichtfeld</span><textarea required value={reasons[accountId] ?? ""} onChange={(event) => onReason(accountId, event.target.value)} aria-invalid={Boolean(errors[`reason:${accountId}`])} />{errors[`reason:${accountId}`] && <small className="field-error" role="alert">{errors[`reason:${accountId}`]}</small>}</label>}
       </article>;
     }
     const rows = positions[accountId] ?? [];
-    return <article key={section.section_id}><h3>{section.original_title}</h3><label className="danger-confirm"><input type="checkbox" checked={Boolean(emptyPositions[accountId])} onChange={(event) => onEmpty(accountId, event.target.checked)} /> Vor dem Berichtsmonat waren ausdrücklich keine Positionen vorhanden.</label>{rows.map((row, index) => <div className="position-row" key={`${accountId}-${index}`}><select value={String(row.security_identifier_type)} onChange={(event) => onPosition(accountId, index, "security_identifier_type", event.target.value)}><option>ISIN</option><option>WKN</option><option>OTHER</option></select><input aria-label="Wertpapierkennung" placeholder="Kennung" value={String(row.security_identifier)} onChange={(event) => onPosition(accountId, index, "security_identifier", event.target.value)} /><input aria-label="Wertpapiername" placeholder="Name" value={String(row.security_name)} onChange={(event) => onPosition(accountId, index, "security_name", event.target.value)} /><input aria-label="Anfangsbestand" placeholder="Anfang" inputMode="decimal" value={String(row.opening_quantity)} onChange={(event) => onPosition(accountId, index, "opening_quantity", event.target.value)} /><input aria-label="Endbestand" placeholder="Ende" inputMode="decimal" value={String(row.closing_quantity)} onChange={(event) => onPosition(accountId, index, "closing_quantity", event.target.value)} /></div>)}<button className="secondary small" onClick={() => onAddPosition(accountId)}>Position hinzufügen</button></article>;
+    return <article key={section.section_id}><h3>{section.original_title}</h3><label className="danger-confirm"><span><input type="checkbox" checked={Boolean(emptyPositions[accountId])} onChange={(event) => onEmpty(accountId, event.target.checked)} /> Vor dem Berichtsmonat waren ausdrücklich keine Positionen vorhanden.</span>{errors[`positions:${accountId}`] && <small className="field-error" role="alert">{errors[`positions:${accountId}`]}</small>}</label>{rows.map((row, index) => <div className="position-entry" key={`${accountId}-${index}`}><div className="position-row"><select value={String(row.security_identifier_type)} onChange={(event) => onPosition(accountId, index, "security_identifier_type", event.target.value)}><option>ISIN</option><option>WKN</option><option>OTHER</option></select><input aria-label="Wertpapierkennung" placeholder="Kennung (Pflichtfeld)" value={String(row.security_identifier)} onChange={(event) => onPosition(accountId, index, "security_identifier", event.target.value)} aria-invalid={Boolean(errors[`position:${accountId}:${index}:identifier`])} /><input aria-label="Wertpapiername" placeholder="Name (Pflichtfeld)" value={String(row.security_name)} onChange={(event) => onPosition(accountId, index, "security_name", event.target.value)} aria-invalid={Boolean(errors[`position:${accountId}:${index}:name`])} /><input aria-label="Anfangsbestand" placeholder="Anfang (Pflichtfeld)" inputMode="decimal" value={String(row.opening_quantity)} onChange={(event) => onPosition(accountId, index, "opening_quantity", event.target.value)} aria-invalid={Boolean(errors[`position:${accountId}:${index}:opening`])} /><input aria-label="Endbestand" placeholder="Ende (optional)" inputMode="decimal" value={String(row.closing_quantity)} onChange={(event) => onPosition(accountId, index, "closing_quantity", event.target.value)} aria-invalid={Boolean(errors[`position:${accountId}:${index}:closing`])} /></div>{Object.entries(errors).filter(([key]) => key.startsWith(`position:${accountId}:${index}:`)).map(([key, value]) => <small className="field-error" role="alert" key={key}>{value}</small>)}</div>)}<button className="secondary small" onClick={() => onAddPosition(accountId)}>Position hinzufügen</button></article>;
   })}</div><footer><button className="primary" disabled={busy} onClick={onSave}>Anfangswerte bestätigen und Vorschau erstellen</button></footer></section>;
 }
 
@@ -869,7 +1010,7 @@ function HappyPathPreview({ analysis, previews, validation, requirements, onExec
       <div><strong>{records}</strong><span>Buchungen</span></div>
       <div><strong>✓</strong><span>Salden vollständig</span></div>
     </div>
-    {carried > 0 && <p className="carry-forward-note">{carried === 1 ? "Ein Anfangssaldo wurde" : `${carried} Anfangssalden wurden`} aus bestätigten Endsalden der Vorperiode übernommen.</p>}
+    {carried > 0 && <p className="carry-forward-note">{carried === 1 ? "Ein Anfangssaldo wurde" : `${carried} Anfangssalden wurden`} aus den geprüften Endsalden der Vorperiode übernommen.</p>}
     <div className="happy-ready"><span aria-hidden="true">✓</span><div><strong>Alles bereit.</strong><small>Die Vorschau wurde lokal geprüft. Der Import beginnt erst nach deiner Bestätigung.</small></div></div>
     <div className="happy-import-actions"><button className="primary" disabled={busy} onClick={onExecute}>Importieren</button></div>
     <details className="import-technical-details"><summary>Details anzeigen</summary>
@@ -907,7 +1048,7 @@ function ResultStep({ analysis, result, onReconcile, onRelation, onOpenReviews, 
   return <section className="panel import-stage">
     <header><span className="eyebrow">IMPORTERGEBNIS</span><h2>{completed ? "Import abgeschlossen" : "Import verarbeitet"}</h2><p>{transactionCount} Buchungen importiert<br />{accountCount} {accountCount === 1 ? "Konto" : "Konten"} verarbeitet</p></header>
     <div className={`result-status ${reviewCount === 0 && completed ? "success" : "review"}`}><span aria-hidden="true">{reviewCount === 0 && completed ? "✓" : "!"}</span><div><strong>{reviewCount === 0 ? "Keine weitere Prüfung erforderlich" : `${reviewCount} ${reviewCount === 1 ? "Punkt benötigt" : "Punkte benötigen"} Prüfung`}</strong><small>Der Import und alle Entscheidungen bleiben vollständig auditierbar.</small></div></div>
-    {reviewCount > 0 && onOpenReviews && <div className="result-primary-action"><button className="primary" onClick={onOpenReviews}>Prüfung öffnen</button></div>}
+    {reviewCount > 0 && onOpenReviews && <div className="result-primary-action"><button className="primary" onClick={onOpenReviews}>Arbeitsbereich öffnen</button></div>}
     <details className="import-technical-details result-details"><summary>Importdetails</summary>
       <div className="result-metrics"><div><span>Kontobuchungen</span><strong>{String(result?.normalized_transaction_count ?? 0)}</strong><small>normalisiert importiert</small></div><div><span>Depotbuchungen</span><strong>{String(result?.security_transaction_count ?? 0)}</strong><small>Wertpapierbewegungen</small></div><div><span>Relationsvorschläge</span><strong>{relations.length}</strong><small>erkannt</small></div><div><span>Kontoabschnitte</span><strong>{analysis.sections.length}</strong><small>getrennt verarbeitet</small></div></div>
       <div className="result-sections">{analysis.sections.map((section) => {

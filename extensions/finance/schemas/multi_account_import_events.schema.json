@@ -179,7 +179,11 @@
         "comment": { "type": ["string", "null"] }, "recorded_at": { "type": "string", "format": "date-time" },
         "carry_forward_source_reconciliation_id": { "type": ["string", "null"] },
         "suggested_value": { "type": ["string", "null"] },
-        "adjustment_reason": { "type": ["string", "null"] }
+        "adjustment_reason": { "type": ["string", "null"] },
+        "opening_balance_source": { "enum": ["MANUAL", "REPORTED_PRIOR_CLOSING_BALANCE", "CALCULATED_PRIOR_CLOSING_BALANCE", null] },
+        "source_period": { "type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}$" },
+        "source_account_id": { "type": ["string", "null"] },
+        "source_projection_sequence": { "type": ["integer", "null"], "minimum": 0 }
       }
     },
     "OpeningBalanceRecorded": { "properties": { "event_type": { "const": "OpeningBalanceRecorded" }, "aggregate_type": { "const": "OpeningBalance" }, "payload": { "$ref": "#/$defs/BalancePayload" } }, "required": ["event_type", "aggregate_type", "payload"] },

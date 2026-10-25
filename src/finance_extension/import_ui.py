@@ -248,16 +248,16 @@ def import_wizard_state(
     has_runs = any(
         run["export_id"] == selected_id for run in imported_section_runs(store).values()
     )
+    status = analysis["status"]
     if not all_mapped:
         current_step = 2
     elif not requirements_satisfied:
         current_step = 3
-    elif not has_runs:
+    elif not has_runs or status == "PARTIALLY_COMPLETED":
         current_step = 4
     else:
         current_step = 5
     completed_steps = list(range(1, current_step))
-    status = analysis["status"]
     return {
         "export_id": selected_id,
         "current_step": current_step,

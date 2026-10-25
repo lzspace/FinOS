@@ -14,6 +14,7 @@ import type {
   AccountImportList,
   AccountOverviewList,
   AccountOverviewRow,
+  AccountOverviewStatus,
   AccountPositionList,
   AccountPositionRow,
   AccountReconciliationList,
@@ -32,6 +33,8 @@ import type {
   NetWorthOverview,
   KeyStatus,
   MigrationStatus,
+  MonthlyWorkspaceMonth,
+  MonthlyWorkspaceStatus,
   PeriodMode,
   PeriodSelection,
   RecurringPattern,
@@ -52,6 +55,7 @@ type ReviewItem = {
   review_id: string; review_type: ReviewType; severity: "ERROR" | "WARNING" | "INFO";
   entity_id: string; entity_type: string; title: string; description: string; created_at: string;
   account_ids: string[];
+  period?: string | null;
   action_target: { page: PageId; view: string; entity_id: string };
 };
 type ReviewInbox = {
@@ -62,6 +66,47 @@ type ReviewInbox = {
   next_cursor?: string | null;
   has_more?: boolean;
   page_size?: number;
+};
+type DashboardView = "CURRENT" | "WORKSPACE";
+type AnalysisWindow = 3 | 6 | 12 | "ALL";
+type WorkspaceMonthStatus = "COMPLETE" | "REVIEW" | "MISSING" | "OUTSIDE";
+type WorkspaceMonth = {
+  month: string;
+  label: string;
+  status: WorkspaceMonthStatus;
+  reviews: ReviewItem[];
+  isCurrent: boolean;
+  details?: MonthlyWorkspaceMonth;
+};
+type CategoryBreakdown = {
+  period: string;
+  categories: Record<string, {
+    category_code: string;
+    gross_expense: string;
+    refund_amount: string;
+    effective_expense: string;
+    transaction_count: number;
+  }>;
+};
+type OpeningBalanceSuggestion = {
+  eligible: boolean;
+  status: string;
+  reason_code: string;
+  period_start: string;
+  period_end: string;
+  suggested_value?: string;
+  currency?: string;
+  source?: "REPORTED_PRIOR_CLOSING_BALANCE" | "CALCULATED_PRIOR_CLOSING_BALANCE";
+  source_period?: string;
+  source_account_id?: string;
+  source_projection_sequence?: number;
+  source_reconciliation_id?: string | null;
+  calculation?: {
+    opening_balance?: string;
+    balance_relevant_movements?: string;
+    calculated_closing_balance?: string;
+    relevant_transaction_count?: number;
+  };
 };
 type NavigationTarget = ReviewItem["action_target"] | null;
 
@@ -102,10 +147,34 @@ export const localRuntimeSummary = (status: Partial<LocalModelStatus> | undefine
   version: status?.runtime_details?.version ?? "nicht eingerichtet",
   integrity: status?.runtime_details?.integrity_status ?? "MISSING",
 });
+export const effectiveAccountOverviewStatus = (
+  status: AccountOverviewStatus,
+  freshness: AccountOverviewRow["data_freshness"],
+  hasRecordedBalance: boolean,
+): AccountOverviewStatus => status === "MISSING_BALANCE" && hasRecordedBalance
+  ? freshness === "STALE" ? "STALE" : "REVIEW_REQUIRED"
+  : status;
 const relationStatusLabel = (value: string) => value === "NONE" ? "Nicht erkannt" : label(value);
 const localISODate = (value = new Date()) => `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
+const previousISODate = (value: string) => {
+  const point = new Date(`${value}T12:00:00`);
+  point.setDate(point.getDate() - 1);
+  return localISODate(point);
+};
+const normalizedDecimal = (value: string) => {
+  const compact = value.trim().replaceAll(" ", "");
+  return compact.includes(",") ? compact.replaceAll(".", "").replace(",", ".") : compact;
+};
+const OPENING_SUGGESTION_REASON: Record<string, string> = {
+  MISSING_PRIOR_OPENING_BALANCE: "Im Vormonat fehlt ein bestätigter Anfangssaldo.",
+  PRIOR_IMPORT_INCOMPLETE: "Der Import des Vormonats ist noch nicht vollständig abgeschlossen.",
+  UNRESOLVED_DIFFERENCE: "Im Vormonat besteht noch eine ungeklärte Saldenabweichung.",
+  UNRESOLVED_DUPLICATES: "Im Vormonat müssen zunächst mögliche Dubletten geprüft werden.",
+  INCONSISTENT_PROJECTION_DATA: "Die Daten des Vormonats sind noch nicht vollständig konsistent.",
+  CURRENCY_MISMATCH: "Die Währung des vorherigen Saldos passt nicht zum Konto.",
+};
 
-function useFinanceQuery<T>(name: string, payload: Record<string, unknown> = {}, enabled = true): QueryResult<T> {
+function useFinanceQuery<T>(name: string, payload: Record<string, unknown> = {}, enabled = true, refreshToken = 0): QueryResult<T> {
   const signature = JSON.stringify(payload);
   const [result, setResult] = useState<QueryResult<T>>({ state: "LOADING" });
   useEffect(() => {
@@ -122,7 +191,7 @@ function useFinanceQuery<T>(name: string, payload: Record<string, unknown> = {},
         error: error instanceof Error ? error.message : "Unbekannter Fehler",
       }));
     return () => { active = false; };
-  }, [enabled, name, signature]);
+  }, [enabled, name, refreshToken, signature]);
   return result;
 }
 
@@ -156,6 +225,31 @@ function useModalFocus(first: RefObject<HTMLButtonElement | null>, onClose: () =
 const MONTH_NAMES = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
 const pad2 = (value: number) => String(value).padStart(2, "0");
 const monthEnd = (year: number, month: number) => new Date(year, month, 0).getDate();
+const monthPeriod = (year: number, month: number): PeriodSelection => ({
+  mode: "MONTH",
+  start_date: `${year}-${pad2(month)}-01`,
+  end_date: `${year}-${pad2(month)}-${pad2(monthEnd(year, month))}`,
+  timezone: "Europe/Berlin",
+  display_label: `${MONTH_NAMES[month - 1]} ${year}`,
+  aggregation: "DAY",
+  comparison_period: null,
+});
+const shiftMonthKey = (value: string, offset: number) => {
+  const [year, month] = value.split("-").map(Number);
+  const point = new Date(year, month - 1 + offset, 1, 12);
+  return `${point.getFullYear()}-${pad2(point.getMonth() + 1)}`;
+};
+const nextMonth = (value: string) => shiftMonthKey(value, 1);
+const monthKeysBetween = (start: string, end: string) => {
+  const months: string[] = [];
+  for (let value = start; value <= end && months.length < 240; value = nextMonth(value)) months.push(value);
+  return months;
+};
+const reviewMonth = (item: ReviewItem) => {
+  if (item.period) return item.period;
+  const explicit = `${item.entity_id} ${item.title} ${item.description}`.match(/\b\d{4}-(?:0[1-9]|1[0-2])\b/)?.[0];
+  return explicit ?? item.created_at.slice(0, 7);
+};
 const MAX_CUSTOM_RANGE_DAYS = 1096;
 
 const parseLocalISODate = (value: string): Date | null => {
@@ -323,6 +417,12 @@ export function App() {
   const openReviews = reviewInbox.envelope?.data.total_open ?? 0;
   const navigate = (nextPage: PageId, target: NavigationTarget = null) => {
     if (nextPage === "reviews") setReviewRefresh((value) => value + 1);
+    if (nextPage === "imports" && target?.view === "month" && /^\d{4}-\d{2}$/.test(target.entity_id)) {
+      const [targetYear, targetMonth] = target.entity_id.split("-").map(Number);
+      periodControls.setMode("MONTH");
+      periodControls.setYear(targetYear);
+      periodControls.setMonth(targetMonth);
+    }
     setNavigationTarget(target);
     setPage(nextPage);
   };
@@ -364,16 +464,18 @@ export function App() {
       <main className="content" id="main-content">
         <header className="topbar">
           <div><span className="eyebrow">PRIVATER ARBEITSBEREICH</span><h1>{navigation.find((item) => item.id === page)?.text}</h1></div>
-          {page !== "settings" && page !== "imports" && <PeriodSelector controls={periodControls} />}
+          {page !== "overview" && page !== "settings" && page !== "imports" && page !== "reviews" && (
+            <PeriodSelector controls={periodControls} />
+          )}
         </header>
-        {page === "overview" && <Overview period={periodControls.period} periodPayload={periodControls.payload} reviewInbox={reviewInbox} onNavigate={(next) => navigate(next)} />}
+        {page === "overview" && <Overview period={periodControls.period} periodPayload={periodControls.payload} reviewInbox={reviewInbox} onNavigate={navigate} />}
         {page === "accounts" && <AccountsOverview period={periodControls.period} periodPayload={periodControls.payload} focusId={navigationTarget?.page === "accounts" ? navigationTarget.entity_id : undefined} focusView={navigationTarget?.page === "accounts" ? navigationTarget.view : undefined} onNavigate={navigate} />}
         {page === "transactions" && <Transactions month={month} periodPayload={periodControls.payload} focusId={navigationTarget?.page === "transactions" ? navigationTarget.entity_id : undefined} onNavigate={navigate} />}
         {page === "categories" && <Categories month={month} initialTab={navigationTarget?.page === "categories" ? navigationTarget.view : undefined} focusId={navigationTarget?.page === "categories" ? navigationTarget.entity_id : undefined} />}
         {page === "recurring" && <Recurring month={month} />}
         {page === "forecast" && <Forecast month={month} />}
         {page === "wealth" && <Wealth asOf={asOf} />}
-        {page === "reviews" && <Reviews inbox={reviewInbox} focusAccountId={navigationTarget?.page === "reviews" && navigationTarget.view === "account" ? navigationTarget.entity_id : undefined} onOpen={(target) => navigate(target.page, target)} />}
+        {page === "reviews" && <Workspace inbox={reviewInbox} focusAccountId={navigationTarget?.page === "reviews" && navigationTarget.view === "account" ? navigationTarget.entity_id : undefined} onOpen={(target) => navigate(target.page, target)} />}
         {page === "imports" && <Imports uiMonth={month} manifest={manifest.envelope.data} focusExportId={navigationTarget?.page === "imports" ? navigationTarget.entity_id : undefined} focusView={navigationTarget?.page === "imports" ? navigationTarget.view : undefined} onOpenReviews={() => navigate("reviews")} />}
         {page === "settings" && <Settings manifest={manifest.envelope.data} />}
       </main>
@@ -445,9 +547,31 @@ function QueryBoundary<T>({ result, children, empty = "Für diesen Zeitraum lieg
   return <>{(result.state === "STALE" || result.state === "PARTIAL") && <div className="status-banner" role="status"><strong>{result.state === "STALE" ? statusLabel("STALE") : "Teilprojektion"}</strong><span>{result.envelope.projection_sequence < result.envelope.event_store_sequence ? "Die lokale Ansicht wird noch aktualisiert." : result.state === "STALE" ? "Mindestens ein fachlicher Snapshot ist nicht aktuell." : "Ein Teil der lokalen Daten ist noch nicht verfügbar."}</span><details><summary>Technische Details</summary><code>Projektion #{result.envelope.projection_sequence} · Event Store #{result.envelope.event_store_sequence}</code></details></div>}{children(result.envelope.data)}</>;
 }
 
-function Overview({ period, periodPayload, reviewInbox, onNavigate }: { period: PeriodSelection; periodPayload: Record<string, unknown>; reviewInbox: QueryResult<ReviewInbox>; onNavigate: (page: PageId) => void }) {
-  const result = useFinanceQuery<Dashboard>("GetDashboard", periodPayload);
-  const series = useFinanceQuery<FinancialTimeSeries>("GetFinancialTimeSeries", periodPayload);
+function Overview({ period, reviewInbox, onNavigate }: { period: PeriodSelection; periodPayload: Record<string, unknown>; reviewInbox: QueryResult<ReviewInbox>; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
+  const [view, setView] = useState<DashboardView>("CURRENT");
+  const [analysisWindow, setAnalysisWindow] = useState<AnalysisWindow>(6);
+  const availablePeriods = useFinanceQuery<AvailablePeriods>("GetAvailablePeriods");
+  const monthlyWorkspace = useFinanceQuery<MonthlyWorkspaceStatus>("GetMonthlyWorkspaceStatus");
+  const periodData = availablePeriods.envelope?.data;
+  const latestMonth = periodData?.available_months.at(-1) ?? period.start_date.slice(0, 7);
+  const [latestYear, latestMonthNumber] = latestMonth.split("-").map(Number);
+  const latestPeriod = monthPeriod(latestYear, latestMonthNumber);
+  const latestPayload = { mode: "MONTH", year: latestYear, month: latestMonthNumber };
+  const analysisStart = (() => {
+    if (analysisWindow === "ALL") return periodData?.earliest_date ?? latestPeriod.start_date;
+    const point = new Date(latestYear, latestMonthNumber - analysisWindow, 1, 12);
+    return localISODate(point);
+  })();
+  const analysisPayload = {
+    mode: "CUSTOM_RANGE",
+    start_date: analysisStart,
+    end_date: periodData?.latest_date ?? latestPeriod.end_date,
+  };
+  const result = useFinanceQuery<Dashboard>("GetDashboard", latestPayload);
+  const series = useFinanceQuery<FinancialTimeSeries>("GetFinancialTimeSeries", analysisPayload, view === "CURRENT");
+  const accounts = useFinanceQuery<AccountOverviewList>("ListAccountOverviews", { period: latestPayload, include_closed: false });
+  const categories = useFinanceQuery<CategoryBreakdown>("GetCategoryBreakdown", { month: latestMonth }, view === "CURRENT");
+  const recentTransactions = useFinanceQuery<{ transactions: Transaction[] }>("ListTransactions", { ...analysisPayload, limit: 7 }, view === "CURRENT");
   const inbox = reviewInbox.envelope?.data;
   const reviewGroups = inbox ? [
     ["Kategorien", inbox.items_by_type.CATEGORY],
@@ -456,8 +580,15 @@ function Overview({ period, periodPayload, reviewInbox, onNavigate }: { period: 
     ["Importe", inbox.items_by_type.IMPORT + inbox.items_by_type.FORMAT_CHANGE],
     ["Relationen", inbox.items_by_type.RELATION],
   ].filter(([, count]) => Number(count) > 0) as Array<[string, number]> : [];
-  return <QueryBoundary result={result}>{(data) => <>
-    <section className="hero-row"><div><h2>{period.display_label} auf einen Blick</h2><p>Finanzlage, tatsächliche Bewegungen und offener Handlungsbedarf.</p></div></section>
+  return <>
+    <section className="dashboard-titlebar">
+      <div><span className="eyebrow">PRIVATER ARBEITSBEREICH</span><h2>{view === "CURRENT" ? "Aktuell" : "Arbeitsbereich"}</h2><p>{view === "CURRENT" ? "Dein Finanzstand auf Basis der zuletzt vollständig erfassten Daten." : "Vervollständige fehlende Finanzdaten und bearbeite offene Prüfungen."}</p></div>
+      {view === "CURRENT" && <div className="analysis-window" role="group" aria-label="Analysezeitraum">{([3, 6, 12, "ALL"] as AnalysisWindow[]).map((value) => <button key={value} className={analysisWindow === value ? "active" : ""} onClick={() => setAnalysisWindow(value)}>{value === "ALL" ? "Gesamt" : `${value} Monate`}</button>)}</div>}
+    </section>
+    <div className="dashboard-segment" role="tablist" aria-label="Dashboardansicht"><button role="tab" aria-selected={view === "CURRENT"} onClick={() => setView("CURRENT")}>Aktuell</button><button role="tab" aria-selected={view === "WORKSPACE"} onClick={() => setView("WORKSPACE")}>Arbeitsbereich{(inbox?.total_open ?? 0) > 0 && <span>{inbox?.total_open}</span>}</button></div>
+    {view === "WORKSPACE" ? <DashboardWorkspace monthlyStatus={monthlyWorkspace} inbox={reviewInbox} accounts={accounts} onNavigate={onNavigate} /> : <QueryBoundary result={result}>{(data) => <>
+    <DashboardFreshness result={accounts} period={latestPeriod} monthly={monthlyWorkspace.envelope?.data} onOpenMissing={() => setView("WORKSPACE")} />
+    <div className="dashboard-section-heading"><div><span className="eyebrow">FINANZLAGE</span><h2>Zentrale Kennzahlen</h2></div><small>{latestPeriod.display_label}</small></div>
     <section className="metric-grid dashboard-kpi-grid" aria-label="Zentrale Finanzkennzahlen">
       <Metric label="Einnahmen" value={money(data.effective_income)} tone="positive" note={data.effective_income == null ? "Keine Buchungsdaten" : "Bereinigte Buchungen"} />
       <Metric label="Ausgaben" value={money(data.effective_expenses)} tone="negative" note={data.effective_expenses == null ? "Keine Buchungsdaten" : "Nach Abgleichen"} />
@@ -466,11 +597,129 @@ function Overview({ period, periodPayload, reviewInbox, onNavigate }: { period: 
       <Metric label="Nettovermögen" value={money(data.net_worth)} tone="ink" note={data.net_worth == null ? "Keine bewerteten Bestände" : `Stand ${date(data.net_worth_as_of ?? period.end_date)}`} />
     </section>
     <div className="dashboard-grid">
-      <section className="panel cashflow-card"><PanelHeader title="Finanzverlauf" subtitle={`${period.display_label} · ${period.aggregation === "DAY" ? "täglich" : period.aggregation === "WEEK" ? "wöchentlich" : "monatlich"}`} action="Transaktionen" onAction={() => onNavigate("transactions")} /><FinancialTimeSeriesChart result={series} /></section>
-      <section className="panel dashboard-reviews"><PanelHeader title={`${inbox?.total_open ?? data.open_reviews} Dinge benötigen Aufmerksamkeit`} subtitle="Kurzfassung deiner offenen Aufgaben" />{reviewGroups.length ? <div className="dashboard-review-list">{reviewGroups.map(([title, count]) => <div key={title}><span>{title}</span><strong>{count}</strong></div>)}</div> : <p className="dashboard-review-empty">Aktuell sind keine Aufgaben offen.</p>}<button className="primary" onClick={() => onNavigate("reviews")}>Alle prüfen</button></section>
+      <section className="panel cashflow-card"><PanelHeader title="Finanzielle Entwicklung" subtitle={`${analysisWindow === "ALL" ? "Gesamter Zeitraum" : `Letzte ${analysisWindow} Monate`} · bis ${monthLabel(latestMonth)}`} action="Transaktionen" onAction={() => onNavigate("transactions")} /><FinancialTimeSeriesChart result={series} /></section>
+      <section className="panel dashboard-reviews"><PanelHeader title={`${inbox?.total_open ?? data.open_reviews} Dinge benötigen Aufmerksamkeit`} subtitle="Kurzfassung deiner offenen Aufgaben" />{reviewGroups.length ? <div className="dashboard-review-list">{reviewGroups.map(([title, count]) => <div key={title}><span>{title}</span><strong>{count}</strong></div>)}</div> : <p className="dashboard-review-empty">Aktuell sind keine Aufgaben offen.</p>}<button className="primary" onClick={() => setView("WORKSPACE")}>Arbeitsbereich öffnen</button></section>
+    </div>
+    <div className="dashboard-lower-grid">
+      <DashboardCategories result={categories} period={latestPeriod} onOpen={() => onNavigate("categories")} />
+      <DashboardTransactions result={recentTransactions} accounts={accounts} onOpenAll={() => onNavigate("transactions")} onOpen={(transactionId) => onNavigate("transactions", { page: "transactions", view: "detail", entity_id: transactionId })} />
     </div>
     <section className="panel privacy-note"><span className="shield">◇</span><div><strong>Deine Finanzdaten bleiben auf diesem Gerät.</strong><p>Bestände stammen aus expliziten Salden-Snapshots; berechnete Werte und Prognosen sind klar gekennzeichnet.</p></div><span className="sequence">Projektion #{result.envelope?.projection_sequence}</span></section>
-  </>}</QueryBoundary>;
+  </>}</QueryBoundary>}
+  </>;
+}
+
+const WORKSPACE_MONTH_STATUS: Record<WorkspaceMonthStatus, { label: string; symbol: string }> = {
+  COMPLETE: { label: "Vollständig", symbol: "✓" },
+  REVIEW: { label: "Prüfung offen", symbol: "!" },
+  MISSING: { label: "Import fehlt", symbol: "×" },
+  OUTSIDE: { label: "Noch nicht erfasst", symbol: "○" },
+};
+
+function DashboardWorkspace({ monthlyStatus, inbox, accounts, onNavigate }: { monthlyStatus: QueryResult<MonthlyWorkspaceStatus>; inbox: QueryResult<ReviewInbox>; accounts: QueryResult<AccountOverviewList>; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
+  const [scope, setScope] = useState<"12" | "YEAR" | "ALL">("12");
+  const workspaceData = monthlyStatus.envelope?.data;
+  const currentMonth = workspaceData?.current_month ?? localISODate().slice(0, 7);
+  const currentYear = Number(currentMonth.slice(0, 4));
+  const [timelineYear, setTimelineYear] = useState(currentYear);
+  useEffect(() => {
+    if (workspaceData?.current_month) setTimelineYear(Number(workspaceData.current_month.slice(0, 4)));
+  }, [workspaceData?.current_month]);
+  const [filter, setFilter] = useState<ReviewType | "ALL">("ALL");
+  const inboxData = inbox.envelope?.data;
+  const earliest = workspaceData?.earliest_month ?? currentMonth;
+  const workspaceYears = workspaceData?.months.map((item) => Number(item.month.slice(0, 4))) ?? [];
+  const yearOptions = Array.from(new Set([...workspaceYears, currentYear])).sort((left, right) => right - left);
+  const firstMonth = scope === "12" ? shiftMonthKey(currentMonth, -11) : scope === "YEAR" ? `${timelineYear}-01` : earliest;
+  const lastMonth = scope === "YEAR" ? `${timelineYear}-12` : currentMonth;
+  const statusByMonth = new Map((workspaceData?.months ?? []).map((item) => [item.month, item]));
+  const items = inboxData?.items ?? [];
+  const months: WorkspaceMonth[] = monthKeysBetween(firstMonth, lastMonth).map((month) => {
+    const reviews = items.filter((item) => reviewMonth(item) === month);
+    const details = statusByMonth.get(month);
+    const status: WorkspaceMonthStatus = details?.status ?? "OUTSIDE";
+    return { month, label: monthLabel(month), status, reviews, isCurrent: month === currentMonth, details };
+  });
+  const actionableMonths = months.filter((item) => item.status === "MISSING" || item.status === "REVIEW").reverse();
+  const completedMonths = months.filter((item) => item.status === "COMPLETE");
+  const filteredItems = items.filter((item) => filter === "ALL" || item.review_type === filter);
+  const latestComplete = workspaceData?.latest_complete_month;
+  const firstMissing = workspaceData?.months.find((item) => item.status === "MISSING")?.month;
+  const missingLabel = firstMissing ? `${monthLabel(firstMissing)} – ${monthLabel(currentMonth)}` : "Kein Zeitraum offen";
+  const affectedAccounts = new Set(items.flatMap((item) => item.account_ids)).size;
+  const openMonth = (item: WorkspaceMonth) => {
+    const primary = item.details?.primary_action as ReviewItem["action_target"] | null | undefined;
+    if (primary) onNavigate(primary.page, primary);
+    else if (item.reviews[0]) onNavigate(item.reviews[0].action_target.page, item.reviews[0].action_target);
+    else onNavigate("imports", { page: "imports", view: "month", entity_id: item.month });
+  };
+  const firstAction = actionableMonths[0];
+  return <>
+    <section className="panel workspace-overview" aria-label="Arbeitsstand im Dashboard">
+      <div><span>Finanzdaten vollständig bis</span><strong>{latestComplete ? monthLabel(latestComplete) : "Noch kein vollständiger Monat"}</strong></div>
+      <div><span>Fehlender Zeitraum</span><strong>{missingLabel}</strong></div>
+      <div><span>Offene Aufgaben</span><strong>{inboxData?.total_open ?? 0}</strong></div>
+      <div><span>Betroffene Konten</span><strong>{affectedAccounts || (accounts.envelope?.data.accounts.length ?? 0)}</strong></div>
+      {firstAction && <button className="primary" onClick={() => openMonth(firstAction)}>Weiterarbeiten →</button>}
+    </section>
+
+    <section className="panel month-timeline-card">
+      <header><div><span className="eyebrow">DATENVOLLSTÄNDIGKEIT</span><h2>Monatsübersicht</h2><p>Erkenne sofort, welche Zeiträume vollständig sind und wo noch Aktionen notwendig sind.</p></div><div className="timeline-controls"><div className="timeline-scope" role="group" aria-label="Zeitraum der Monatsübersicht">{(["12", "YEAR", "ALL"] as const).map((value) => <button key={value} className={scope === value ? "active" : ""} onClick={() => setScope(value)}>{value === "12" ? "12 Monate" : value === "YEAR" ? "Jahr" : "Gesamt"}</button>)}</div>{scope === "YEAR" && <label className="timeline-year-picker"><span>Jahr auswählen</span><select aria-label="Jahr der Monatsübersicht" value={timelineYear} onChange={(event) => setTimelineYear(Number(event.target.value))}>{yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>}</div></header>
+      {monthlyStatus.state === "LOADING" ? <div className="dashboard-card-empty"><span className="loader" /><p>Monate werden geprüft …</p></div> : <div className="month-timeline" role="list" aria-label="Status der Monate">{months.map((item) => <button key={item.month} role="listitem" className={`month-timeline-item ${item.status.toLowerCase()}`} onClick={() => item.status !== "OUTSIDE" && openMonth(item)} disabled={item.status === "OUTSIDE"} title={`${item.label}: ${WORKSPACE_MONTH_STATUS[item.status].label}${item.details?.open_review_count ? ` · ${item.details.open_review_count} offene Aufgaben` : ""}`}><span>{item.label.split(" ")[0].slice(0, 3)}</span><strong>{WORKSPACE_MONTH_STATUS[item.status].symbol}</strong><small>{item.isCurrent ? "Heute" : WORKSPACE_MONTH_STATUS[item.status].label}</small></button>)}</div>}
+      <footer className="month-timeline-legend"><span className="complete">✓ Vollständig</span><span className="review">! Prüfung offen</span><span className="missing">× Import fehlt</span><span className="outside">○ Noch nicht erfasst</span></footer>
+    </section>
+
+    <div className="workspace-section-heading"><div><span className="eyebrow">MONATLICH WEITERARBEITEN</span><h2>Monate mit offenen Punkten</h2></div></div>
+    <section className="workspace-month-grid">{actionableMonths.length === 0 ? <div className="panel page-state workspace-empty"><span className="empty-icon">✓</span><h3>Alle Monate vollständig</h3><p>Für den dargestellten Zeitraum sind keine offenen Monate vorhanden.</p></div> : actionableMonths.slice(0, 6).map((item) => <article className={`panel workspace-month-card ${item.status.toLowerCase()}`} key={item.month}><div><span className={`status-badge ${item.status === "MISSING" ? "missed" : "paused"}`}>{WORKSPACE_MONTH_STATUS[item.status].label}</span><h3>{item.label}</h3><p>{item.status === "MISSING" ? `${item.details?.completed_account_count ?? 0} von ${item.details?.expected_account_count ?? 0} erwarteten Konten vollständig.` : `${item.details?.open_review_count ?? item.reviews.length} ${(item.details?.open_review_count ?? item.reviews.length) === 1 ? "offene Aufgabe" : "offene Aufgaben"}`}</p></div>{item.details && item.details.open_review_count > 0 && <ul>{(Object.keys(REVIEW_LABELS) as ReviewType[]).map((type) => [type, item.details!.review_counts[type]] as const).filter(([, count]) => count > 0).map(([type, count]) => <li key={type}><span>{REVIEW_LABELS[type]}</span><strong>{count}</strong></li>)}</ul>}<button className={item.status === "MISSING" ? "primary small" : "secondary small"} onClick={() => openMonth(item)}>{item.status === "MISSING" ? "Import starten" : `${item.label.split(" ")[0]} bearbeiten`} →</button></article>)}</section>
+
+    <div className="workspace-section-heading"><div><span className="eyebrow">AUFGABEN-INBOX</span><h2>Offene Aufgaben</h2></div><button className="secondary small" onClick={() => onNavigate("reviews")}>Alle in „Prüfen“ öffnen</button></div>
+    <div className="workspace-filterbar" role="group" aria-label="Aufgaben filtern"><button className={filter === "ALL" ? "active" : ""} onClick={() => setFilter("ALL")}>Alle</button>{(Object.keys(REVIEW_LABELS) as ReviewType[]).map((type) => <button key={type} className={filter === type ? "active" : ""} onClick={() => setFilter(type)}>{REVIEW_LABELS[type]} <span>{inboxData?.items_by_type[type] ?? 0}</span></button>)}</div>
+    <section className="workspace-task-grid dashboard-workspace-tasks">{filteredItems.length === 0 ? <div className="panel page-state workspace-empty"><span className="empty-icon">✓</span><h3>Alles erledigt</h3><p>In diesem Bereich sind keine offenen Aufgaben vorhanden.</p></div> : filteredItems.slice(0, 8).map((item) => <article className={`panel workspace-task severity-${item.severity.toLowerCase()}`} key={item.review_id}><div className="workspace-task-status"><span>{REVIEW_LABELS[item.review_type]}</span><span className={`status-badge ${item.severity === "ERROR" ? "missed" : item.severity === "WARNING" ? "paused" : "confirmed"}`}>{item.severity === "ERROR" ? "Dringend" : item.severity === "WARNING" ? "Prüfung offen" : "Hinweis"}</span></div><h3>{item.title}</h3><p>{item.description}</p><small>{monthLabel(reviewMonth(item))}</small><footer><button className={item.severity === "ERROR" ? "primary small" : "secondary small"} onClick={() => onNavigate(item.action_target.page, item.action_target)}>Aufgabe öffnen →</button></footer></article>)}</section>
+    {completedMonths.length > 0 && <details className="panel completed-months"><summary>Vollständig abgeschlossene Monate <span>{completedMonths.length}</span></summary><p>{completedMonths.map((item) => item.label).join(" · ")}</p></details>}
+  </>;
+}
+
+function DashboardFreshness({ result, period, monthly, onOpenMissing }: { result: QueryResult<AccountOverviewList>; period: PeriodSelection; monthly?: MonthlyWorkspaceStatus; onOpenMissing: () => void }) {
+  if (result.state === "LOADING") return <section className="panel dashboard-freshness loading"><span className="loader" /><p>Kontostand wird geprüft …</p></section>;
+  const rows = result.envelope?.data.accounts ?? [];
+  const current = rows.filter((item) => item.data_freshness === "CURRENT").length;
+  const stale = rows.filter((item) => item.data_freshness === "STALE").length;
+  const reportedDates = rows.map((item) => item.reported_balance_date).filter((value): value is string => Boolean(value));
+  const latest = reportedDates.sort().at(-1);
+  const isCurrent = rows.length > 0 && stale === 0 && current === rows.length;
+  const isUnavailable = result.state === "ERROR" || result.state === "INCOMPATIBLE_SCHEMA" || !result.envelope;
+  const latestMonth = monthly?.latest_data_month;
+  const missingMonths = Boolean(monthly?.months.some((item) => item.status === "MISSING"));
+  const firstMissingMonth = monthly?.months.find((item) => item.status === "MISSING")?.month;
+  return <section className={`panel dashboard-freshness ${missingMonths ? "missing" : isCurrent ? "current" : "attention"}`} aria-label="Datenaktualität">
+    <span className="freshness-icon" aria-hidden="true">{isUnavailable ? "!" : isCurrent ? "✓" : "○"}</span>
+    <div className="freshness-copy"><div><h2>{isUnavailable ? "Datenstand nicht verfügbar" : latest ? `Kontostände bis ${date(latest)}` : `Noch keine Kontostände für ${period.display_label}`}</h2><span className={`status-badge ${isCurrent ? "confirmed" : "paused"}`}>{isCurrent ? "Aktuell" : stale > 0 ? "Daten nicht aktuell" : "Noch unvollständig"}</span></div><p>{isUnavailable ? "Die Kontoprojektion konnte nicht geladen werden." : rows.length ? `${current} von ${rows.length} aktiven Konten besitzen einen aktuellen fachlichen Stand.` : "Lege ein Konto an oder importiere einen Bankexport, um den Datenstand aufzubauen."}</p></div>
+    {!isUnavailable && rows.length > 0 && <div className="freshness-meta"><span>{missingMonths ? "Fehlender Zeitraum" : "Aktuelle Konten"}</span><strong>{missingMonths && firstMissingMonth ? `${monthLabel(firstMissingMonth)} – ${monthLabel(monthly?.current_month)}` : `${current} von ${rows.length}`}</strong>{missingMonths && <button className="text-button" onClick={onOpenMissing}>Fehlende Daten bearbeiten</button>}</div>}
+  </section>;
+}
+
+function DashboardCategories({ result, period, onOpen }: { result: QueryResult<CategoryBreakdown>; period: PeriodSelection; onOpen: () => void }) {
+  const rows = Object.values(result.envelope?.data.categories ?? {})
+    .filter((item) => Number(item.effective_expense) > 0)
+    .sort((left, right) => Number(right.effective_expense) - Number(left.effective_expense))
+    .slice(0, 5);
+  const total = rows.reduce((sum, item) => sum + Number(item.effective_expense), 0);
+  return <section className="panel dashboard-categories"><PanelHeader title="Wofür du Geld ausgegeben hast" subtitle={period.display_label} action="Alle Kategorien" onAction={onOpen} />
+    {period.mode !== "MONTH" ? <div className="dashboard-card-empty"><p>Die fachlich abgeglichene Kategorieauswertung steht derzeit monatsweise bereit.</p><button className="text-button" onClick={onOpen}>Kategorien öffnen</button></div>
+      : result.state === "LOADING" ? <div className="dashboard-card-empty"><span className="loader" /><p>Kategorien werden geladen …</p></div>
+      : rows.length === 0 ? <div className="dashboard-card-empty"><p>Für diesen Monat liegen noch keine kategorisierten Ausgaben vor.</p></div>
+      : <div className="dashboard-category-list">{rows.map((item) => { const share = total > 0 ? Number(item.effective_expense) / total : 0; return <button key={item.category_code} onClick={onOpen}><span><strong>{categoryLabel(item.category_code)}</strong><small>{item.transaction_count} Buchungen</small></span><b>{money(item.effective_expense)}</b><em>{Math.round(share * 100)} %</em><i><span style={{ width: `${Math.max(4, share * 100)}%` }} /></i></button>; })}</div>}
+  </section>;
+}
+
+function DashboardTransactions({ result, accounts, onOpenAll, onOpen }: { result: QueryResult<{ transactions: Transaction[] }>; accounts: QueryResult<AccountOverviewList>; onOpenAll: () => void; onOpen: (transactionId: string) => void }) {
+  const rows = result.envelope?.data.transactions.slice(0, 5) ?? [];
+  const accountNames = Object.fromEntries((accounts.envelope?.data.accounts ?? []).map((item) => [item.account_id, item.display_name]));
+  return <section className="panel dashboard-transactions"><PanelHeader title="Letzte Transaktionen" subtitle="Im gewählten Zeitraum" action="Alle Transaktionen" onAction={onOpenAll} />
+    {result.state === "LOADING" ? <div className="dashboard-card-empty"><span className="loader" /><p>Transaktionen werden geladen …</p></div>
+      : rows.length === 0 ? <div className="dashboard-card-empty"><p>Für diesen Zeitraum liegen keine Buchungen vor.</p></div>
+      : <div className="dashboard-transaction-list"><div className="dashboard-transaction-head"><span>Datum</span><span>Händler</span><span>Kategorie</span><span>Konto</span><span>Betrag</span></div>{rows.map((item) => <button key={item.transaction_id} onClick={() => onOpen(item.transaction_id)} aria-label={`${item.counterparty || "Transaktion"} öffnen`}><time>{date(item.booking_date)}</time><span><strong>{item.counterparty || "Unbekannter Händler"}</strong><small>{item.description || item.normalized_description || "Keine Beschreibung"}</small></span><span>{categoryLabel(item.category_code)}</span><span>{accountNames[item.account_id ?? ""] ?? item.account_id ?? "–"}</span><b className={Number(item.amount) >= 0 ? "positive-text" : ""}>{money(item.amount, item.currency)}</b></button>)}</div>}
+  </section>;
 }
 
 function FinancialTimeSeriesChart({ result }: { result: QueryResult<FinancialTimeSeries> }) {
@@ -515,7 +764,8 @@ const OVERVIEW_STATUS_TONE: Record<string, string> = {
 
 function AccountsOverview({ period, periodPayload, focusId, focusView, onNavigate }: { period: PeriodSelection; periodPayload: Record<string, unknown>; focusId?: string; focusView?: string; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
   const [includeClosed, setIncludeClosed] = useState(false);
-  const result = useFinanceQuery<AccountOverviewList>("ListAccountOverviews", { period: periodPayload, include_closed: includeClosed });
+  const [refreshToken, setRefreshToken] = useState(0);
+  const result = useFinanceQuery<AccountOverviewList>("ListAccountOverviews", { period: periodPayload, include_closed: includeClosed }, true, refreshToken);
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<AccountOverviewRow | null>(null);
   const [message, setMessage] = useState("");
@@ -553,7 +803,7 @@ function AccountsOverview({ period, periodPayload, focusId, focusView, onNavigat
         </article>)}</div>
       </section>}
       {createOpen && <CreateAccountDialog onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); setMessage("Konto wurde lokal angelegt."); }} />}
-      {selectedAccount && <AccountWorkspace account={selectedAccount} initialTab={focusView} period={period} periodPayload={periodPayload} onClose={() => setSelectedAccount(null)} onMessage={setMessage} onNavigate={onNavigate} />}
+      {selectedAccount && <AccountWorkspace account={selectedAccount} initialTab={focusView} period={period} onClose={() => setSelectedAccount(null)} onMessage={setMessage} onNavigate={onNavigate} onAccountChanged={() => setRefreshToken((value) => value + 1)} />}
     </>;
   }}</QueryBoundary>;
 }
@@ -567,12 +817,44 @@ function CreateAccountDialog({ onClose, onCreated }: { onClose: () => void; onCr
 
 type AccountTabId = "overview" | "transactions" | "balances" | "reconciliations" | "imports" | "positions" | "audit";
 
-function AccountWorkspace({ account, initialTab, period, periodPayload, onClose, onMessage, onNavigate }: { account: AccountOverviewRow; initialTab?: string; period: PeriodSelection; periodPayload: Record<string, unknown>; onClose: () => void; onMessage: (message: string) => void; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
+function AccountWorkspace({ account, initialTab, period, onClose, onMessage, onNavigate, onAccountChanged }: { account: AccountOverviewRow; initialTab?: string; period: PeriodSelection; onClose: () => void; onMessage: (message: string) => void; onNavigate: (page: PageId, target?: NavigationTarget) => void; onAccountChanged: () => void }) {
   const first = useRef<HTMLButtonElement>(null);
   const handleKeyDown = useModalFocus(first, onClose);
   const allowedInitialTab = (["overview", "transactions", "balances", "reconciliations", "imports", "positions", "audit"] as string[]).includes(initialTab ?? "") ? initialTab as AccountTabId : "overview";
   const [tab, setTab] = useState<AccountTabId>(allowedInitialTab);
-  const isBrokerage = account.account_type === "BROKERAGE";
+  const [workspaceRefresh, setWorkspaceRefresh] = useState(0);
+  const initialMonth = period.start_date.slice(0, 7).split("-").map(Number);
+  const [workspaceYear, setWorkspaceYear] = useState(initialMonth[0]);
+  const [workspaceMonth, setWorkspaceMonth] = useState(initialMonth[1]);
+  const workspacePeriod = useMemo(() => monthPeriod(workspaceYear, workspaceMonth), [workspaceMonth, workspaceYear]);
+  const workspacePeriodPayload = useMemo(() => ({ mode: "MONTH", year: workspaceYear, month: workspaceMonth }), [workspaceMonth, workspaceYear]);
+  const workspace = useFinanceQuery<AccountDetailWorkspace>("GetAccountDetail", { account_id: account.account_id, period: workspacePeriodPayload }, true, workspaceRefresh);
+  const refreshedAccount = workspace.envelope?.data.account;
+  const currentAccount = refreshedAccount ? {
+    ...account,
+    ...refreshedAccount,
+    account_id: account.account_id,
+    display_name: account.display_name,
+    account_type: account.account_type,
+    institution: account.institution,
+    currency: account.currency,
+  } : account;
+  const hasRecordedBalance = Boolean(workspace.envelope?.data.balance_history.some((item) => item.reported_value !== null));
+  const displayedOverviewStatus = effectiveAccountOverviewStatus(
+    currentAccount.overview_status,
+    currentAccount.data_freshness,
+    hasRecordedBalance,
+  );
+  const accountChanged = () => {
+    setWorkspaceRefresh((value) => value + 1);
+    onAccountChanged();
+  };
+  const moveWorkspaceMonth = (offset: number) => {
+    const point = new Date(workspaceYear, workspaceMonth - 1 + offset, 1, 12);
+    setWorkspaceYear(point.getFullYear());
+    setWorkspaceMonth(point.getMonth() + 1);
+  };
+  const isBrokerage = currentAccount.account_type === "BROKERAGE";
   const tabs: Array<[AccountTabId, string]> = [
     ["overview", "Übersicht"], ["transactions", "Transaktionen"], ["balances", "Salden"],
     ["reconciliations", "Abgleiche"], ["imports", "Importe"],
@@ -582,17 +864,18 @@ function AccountWorkspace({ account, initialTab, period, periodPayload, onClose,
   return <div className="dialog-backdrop"><section className="dialog wide account-workspace" role="dialog" aria-modal="true" aria-labelledby="account-workspace-title" onKeyDown={handleKeyDown}>
     <button ref={first} className="dialog-close" onClick={onClose} aria-label="Dialog schließen">×</button>
     <span className="eyebrow">KONTOARBEITSBEREICH</span>
-    <div className="account-workspace-heading"><div><h2 id="account-workspace-title">{account.display_name}</h2><p>{account.institution} · {label(account.account_type)}{account.status === "CLOSED" ? " · Geschlossen und schreibgeschützt" : ""}</p></div><span className={`status-badge ${OVERVIEW_STATUS_TONE[account.overview_status] ?? "paused"}`}>{statusLabel(account.overview_status)}</span></div>
+    <div className="account-workspace-heading"><div><h2 id="account-workspace-title">{currentAccount.display_name}</h2><p>{currentAccount.institution} · {label(currentAccount.account_type)}{currentAccount.status === "CLOSED" ? " · Geschlossen und schreibgeschützt" : ""}</p></div><span className={`status-badge ${OVERVIEW_STATUS_TONE[displayedOverviewStatus] ?? "paused"}`}>{statusLabel(displayedOverviewStatus)}</span></div>
+    <div className="account-month-navigation" role="group" aria-label="Monat im Kontoarbeitsbereich"><button className="secondary small" onClick={() => moveWorkspaceMonth(-1)} aria-label="Vorheriger Monat">‹</button><strong>{workspacePeriod.display_label}</strong><button className="secondary small" onClick={() => moveWorkspaceMonth(1)} aria-label="Nächster Monat">›</button></div>
     <div className="tabs" role="tablist" aria-label="Kontobereiche">
       {tabs.map(([id, text]) => <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>{text}</button>)}
     </div>
-    {tab === "overview" && <AccountTabOverview accountId={account.account_id} periodPayload={periodPayload} onMessage={onMessage} onNavigate={onNavigate} readOnly={account.status === "CLOSED"} />}
-    {tab === "transactions" && <AccountTabTransactions accountId={account.account_id} periodPayload={periodPayload} onNavigate={onNavigate} onAudit={() => setTab("audit")} />}
-    {tab === "balances" && <AccountTabBalances accountId={account.account_id} periodPayload={periodPayload} onAudit={() => setTab("audit")} />}
-    {tab === "reconciliations" && <AccountTabReconciliations accountId={account.account_id} onMessage={onMessage} onNavigate={onNavigate} />}
-    {tab === "imports" && <AccountTabImports accountId={account.account_id} onNavigate={onNavigate} onAudit={() => setTab("audit")} />}
-    {tab === "positions" && isBrokerage && <AccountTabPositions accountId={account.account_id} />}
-    {tab === "audit" && <AccountTabAudit accountId={account.account_id} onNavigate={onNavigate} onOpenTab={setTab} />}
+    {tab === "overview" && <AccountTabOverview accountId={currentAccount.account_id} periodPayload={workspacePeriodPayload} onMessage={onMessage} onNavigate={onNavigate} readOnly={currentAccount.status === "CLOSED"} />}
+    {tab === "transactions" && <AccountTabTransactions accountId={currentAccount.account_id} periodPayload={workspacePeriodPayload} onNavigate={onNavigate} onAudit={() => setTab("audit")} />}
+    {tab === "balances" && <AccountTabBalances account={currentAccount} period={workspacePeriod} periodPayload={workspacePeriodPayload} onAudit={() => setTab("audit")} onMessage={onMessage} onChanged={accountChanged} />}
+    {tab === "reconciliations" && <AccountTabReconciliations accountId={currentAccount.account_id} onMessage={onMessage} onNavigate={onNavigate} />}
+    {tab === "imports" && <AccountTabImports accountId={currentAccount.account_id} onNavigate={onNavigate} onAudit={() => setTab("audit")} />}
+    {tab === "positions" && isBrokerage && <AccountTabPositions accountId={currentAccount.account_id} />}
+    {tab === "audit" && <AccountTabAudit accountId={currentAccount.account_id} onNavigate={onNavigate} onOpenTab={setTab} />}
   </section></div>;
 }
 
@@ -609,7 +892,7 @@ function AccountTabOverview({ accountId, periodPayload, onMessage, onNavigate, r
       <article className={Number(data.account.balance_difference ?? 0) !== 0 ? "difference" : ""}><span>Differenz</span><strong>{money(data.account.balance_difference, data.account.currency)}</strong><small>{statusLabel(data.account.reconciliation_status)}</small></article>
       <article><span>Netto-Cashflow</span><strong>{money(data.period_summary.period_net_cashflow)}</strong><small>{money(data.period_summary.period_income)} Einnahmen · {money(data.period_summary.period_expenses)} Ausgaben</small></article>
     </section>
-    <section className="account-overview-context"><div><span>Letzter Import</span><strong>{monthLabel(data.account.last_import_month)}</strong></div><button onClick={() => onNavigate("reviews", { page: "reviews", view: "account", entity_id: accountId })}><span>Offene Prüfungen</span><strong>{data.open_review_count}</strong><small>Im Review Center öffnen →</small></button></section>
+    <section className="account-overview-context"><div><span>Letzter Import</span><strong>{monthLabel(data.account.last_import_month)}</strong></div><button onClick={() => onNavigate("reviews", { page: "reviews", view: "account", entity_id: accountId })}><span>Offene Aufgaben</span><strong>{data.open_review_count}</strong><small>Im Arbeitsbereich öffnen →</small></button></section>
     {!readOnly && <div className="dialog-actions balance-actions">
       <label className="balance-entry">Neuen gemeldeten Saldo erfassen<input value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value)} /></label>
       <label className="balance-entry">Stand vom<input type="date" value={balanceDate} onChange={(event) => setBalanceDate(event.target.value)} /></label>
@@ -641,10 +924,151 @@ function AccountTabTransactions({ accountId, periodPayload, onNavigate, onAudit 
 
 const BALANCE_TYPE_LABELS: Record<string, string> = { OPENING: "Anfangssaldo", CLOSING: "Endsaldo", INTERMEDIATE: "Zwischensaldo", CALCULATED: "Berechnet" };
 
-function AccountTabBalances({ accountId, periodPayload, onAudit }: { accountId: string; periodPayload: Record<string, unknown>; onAudit: () => void }) {
-  const result = useFinanceQuery<AccountDetailWorkspace>("GetAccountDetail", { account_id: accountId, period: periodPayload });
-  return <QueryBoundary result={result}>{(data) => <section className="balance-ledger">
-    {data.balance_history.filter((item) => item.balance_type === "OPENING").map((item) => <article className="panel carry-forward-card" key={`opening_${item.sequence_number}`}><div><span>Anfangssaldo {data.period.display_label}</span><strong>{money(item.reported_value, item.currency)}</strong></div>{item.carry_forward_source_reconciliation_id ? <div><span>Übernommen aus</span><strong>bestätigtem Endsaldo {item.carry_forward_source_period_end ? monthLabel(item.carry_forward_source_period_end.slice(0, 7)) : "der Vorperiode"}</strong><small>{money(item.carry_forward_source_reported_balance, item.currency)}</small></div> : <div><span>Quelle</span><strong>{label(item.source)}</strong></div>}{item.calculated_value && item.calculated_value !== item.reported_value && <div className="balance-adjustment"><span>Vorgeschlagen</span><strong>{money(item.calculated_value, item.currency)}</strong><span>Erfasst</span><strong>{money(item.reported_value, item.currency)}</strong><span>Begründung</span><strong>{item.adjustment_reason ?? "Keine Begründung erfasst"}</strong></div>}<button className="secondary small" onClick={onAudit}>Im Audit anzeigen</button></article>)}
+function AccountTabBalances({ account, period, periodPayload, onAudit, onMessage, onChanged }: { account: AccountOverviewRow; period: PeriodSelection; periodPayload: Record<string, unknown>; onAudit: () => void; onMessage: (message: string) => void; onChanged: () => void }) {
+  const [balanceType, setBalanceType] = useState<"OPENING" | "CLOSING">("OPENING");
+  const [balanceDate, setBalanceDate] = useState(previousISODate(period.start_date));
+  const [amount, setAmount] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [adjustmentReason, setAdjustmentReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [acceptingSuggestion, setAcceptingSuggestion] = useState(false);
+  const [suggestionAccepted, setSuggestionAccepted] = useState(false);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [suggestionRefresh, setSuggestionRefresh] = useState(0);
+  const result = useFinanceQuery<AccountDetailWorkspace>("GetAccountDetail", { account_id: account.account_id, period: periodPayload }, true, refreshToken);
+  const suggestionResult = useFinanceQuery<OpeningBalanceSuggestion>("GetOpeningBalanceSuggestion", { account_id: account.account_id, period_start: period.start_date }, account.status !== "CLOSED", suggestionRefresh);
+  const suggestion = suggestionResult.envelope?.data;
+  const suggestedValue = suggestion?.eligible ? normalizedDecimal(String(suggestion.suggested_value ?? "")) : "";
+  const enteredValue = normalizedDecimal(amount);
+  const deviatesFromSuggestion = balanceType === "OPENING" && Boolean(suggestedValue) && Boolean(enteredValue) && enteredValue !== suggestedValue;
+  useEffect(() => {
+    setBalanceType("OPENING");
+    setBalanceDate(previousISODate(period.start_date));
+    setAmount("");
+    setFeedback("");
+    setAdjustmentReason("");
+    setSuggestionAccepted(false);
+  }, [period.end_date, period.start_date]);
+  const changeType = (value: "OPENING" | "CLOSING") => {
+    setBalanceType(value);
+    setBalanceDate(value === "OPENING" ? previousISODate(period.start_date) : period.end_date);
+    setFeedback("");
+    setAdjustmentReason("");
+  };
+  const saveBalance = async () => {
+    const bookedBalance = normalizedDecimal(amount);
+    if (!bookedBalance || !balanceDate) return;
+    if (deviatesFromSuggestion && !adjustmentReason.trim()) {
+      setFeedback("Begründe die Abweichung vom automatisch berechneten Anfangssaldo.");
+      return;
+    }
+    setSaving(true);
+    setFeedback("");
+    try {
+      if (balanceType === "OPENING") {
+        await financeBridge.command("RecordOpeningBalance", {
+          account_id: account.account_id,
+          balance_date: balanceDate,
+          booked_balance: bookedBalance,
+          available_balance: null,
+          currency: account.currency,
+          source: suggestion?.eligible ? "PREVIOUS_SYSTEM" : "MANUAL_ENTRY",
+          confirmation: true,
+          comment: suggestion?.eligible
+            ? "Automatischen Vorschlag im Kontoarbeitsbereich bestätigt"
+            : "Manuell im Kontoarbeitsbereich nachgetragen",
+          opening_balance_source: suggestion?.eligible ? suggestion.source : "MANUAL",
+          ...(suggestion?.eligible ? {
+            suggested_value: String(suggestion.suggested_value),
+            carry_forward_source_reconciliation_id: suggestion.source_reconciliation_id ?? null,
+            source_period: suggestion.source_period ?? null,
+            source_account_id: suggestion.source_account_id ?? account.account_id,
+            source_projection_sequence: suggestion.source_projection_sequence ?? null,
+          } : {}),
+          ...(deviatesFromSuggestion ? { adjustment_reason: adjustmentReason.trim() } : {}),
+        });
+      } else {
+        await financeBridge.command("RecordClosingBalance", {
+          account_id: account.account_id,
+          balance_date: balanceDate,
+          booked_balance: bookedBalance,
+          available_balance: null,
+          currency: account.currency,
+          source: "MANUAL_ENTRY",
+          confirmation: true,
+        });
+      }
+      const message = balanceType === "OPENING" ? "Anfangssaldo wurde nachgetragen." : "Endsaldo wurde nachgetragen.";
+      setFeedback(message);
+      setAmount("");
+      setAdjustmentReason("");
+      setRefreshToken((value) => value + 1);
+      onMessage(message);
+      onChanged();
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Der Saldo konnte nicht gespeichert werden.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const applySuggestion = async () => {
+    if (!suggestion?.eligible || suggestion.suggested_value === undefined) return;
+    setAcceptingSuggestion(true);
+    setFeedback("");
+    try {
+      await financeBridge.command("RecordOpeningBalance", {
+        account_id: account.account_id,
+        balance_date: previousISODate(period.start_date),
+        booked_balance: String(suggestion.suggested_value),
+        available_balance: null,
+        currency: suggestion.currency ?? account.currency,
+        source: "PREVIOUS_SYSTEM",
+        confirmation: true,
+        comment: "Automatischen Vorschlag im Kontoarbeitsbereich bestätigt",
+        suggested_value: String(suggestion.suggested_value),
+        carry_forward_source_reconciliation_id: suggestion.source_reconciliation_id ?? null,
+        opening_balance_source: suggestion.source,
+        source_period: suggestion.source_period ?? null,
+        source_account_id: suggestion.source_account_id ?? account.account_id,
+        source_projection_sequence: suggestion.source_projection_sequence ?? null,
+      });
+      const message = `Anfangssaldo für ${period.display_label} wurde übernommen.`;
+      setSuggestionAccepted(true);
+      setFeedback(message);
+      setRefreshToken((value) => value + 1);
+      onMessage(message);
+      onChanged();
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Der Vorschlag konnte nicht übernommen werden.");
+    } finally {
+      setAcceptingSuggestion(false);
+    }
+  };
+  return <QueryBoundary result={result}>{(data) => {
+    const openingRows = data.balance_history.filter((item) => item.balance_type === "OPENING");
+    const latestOpening = openingRows.reduce<AccountBalanceLedgerRow | null>((latest, item) => !latest || item.sequence_number > latest.sequence_number ? item : latest, null);
+    const suggestionAlreadyRecorded = Boolean(suggestion?.eligible && openingRows.some((item) => item.balance_date === previousISODate(period.start_date) && normalizedDecimal(String(item.reported_value ?? "")) === suggestedValue));
+    return <section className="balance-ledger">
+    {account.status !== "CLOSED" && suggestion?.eligible && <section className="panel automatic-balance-suggestion" aria-label="Automatischer Saldovorschlag">
+      <div><span className="eyebrow">AUTOMATISCHER VORSCHLAG</span><h3>{money(suggestion.suggested_value, suggestion.currency ?? account.currency)}</h3><p>Als Anfangssaldo für {period.display_label}, übernommen aus dem {suggestion.source === "CALCULATED_PRIOR_CLOSING_BALANCE" ? "berechneten" : "bestätigten gemeldeten"} Endsaldo {monthLabel(suggestion.source_period)}.</p></div>
+      {suggestion.calculation && <dl className="automatic-balance-calculation"><div><dt>Vorheriger Anfangssaldo</dt><dd>{money(suggestion.calculation.opening_balance, account.currency)}</dd></div><div><dt>Relevante Bewegungen</dt><dd>{money(suggestion.calculation.balance_relevant_movements, account.currency)}</dd></div><div><dt>Berechneter Endsaldo</dt><dd>{money(suggestion.calculation.calculated_closing_balance, account.currency)}</dd></div></dl>}
+      <div className="automatic-balance-actions"><button className="secondary small" onClick={() => setSuggestionRefresh((value) => value + 1)}>Neu berechnen</button><button className="primary" disabled={acceptingSuggestion || suggestionAccepted || suggestionAlreadyRecorded} onClick={applySuggestion}>{acceptingSuggestion ? "Wird übernommen …" : suggestionAccepted || suggestionAlreadyRecorded ? "Bereits übernommen" : "Vorschlag übernehmen"}</button></div>
+      {feedback && <p className="automatic-balance-feedback" role="status">{feedback}</p>}
+    </section>}
+    {account.status !== "CLOSED" && suggestion && !suggestion.eligible && <section className="panel automatic-balance-unavailable"><div><strong>Automatische Berechnung noch nicht möglich</strong><p>{OPENING_SUGGESTION_REASON[suggestion.reason_code] ?? "Für den Vormonat liegt noch keine sichere Berechnungsgrundlage vor."}</p></div><button className="secondary small" onClick={() => setSuggestionRefresh((value) => value + 1)}>Erneut prüfen</button></section>}
+    {account.status !== "CLOSED" && <section className="panel manual-balance-entry" aria-label="Saldo nachtragen">
+      <div><h3>Saldo nachtragen</h3><p>Erfasse einen fehlenden Anfangs- oder Endsaldo fachlich passend zum gewählten Zeitraum. Der Eintrag bleibt im Audit nachvollziehbar.</p></div>
+      <div className="manual-balance-fields">
+        <label className="balance-entry">Saldoart<select aria-label="Saldoart" value={balanceType} onChange={(event) => changeType(event.target.value as "OPENING" | "CLOSING")}><option value="OPENING">Anfangssaldo</option><option value="CLOSING">Endsaldo</option></select></label>
+        <label className="balance-entry">Datum<input aria-label="Saldodatum" type="date" value={balanceDate} onChange={(event) => setBalanceDate(event.target.value)} /></label>
+        <label className="balance-entry">Betrag in {account.currency}<input aria-label="Saldobetrag" inputMode="decimal" placeholder="0,00" value={amount} onChange={(event) => setAmount(event.target.value)} /></label>
+        <button className="primary" disabled={saving || !amount.trim() || !balanceDate} onClick={saveBalance}>{saving ? "Wird gespeichert …" : `${balanceType === "OPENING" ? "Anfangs" : "End"}saldo speichern`}</button>
+      </div>
+      {deviatesFromSuggestion && <label className="balance-adjustment-reason">Begründung für die Abweichung<textarea required value={adjustmentReason} onChange={(event) => setAdjustmentReason(event.target.value)} /></label>}
+      {feedback && <p className="balance-entry-feedback" role="status">{feedback}</p>}
+    </section>}
+    {account.status === "CLOSED" && <div className="toast compact">Dieses geschlossene Konto bleibt lesbar; Salden können nicht mehr nachgetragen werden.</div>}
+    {latestOpening && <article className="panel carry-forward-card"><div><span>Anfangssaldo {data.period.display_label}</span><strong>{money(latestOpening.reported_value, latestOpening.currency)}</strong>{openingRows.length > 1 && <small>{openingRows.length - 1} ältere Erfassung{openingRows.length === 2 ? "" : "en"} im Verlauf</small>}</div>{(latestOpening.opening_balance_source && latestOpening.opening_balance_source !== "MANUAL") || latestOpening.carry_forward_source_reconciliation_id ? <div><span>Übernommen aus</span><strong>{latestOpening.opening_balance_source === "CALCULATED_PRIOR_CLOSING_BALANCE" ? "berechnetem" : "bestätigtem"} Endsaldo {latestOpening.source_period ? monthLabel(latestOpening.source_period) : latestOpening.carry_forward_source_period_end ? monthLabel(latestOpening.carry_forward_source_period_end.slice(0, 7)) : "der Vorperiode"}</strong>{latestOpening.carry_forward_source_reported_balance && <small>{money(latestOpening.carry_forward_source_reported_balance, latestOpening.currency)}</small>}</div> : <div><span>Quelle</span><strong>{label(latestOpening.source)}</strong></div>}{latestOpening.calculated_value && latestOpening.calculated_value !== latestOpening.reported_value && <div className="balance-adjustment"><span>Vorgeschlagen</span><strong>{money(latestOpening.calculated_value, latestOpening.currency)}</strong><span>Erfasst</span><strong>{money(latestOpening.reported_value, latestOpening.currency)}</strong><span>Begründung</span><strong>{latestOpening.adjustment_reason ?? "Keine Begründung erfasst"}</strong></div>}<button className="secondary small" onClick={onAudit}>Im Audit anzeigen</button></article>}
     <section className="panel table-panel">
     <table>
       <thead><tr><th>Saldoart</th><th>Datum</th><th>Gemeldet</th><th>Berechnet</th><th>Quelle</th><th>Bestätigung</th><th>Herkunft</th><th></th></tr></thead>
@@ -655,12 +1079,13 @@ function AccountTabBalances({ accountId, periodPayload, onAudit }: { accountId: 
         <td className="amount">{item.calculated_value ? money(item.calculated_value) : "–"}</td>
         <td>{label(item.source)}</td>
         <td>{item.confirmation_status === "CONFIRMED" ? "Bestätigt" : "Unbestätigt"}</td>
-        <td>{item.carry_forward_source_reconciliation_id ? "Übernommen aus bestätigtem Endsaldo" : item.adjustment_reason ? `Angepasst: ${item.adjustment_reason}` : "–"}</td>
+        <td>{item.opening_balance_source === "CALCULATED_PRIOR_CLOSING_BALANCE" ? "Übernommen aus berechnetem Endsaldo" : item.opening_balance_source === "REPORTED_PRIOR_CLOSING_BALANCE" || item.carry_forward_source_reconciliation_id ? "Übernommen aus bestätigtem Endsaldo" : item.adjustment_reason ? `Angepasst: ${item.adjustment_reason}` : "–"}</td>
         <td><button className="table-link" onClick={onAudit}>Audit</button></td>
       </tr>)}</tbody>
     </table>
     </section>
-  </section>}</QueryBoundary>;
+  </section>;
+  }}</QueryBoundary>;
 }
 
 const RECONCILIATION_STATUS_LABELS: Record<string, string> = { MISSING_OPENING_BALANCE: "Anfangssaldo fehlt", NO_REPORTED_CLOSING_BALANCE: "Endsaldo fehlt" };
@@ -873,8 +1298,8 @@ function TransactionSidePanel({ transaction, accountName, suggestion, categories
     finally { setBusy(false); }
   };
   const reconciliation = (detail.reconciliation as Record<string, unknown> | undefined) ?? {};
-  const eventHistory = (detail.event_history as Array<{ event_id: string; event_type: string; occurred_at: string }> | undefined) ?? [];
-  return <aside className="transaction-sidepanel" role="dialog" aria-modal="false" aria-labelledby="transaction-title" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}><button ref={close} className="dialog-close" onClick={onClose} aria-label="Detailpanel schließen">×</button><span className="eyebrow">TRANSAKTION</span><div className="transaction-dialog-head"><div><h2 id="transaction-title">{transaction.counterparty || "Unbekannter Händler"}</h2><p>{transaction.description || transaction.normalized_description || "Keine Beschreibung"}</p></div><strong className="dialog-amount">{money(transaction.amount, transaction.currency)}</strong></div><dl className="transaction-facts compact"><div><dt>Datum</dt><dd>{date(transaction.booking_date)}</dd></div><div><dt>Konto</dt><dd>{accountName ?? transaction.account_id ?? "–"}</dd></div><div><dt>Händler</dt><dd>{transaction.counterparty || "–"}</dd></div><div><dt>Beschreibung</dt><dd>{transaction.description || transaction.normalized_description || "–"}</dd></div></dl><section className="sidepanel-section"><h3>Kategorie</h3><div className="sidepanel-category"><select aria-label="Kategorie" value={category} onChange={(event) => setCategory(event.target.value)}>{categoryOptions.map((item) => <option value={item.category_code} key={item.category_code}>{item.display_name}</option>)}</select><button className="primary small" disabled={busy || category === "UNCLASSIFIED"} onClick={() => saveCategory(false)}>Kategorie ändern</button><button className="secondary small" disabled={busy || category === "UNCLASSIFIED"} onClick={() => saveCategory(true)}>Regel erstellen</button><button className="text-button" onClick={() => setCreating((value) => !value)}>Neue Kategorie</button></div>{creating && <div className="new-category-row"><input aria-label="Name der neuen Kategorie" value={newCategory} onChange={(event) => setNewCategory(event.target.value)} /><button className="secondary small" onClick={addCategory}>Anlegen</button></div>}</section><section className="sidepanel-section ai-assist"><h3>AI-Vorschlag</h3>{suggestion ? <><p><strong>{categoryLabel(suggestion.category_code)}</strong> · {percent(suggestion.raw_confidence)}</p><small>Lokaler Vorschlag – erst deine Entscheidung wirkt fachlich.</small><div className="sidepanel-actions"><button className="primary small" disabled={busy} onClick={() => decideSuggestion("confirm")}>Bestätigen</button><button className="secondary small" disabled={busy || category === suggestion.category_code} onClick={() => decideSuggestion("correct")}>Korrigieren</button><button className="secondary small" disabled={busy} onClick={() => decideSuggestion("reject")}>Ablehnen</button></div></> : <p>Kein offener AI-Vorschlag.</p>}</section>{feedback && <div className="toast compact" role="status">{feedback}</div>}<section className="sidepanel-section"><h3>Relationen</h3><dl className="transaction-facts compact"><div><dt>Dublette</dt><dd>{relationStatusLabel(String(reconciliation.duplicate_status ?? transaction.duplicate_status ?? "NONE"))}</dd></div><div><dt>Transfer</dt><dd>{relationStatusLabel(String(reconciliation.transfer_status ?? transaction.transfer_status ?? "NONE"))}</dd></div><div><dt>Rückerstattung</dt><dd>{relationStatusLabel(String(reconciliation.refund_status ?? transaction.refund_status ?? "NONE"))}</dd></div></dl><small>Sicherheitskritische Relationen können hier nicht gesammelt geändert werden.</small></section><section className="sidepanel-section"><h3>Importquelle</h3>{transaction.export_id ? <button className="secondary small" onClick={() => onOpenImport(transaction.export_id!)}>Import öffnen</button> : <p>Keine Importquelle hinterlegt.</p>}</section><section className="sidepanel-section"><details open><summary>Audit · {eventHistory.length} Ereignisse</summary><div className="sidepanel-audit">{eventHistory.map((event) => <div key={event.event_id}><strong>{eventLabel(event.event_type).title}</strong><small>{date(event.occurred_at)}</small></div>)}</div></details></section></aside>;
+  const eventHistory = (detail.event_history as Array<{ event_id?: string; sequence_number?: number; event_type: string; occurred_at: string }> | undefined) ?? [];
+  return <aside className="transaction-sidepanel" role="dialog" aria-modal="false" aria-labelledby="transaction-title" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}><button ref={close} className="dialog-close" onClick={onClose} aria-label="Detailpanel schließen">×</button><span className="eyebrow">TRANSAKTION</span><div className="transaction-dialog-head"><div><h2 id="transaction-title">{transaction.counterparty || "Unbekannter Händler"}</h2><p>{transaction.description || transaction.normalized_description || "Keine Beschreibung"}</p></div><strong className="dialog-amount">{money(transaction.amount, transaction.currency)}</strong></div><dl className="transaction-facts compact"><div><dt>Datum</dt><dd>{date(transaction.booking_date)}</dd></div><div><dt>Konto</dt><dd>{accountName ?? transaction.account_id ?? "–"}</dd></div><div><dt>Händler</dt><dd>{transaction.counterparty || "–"}</dd></div><div><dt>Beschreibung</dt><dd>{transaction.description || transaction.normalized_description || "–"}</dd></div></dl><section className="sidepanel-section"><h3>Kategorie</h3><div className="sidepanel-category"><select aria-label="Kategorie" value={category} onChange={(event) => setCategory(event.target.value)}>{categoryOptions.map((item) => <option value={item.category_code} key={item.category_code}>{item.display_name}</option>)}</select><button className="primary small" disabled={busy || category === "UNCLASSIFIED"} onClick={() => saveCategory(false)}>Kategorie ändern</button><button className="secondary small" disabled={busy || category === "UNCLASSIFIED"} onClick={() => saveCategory(true)}>Regel erstellen</button><button className="text-button" onClick={() => setCreating((value) => !value)}>Neue Kategorie</button></div>{creating && <div className="new-category-row"><input aria-label="Name der neuen Kategorie" value={newCategory} onChange={(event) => setNewCategory(event.target.value)} /><button className="secondary small" onClick={addCategory}>Anlegen</button></div>}</section><section className="sidepanel-section ai-assist"><h3>AI-Vorschlag</h3>{suggestion ? <><p><strong>{categoryLabel(suggestion.category_code)}</strong> · {percent(suggestion.raw_confidence)}</p><small>Lokaler Vorschlag – erst deine Entscheidung wirkt fachlich.</small><div className="sidepanel-actions"><button className="primary small" disabled={busy} onClick={() => decideSuggestion("confirm")}>Bestätigen</button><button className="secondary small" disabled={busy || category === suggestion.category_code} onClick={() => decideSuggestion("correct")}>Korrigieren</button><button className="secondary small" disabled={busy} onClick={() => decideSuggestion("reject")}>Ablehnen</button></div></> : <p>Kein offener AI-Vorschlag.</p>}</section>{feedback && <div className="toast compact" role="status">{feedback}</div>}<section className="sidepanel-section"><h3>Relationen</h3><dl className="transaction-facts compact"><div><dt>Dublette</dt><dd>{relationStatusLabel(String(reconciliation.duplicate_status ?? transaction.duplicate_status ?? "NONE"))}</dd></div><div><dt>Transfer</dt><dd>{relationStatusLabel(String(reconciliation.transfer_status ?? transaction.transfer_status ?? "NONE"))}</dd></div><div><dt>Rückerstattung</dt><dd>{relationStatusLabel(String(reconciliation.refund_status ?? transaction.refund_status ?? "NONE"))}</dd></div></dl><small>Sicherheitskritische Relationen können hier nicht gesammelt geändert werden.</small></section><section className="sidepanel-section"><h3>Importquelle</h3>{transaction.export_id ? <button className="secondary small" onClick={() => onOpenImport(transaction.export_id!)}>Import öffnen</button> : <p>Keine Importquelle hinterlegt.</p>}</section><section className="sidepanel-section"><details open><summary>Audit · {eventHistory.length} Ereignisse</summary><div className="sidepanel-audit">{eventHistory.map((event, index) => <div key={event.event_id ?? `${event.sequence_number ?? index}-${event.event_type}`}><strong>{eventLabel(event.event_type).title}</strong><small>{date(event.occurred_at)}</small></div>)}</div></details></section></aside>;
 }
 
 type CategorySuggestionRow = {
@@ -1021,20 +1446,24 @@ const REVIEW_LABELS: Record<ReviewType, string> = {
   FORMAT_CHANGE: "Formatänderungen",
 };
 
-function Reviews({ inbox, focusAccountId, onOpen }: { inbox: QueryResult<ReviewInbox>; focusAccountId?: string; onOpen: (target: ReviewItem["action_target"]) => void }) {
+function Workspace({ inbox, focusAccountId, onOpen }: { inbox: QueryResult<ReviewInbox>; focusAccountId?: string; onOpen: (target: ReviewItem["action_target"]) => void }) {
   const [filter, setFilter] = useState<ReviewType | "ALL">("ALL");
   const data = inbox.envelope?.data;
   const accountItems = data?.items.filter((item) => !focusAccountId || item.account_ids.includes(focusAccountId)) ?? [];
   const items = accountItems.filter((item) => filter === "ALL" || item.review_type === filter);
   const visibleCounts = (Object.keys(REVIEW_LABELS) as ReviewType[]).reduce((counts, type) => ({ ...counts, [type]: focusAccountId ? accountItems.filter((item) => item.review_type === type).length : data?.items_by_type[type] ?? 0 }), {} as Record<ReviewType, number>);
+  const totalOpen = focusAccountId ? accountItems.length : data?.total_open ?? 0;
+  const affectedAccounts = new Set(accountItems.flatMap((item) => item.account_ids)).size;
+  const urgent = accountItems.filter((item) => item.severity === "ERROR").length;
   const boundary = { ...inbox, state: inbox.state === "EMPTY" ? "READY" as const : inbox.state };
   return <QueryBoundary result={boundary}>{() => <>
-    <section className="section-intro review-center-head"><div><span className="eyebrow">ZENTRALER ARBEITSVORRAT</span><h2>Prüfen</h2><p>{focusAccountId ? "Offene Aufgaben dieses Kontos. Der Zähler stammt aus derselben zentralen Inbox." : "Alle offenen fachlichen Aufgaben aus Kategorien, Importen, Konten und Relationen an einem Ort."}</p></div><strong>{focusAccountId ? accountItems.length : data?.total_open ?? 0}<small>offene Aufgaben</small></strong></section>
-    <section className="review-summary-grid" aria-label="Offene Aufgaben nach Typ">
+    <section className="section-intro workspace-heading"><div><span className="eyebrow">PRIVATER ARBEITSBEREICH</span><h2>Offene Aufgaben bearbeiten</h2><p>{focusAccountId ? "Offene Aufgaben dieses Kontos. Der Zähler stammt aus derselben zentralen Inbox." : "Vervollständige fehlende Finanzdaten und bearbeite fachliche Prüfungen an einem Ort."}</p></div>{items.length > 0 && <button className="primary" onClick={() => onOpen(items[0].action_target)}>Weiterarbeiten →</button>}</section>
+    <section className={`panel workspace-status ${totalOpen > 0 ? "attention" : "complete"}`} aria-label="Arbeitsstand"><span className="workspace-status-icon" aria-hidden="true">{totalOpen > 0 ? "!" : "✓"}</span><div><span className="eyebrow">ARBEITSSTAND</span><h3>{totalOpen > 0 ? `${totalOpen} Aufgaben benötigen Aufmerksamkeit` : "Alles ist geprüft"}</h3><p>{focusAccountId ? "Gefiltert auf das ausgewählte Konto." : "Die Aufgaben werden direkt aus den vorhandenen Finance-Projektionen aufgebaut."}</p></div><dl className="workspace-status-metrics"><div><dt>Offene Aufgaben</dt><dd>{totalOpen}</dd></div><div><dt>Betroffene Konten</dt><dd>{affectedAccounts}</dd></div><div><dt>Dringend</dt><dd>{urgent}</dd></div></dl></section>
+    <div className="workspace-section-heading"><div><span className="eyebrow">AUFGABEN-INBOX</span><h2>Nach Bereich filtern</h2></div><button className={filter === "ALL" ? "workspace-all-filter active" : "workspace-all-filter"} onClick={() => setFilter("ALL")}>Alle Aufgaben · {totalOpen}</button></div>
+    <section className="workspace-summary-grid" aria-label="Offene Aufgaben nach Typ">
       {(Object.keys(REVIEW_LABELS) as ReviewType[]).map((type) => <button key={type} className={filter === type ? "panel active" : "panel"} onClick={() => setFilter(filter === type ? "ALL" : type)}><span>{REVIEW_LABELS[type]}</span><strong>{visibleCounts[type]}</strong></button>)}
     </section>
-    <div className="review-filter"><button className={filter === "ALL" ? "active" : ""} onClick={() => setFilter("ALL")}>Alle Aufgaben</button>{filter !== "ALL" && <span>{REVIEW_LABELS[filter]}</span>}</div>
-    <section className="review-list">{items.length === 0 ? <div className="panel page-state"><span className="empty-icon">✓</span><h3>Alles geprüft</h3><p>In dieser Gruppe sind keine offenen Aufgaben.</p></div> : items.map((item) => <article className={`panel review-card severity-${item.severity.toLowerCase()}`} key={item.review_id}><span className="review-kind">{REVIEW_LABELS[item.review_type]}</span><div><h3>{item.title}</h3><p>{item.description}</p><small>{date(item.created_at)}</small></div><div className="review-actions"><span className={`status-badge ${item.severity === "ERROR" ? "missed" : "paused"}`}>{item.severity === "ERROR" ? "Dringend" : item.severity === "WARNING" ? "Zu prüfen" : "Hinweis"}</span><button className="primary small" onClick={() => onOpen(item.action_target)}>Öffnen</button><details><summary>Technische Details</summary><code>{item.entity_type} · {item.entity_id}</code></details></div></article>)}</section>
+    <section className="workspace-task-grid">{items.length === 0 ? <div className="panel page-state workspace-empty"><span className="empty-icon">✓</span><h3>Alles erledigt</h3><p>In diesem Bereich sind keine offenen Aufgaben vorhanden.</p></div> : items.map((item) => <article className={`panel workspace-task severity-${item.severity.toLowerCase()}`} key={item.review_id}><div className="workspace-task-status"><span>{REVIEW_LABELS[item.review_type]}</span><span className={`status-badge ${item.severity === "ERROR" ? "missed" : item.severity === "WARNING" ? "paused" : "confirmed"}`}>{item.severity === "ERROR" ? "Dringend" : item.severity === "WARNING" ? "Prüfung offen" : "Hinweis"}</span></div><h3>{item.title}</h3><p>{item.description}</p><small>Erstellt am {date(item.created_at)}</small><footer><button className={item.severity === "ERROR" ? "primary small" : "secondary small"} onClick={() => onOpen(item.action_target)}>Aufgabe öffnen →</button><details><summary>Technische Details</summary><code>{item.entity_type} · {item.entity_id}</code></details></footer></article>)}</section>
   </>}</QueryBoundary>;
 }
 

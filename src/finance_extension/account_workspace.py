@@ -385,6 +385,12 @@ def account_balance_ledger(
                     "carry_forward_source_reconciliation_id": payload.get(
                         "carry_forward_source_reconciliation_id"
                     ),
+                    "opening_balance_source": payload.get("opening_balance_source"),
+                    "source_period": payload.get("source_period"),
+                    "source_account_id": payload.get("source_account_id"),
+                    "source_projection_sequence": payload.get(
+                        "source_projection_sequence"
+                    ),
                     "sequence_number": event["sequence_number"],
                 }
             )
@@ -401,6 +407,10 @@ def account_balance_ledger(
                     "correction_status": "MANUAL",
                     "adjustment_reason": None,
                     "carry_forward_source_reconciliation_id": None,
+                    "opening_balance_source": None,
+                    "source_period": None,
+                    "source_account_id": None,
+                    "source_projection_sequence": None,
                     "sequence_number": event["sequence_number"],
                 }
             )
@@ -417,6 +427,10 @@ def account_balance_ledger(
                     "correction_status": "CORRECTED" if event_type == "BalanceSnapshotCorrected" else "AS_RECORDED",
                     "adjustment_reason": payload.get("correction_reason"),
                     "carry_forward_source_reconciliation_id": None,
+                    "opening_balance_source": None,
+                    "source_period": None,
+                    "source_account_id": None,
+                    "source_projection_sequence": None,
                     "sequence_number": event["sequence_number"],
                 }
             )
@@ -433,6 +447,10 @@ def account_balance_ledger(
                     "correction_status": payload["status"],
                     "adjustment_reason": None,
                     "carry_forward_source_reconciliation_id": None,
+                    "opening_balance_source": None,
+                    "source_period": None,
+                    "source_account_id": None,
+                    "source_projection_sequence": None,
                     "sequence_number": event["sequence_number"],
                 }
             )
