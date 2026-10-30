@@ -30,10 +30,14 @@ def _months_between(start: str, end: str) -> list[str]:
     return result
 
 
-def _account_active_in_month(account: dict[str, Any], month: str) -> bool:
-    opened_at = str(account.get("opened_at") or "0001-01-01")[:7]
+def _account_expected_in_month(
+    account: dict[str, Any], *, first_import_month: str, month: str
+) -> bool:
+    # Accounts created while importing historical data default to today's date.
+    # The first observed import is therefore the authoritative lower bound for
+    # completeness; an explicit closing date still ends future expectations.
     closed_at = str(account.get("closed_at") or "9999-12-31")[:7]
-    return opened_at <= month <= closed_at
+    return first_import_month <= month <= closed_at
 
 
 def monthly_workspace_status(
@@ -108,8 +112,11 @@ def monthly_workspace_status(
         expected = {
             account_id
             for account_id, first_month in first_import_by_account.items()
-            if first_month <= month
-            and _account_active_in_month(account_rows.get(account_id, {}), month)
+            if _account_expected_in_month(
+                account_rows.get(account_id, {}),
+                first_import_month=first_month,
+                month=month,
+            )
         }
         completed = completed_by_month.get(month, set())
         present = completed | transaction_accounts_by_month.get(month, set())

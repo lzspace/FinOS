@@ -988,6 +988,7 @@ class GermanMultiAccountImportTests(unittest.TestCase):
         )
         history_row = application.query("GetImportHistory")["data"]["imports"][0]
         self.assertEqual(history_row["record_count"], 5)
+        self.assertEqual(history_row["workflow_status"], "REVIEW_REQUIRED")
         self.assertEqual(history_row["account_count"], 3)
         self.assertEqual(
             set(history_row["account_names"]),
@@ -998,6 +999,14 @@ class GermanMultiAccountImportTests(unittest.TestCase):
             },
         )
         self.assertIsNotNone(history_row["completed_at"])
+        month_status = application.query(
+            "GetMonthlyWorkspaceStatus", {"as_of": "2024-12-31"}
+        )["data"]["months"][0]
+        self.assertEqual(month_status["month"], "2024-12")
+        self.assertEqual(month_status["import_status"], "COMPLETE")
+        self.assertEqual(month_status["status"], "REVIEW")
+        self.assertEqual(month_status["expected_account_count"], 3)
+        self.assertEqual(month_status["completed_account_count"], 3)
 
         period = {"mode": "MONTH", "year": 2024, "month": 12}
         overviews = application.query("ListAccountOverviews", {"period": period})["data"]

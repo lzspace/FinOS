@@ -133,6 +133,7 @@ function ipcFor(
         imported_at: "2026-07-24T10:00:00Z", completed_at: "2026-07-24T10:05:00Z",
         period_start: "2026-07-01", period_end: "2026-07-31", section_count: 1,
         completed_section_count: activeStep === 5 ? 1 : 0, status: activeStep === 5 ? "COMPLETED" : "ANALYZED",
+        workflow_status: activeStep === 5 ? "REVIEW_REQUIRED" : "ANALYZED",
         record_count: 2, account_count: 1, account_names: ["Girokonto"], open_review_count: 1,
         import_profile: analysis.import_profile, parser_version: "GermanMultiAccountCsvV1@1.0.0",
         source_file_hash: analysis.source_file_hash, resumable: activeStep !== 5,
@@ -528,6 +529,7 @@ describe("Importassistent 1.2.0", () => {
     fireEvent.click(screen.getByText("Importdetails"));
     expect(screen.getByText("2", { selector: ".result-metrics strong" })).toBeInTheDocument();
     expect(screen.getByText("BANK_A · 2026-07")).toBeInTheDocument();
+    expect(screen.getByText("Prüfung erforderlich")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Offene Prüfungen");

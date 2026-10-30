@@ -99,6 +99,11 @@ def import_history(store: LocalFinanceStore) -> list[dict[str, Any]]:
             item.get("export_id") == export_id and item.get("status") == "PROPOSED"
             for item in relation_reviews
         ) + unclassified_by_export.get(export_id, 0)
+        workflow_status = (
+            "REVIEW_REQUIRED"
+            if analysis["status"] == "COMPLETED" and open_review_count > 0
+            else analysis["status"]
+        )
         rows.append(
             {
                 "export_id": export_id,
@@ -120,6 +125,7 @@ def import_history(store: LocalFinanceStore) -> list[dict[str, Any]]:
                 ],
                 "open_review_count": open_review_count,
                 "status": analysis["status"],
+                "workflow_status": workflow_status,
                 "import_profile": analysis["import_profile"],
                 "profile_version": analysis["profile_version"],
                 "parser_version": "GermanMultiAccountCsvV1@1.0.0",

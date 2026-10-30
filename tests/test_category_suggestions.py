@@ -11,6 +11,7 @@ from cryptography.fernet import Fernet
 from finance_extension.application import FinanceApplicationService
 from finance_extension.category_shadow import (
     category_evaluation_summary,
+    category_suggestion_review_summary,
     category_suggestion_states,
     confirm_category_suggestion,
     correct_category_suggestion,
@@ -283,6 +284,18 @@ class CategorySuggestionTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 2)
         self.assertEqual(summary.call_count, 1)
+
+    def test_review_summary_skips_expensive_suggestion_hydration(self) -> None:
+        self._generate()
+
+        with patch(
+            "finance_extension.category_shadow.category_evaluation_summary",
+            wraps=category_evaluation_summary,
+        ) as evaluation_summary:
+            result = category_suggestion_review_summary(self.store)
+
+        self.assertEqual(result["pending_count"], 1)
+        self.assertEqual(evaluation_summary.call_count, 0)
 
 
 if __name__ == "__main__":

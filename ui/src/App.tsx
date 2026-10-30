@@ -48,7 +48,8 @@ import type {
 import { eventLabel } from "./eventLabels";
 import { statusLabel, statusTone } from "./statusLabels";
 
-type PageId = "overview" | "accounts" | "transactions" | "categories" | "recurring" | "forecast" | "wealth" | "reviews" | "imports" | "settings";
+type PageId = "overview" | "workspace" | "accounts" | "transactions" | "categories" | "recurring" | "forecast" | "wealth" | "reviews" | "imports" | "settings";
+type WorkspaceTab = "tasks" | "bookings" | "categories";
 type QueryResult<T> = { state: ViewState; envelope?: Envelope<T>; error?: string };
 type ReviewType = "CATEGORY" | "AI_SUGGESTION" | "BALANCE" | "IMPORT" | "RELATION" | "FORMAT_CHANGE";
 type ReviewItem = {
@@ -108,7 +109,7 @@ type OpeningBalanceSuggestion = {
     relevant_transaction_count?: number;
   };
 };
-type NavigationTarget = ReviewItem["action_target"] | null;
+type NavigationTarget = (ReviewItem["action_target"] & { period?: string }) | null;
 
 const money = (value: string | null | undefined, currency = "EUR") =>
   value == null
@@ -392,11 +393,9 @@ function PeriodSelector({ controls }: { controls: PeriodControls }) {
 
 const navigation: Array<{ id: PageId; text: string; icon: string; capability?: string }> = [
   { id: "overview", text: "Übersicht", icon: "⌂" },
-  { id: "transactions", text: "Transaktionen", icon: "↕", capability: "classification" },
+  { id: "workspace", text: "Arbeitsbereich", icon: "✓", capability: "review_inbox" },
   { id: "accounts", text: "Konten", icon: "▤", capability: "accounts" },
-  { id: "categories", text: "Kategorien", icon: "◫", capability: "classification" },
   { id: "imports", text: "Importe", icon: "⇩", capability: "imports" },
-  { id: "reviews", text: "Prüfen", icon: "✓", capability: "review_inbox" },
   { id: "wealth", text: "Vermögen", icon: "◈", capability: "wealth" },
   { id: "forecast", text: "Prognose", icon: "⌁", capability: "forecasting" },
   { id: "settings", text: "Einstellungen", icon: "⚙" },
@@ -408,6 +407,7 @@ export function App() {
   const [reviewRefresh, setReviewRefresh] = useState(0);
   const reviewInbox = useFinanceQuery<ReviewInbox>("GetReviewInbox", { limit: 200, refresh: reviewRefresh });
   const [page, setPage] = useState<PageId>("overview");
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("tasks");
   const [navigationTarget, setNavigationTarget] = useState<NavigationTarget>(null);
   const periodControls = usePeriodSelection();
   const month = periodControls.period.start_date.slice(0, 7);
@@ -416,15 +416,19 @@ export function App() {
   const visibleNavigation = navigation.filter((item) => !item.capability || enabled[item.capability]);
   const openReviews = reviewInbox.envelope?.data.total_open ?? 0;
   const navigate = (nextPage: PageId, target: NavigationTarget = null) => {
-    if (nextPage === "reviews") setReviewRefresh((value) => value + 1);
-    if (nextPage === "imports" && target?.view === "month" && /^\d{4}-\d{2}$/.test(target.entity_id)) {
-      const [targetYear, targetMonth] = target.entity_id.split("-").map(Number);
+    const targetWorkspaceTab = nextPage === "transactions" ? "bookings" : nextPage === "categories" ? "categories" : nextPage === "reviews" ? "tasks" : null;
+    if (nextPage === "reviews" || nextPage === "workspace") setReviewRefresh((value) => value + 1);
+    const targetPeriod = target?.period ?? (nextPage === "imports" && target?.view === "month" ? target.entity_id : undefined);
+    if (targetPeriod && /^\d{4}-\d{2}$/.test(targetPeriod)) {
+      const [targetYear, targetMonth] = targetPeriod.split("-").map(Number);
       periodControls.setMode("MONTH");
       periodControls.setYear(targetYear);
       periodControls.setMonth(targetMonth);
     }
+    if (targetWorkspaceTab) setWorkspaceTab(targetWorkspaceTab);
+    else if (nextPage === "workspace") setWorkspaceTab("tasks");
     setNavigationTarget(target);
-    setPage(nextPage);
+    setPage(targetWorkspaceTab ? "workspace" : nextPage);
   };
 
   if (startup.state === "LOADING") return <FullState state="LOADING" />;
@@ -451,7 +455,7 @@ export function App() {
         <nav aria-label="Hauptnavigation">
           {visibleNavigation.map((item) => (
             <button key={item.id} className={page === item.id ? "nav-item active" : "nav-item"} onClick={() => navigate(item.id)} aria-current={page === item.id ? "page" : undefined}>
-              <span aria-hidden="true">{item.icon}</span>{item.text}{item.id === "reviews" && <span className="nav-count" aria-label={`${openReviews} offene Aufgaben`}>{openReviews}</span>}
+              <span aria-hidden="true">{item.icon}</span>{item.text}{item.id === "workspace" && <span className="nav-count" aria-label={`${openReviews} offene Aufgaben`}>{openReviews}</span>}
             </button>
           ))}
         </nav>
@@ -464,18 +468,16 @@ export function App() {
       <main className="content" id="main-content">
         <header className="topbar">
           <div><span className="eyebrow">PRIVATER ARBEITSBEREICH</span><h1>{navigation.find((item) => item.id === page)?.text}</h1></div>
-          {page !== "overview" && page !== "settings" && page !== "imports" && page !== "reviews" && (
+          {page !== "overview" && page !== "settings" && page !== "imports" && (
             <PeriodSelector controls={periodControls} />
           )}
         </header>
-        {page === "overview" && <Overview period={periodControls.period} periodPayload={periodControls.payload} reviewInbox={reviewInbox} onNavigate={navigate} />}
+        {page === "overview" && <Overview period={periodControls.period} periodPayload={periodControls.payload} reviewInbox={reviewInbox} onReviewResolved={() => setReviewRefresh((value) => value + 1)} onNavigate={navigate} />}
         {page === "accounts" && <AccountsOverview period={periodControls.period} periodPayload={periodControls.payload} focusId={navigationTarget?.page === "accounts" ? navigationTarget.entity_id : undefined} focusView={navigationTarget?.page === "accounts" ? navigationTarget.view : undefined} onNavigate={navigate} />}
-        {page === "transactions" && <Transactions month={month} periodPayload={periodControls.payload} focusId={navigationTarget?.page === "transactions" ? navigationTarget.entity_id : undefined} onNavigate={navigate} />}
-        {page === "categories" && <Categories month={month} initialTab={navigationTarget?.page === "categories" ? navigationTarget.view : undefined} focusId={navigationTarget?.page === "categories" ? navigationTarget.entity_id : undefined} />}
+        {page === "workspace" && <UnifiedFinanceWorkspace activeTab={workspaceTab} onTabChange={(tab) => { setWorkspaceTab(tab); setNavigationTarget(null); }} inbox={reviewInbox} month={month} periodPayload={periodControls.payload} navigationTarget={navigationTarget} onNavigate={navigate} />}
         {page === "recurring" && <Recurring month={month} />}
         {page === "forecast" && <Forecast month={month} />}
         {page === "wealth" && <Wealth asOf={asOf} />}
-        {page === "reviews" && <Workspace inbox={reviewInbox} focusAccountId={navigationTarget?.page === "reviews" && navigationTarget.view === "account" ? navigationTarget.entity_id : undefined} onOpen={(target) => navigate(target.page, target)} />}
         {page === "imports" && <Imports uiMonth={month} manifest={manifest.envelope.data} focusExportId={navigationTarget?.page === "imports" ? navigationTarget.entity_id : undefined} focusView={navigationTarget?.page === "imports" ? navigationTarget.view : undefined} onOpenReviews={() => navigate("reviews")} />}
         {page === "settings" && <Settings manifest={manifest.envelope.data} />}
       </main>
@@ -547,11 +549,12 @@ function QueryBoundary<T>({ result, children, empty = "Für diesen Zeitraum lieg
   return <>{(result.state === "STALE" || result.state === "PARTIAL") && <div className="status-banner" role="status"><strong>{result.state === "STALE" ? statusLabel("STALE") : "Teilprojektion"}</strong><span>{result.envelope.projection_sequence < result.envelope.event_store_sequence ? "Die lokale Ansicht wird noch aktualisiert." : result.state === "STALE" ? "Mindestens ein fachlicher Snapshot ist nicht aktuell." : "Ein Teil der lokalen Daten ist noch nicht verfügbar."}</span><details><summary>Technische Details</summary><code>Projektion #{result.envelope.projection_sequence} · Event Store #{result.envelope.event_store_sequence}</code></details></div>}{children(result.envelope.data)}</>;
 }
 
-function Overview({ period, reviewInbox, onNavigate }: { period: PeriodSelection; periodPayload: Record<string, unknown>; reviewInbox: QueryResult<ReviewInbox>; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
+function Overview({ period, reviewInbox, onReviewResolved, onNavigate }: { period: PeriodSelection; periodPayload: Record<string, unknown>; reviewInbox: QueryResult<ReviewInbox>; onReviewResolved: () => void; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
   const [view, setView] = useState<DashboardView>("CURRENT");
   const [analysisWindow, setAnalysisWindow] = useState<AnalysisWindow>(6);
+  const [monthlyRefresh, setMonthlyRefresh] = useState(0);
   const availablePeriods = useFinanceQuery<AvailablePeriods>("GetAvailablePeriods");
-  const monthlyWorkspace = useFinanceQuery<MonthlyWorkspaceStatus>("GetMonthlyWorkspaceStatus");
+  const monthlyWorkspace = useFinanceQuery<MonthlyWorkspaceStatus>("GetMonthlyWorkspaceStatus", { refresh: monthlyRefresh });
   const periodData = availablePeriods.envelope?.data;
   const latestMonth = periodData?.available_months.at(-1) ?? period.start_date.slice(0, 7);
   const [latestYear, latestMonthNumber] = latestMonth.split("-").map(Number);
@@ -586,7 +589,7 @@ function Overview({ period, reviewInbox, onNavigate }: { period: PeriodSelection
       {view === "CURRENT" && <div className="analysis-window" role="group" aria-label="Analysezeitraum">{([3, 6, 12, "ALL"] as AnalysisWindow[]).map((value) => <button key={value} className={analysisWindow === value ? "active" : ""} onClick={() => setAnalysisWindow(value)}>{value === "ALL" ? "Gesamt" : `${value} Monate`}</button>)}</div>}
     </section>
     <div className="dashboard-segment" role="tablist" aria-label="Dashboardansicht"><button role="tab" aria-selected={view === "CURRENT"} onClick={() => setView("CURRENT")}>Aktuell</button><button role="tab" aria-selected={view === "WORKSPACE"} onClick={() => setView("WORKSPACE")}>Arbeitsbereich{(inbox?.total_open ?? 0) > 0 && <span>{inbox?.total_open}</span>}</button></div>
-    {view === "WORKSPACE" ? <DashboardWorkspace monthlyStatus={monthlyWorkspace} inbox={reviewInbox} accounts={accounts} onNavigate={onNavigate} /> : <QueryBoundary result={result}>{(data) => <>
+    {view === "WORKSPACE" ? <DashboardWorkspace monthlyStatus={monthlyWorkspace} inbox={reviewInbox} accounts={accounts} onReviewResolved={() => { setMonthlyRefresh((value) => value + 1); onReviewResolved(); }} onNavigate={onNavigate} /> : <QueryBoundary result={result}>{(data) => <>
     <DashboardFreshness result={accounts} period={latestPeriod} monthly={monthlyWorkspace.envelope?.data} onOpenMissing={() => setView("WORKSPACE")} />
     <div className="dashboard-section-heading"><div><span className="eyebrow">FINANZLAGE</span><h2>Zentrale Kennzahlen</h2></div><small>{latestPeriod.display_label}</small></div>
     <section className="metric-grid dashboard-kpi-grid" aria-label="Zentrale Finanzkennzahlen">
@@ -616,8 +619,9 @@ const WORKSPACE_MONTH_STATUS: Record<WorkspaceMonthStatus, { label: string; symb
   OUTSIDE: { label: "Noch nicht erfasst", symbol: "○" },
 };
 
-function DashboardWorkspace({ monthlyStatus, inbox, accounts, onNavigate }: { monthlyStatus: QueryResult<MonthlyWorkspaceStatus>; inbox: QueryResult<ReviewInbox>; accounts: QueryResult<AccountOverviewList>; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
+function DashboardWorkspace({ monthlyStatus, inbox, accounts, onReviewResolved, onNavigate }: { monthlyStatus: QueryResult<MonthlyWorkspaceStatus>; inbox: QueryResult<ReviewInbox>; accounts: QueryResult<AccountOverviewList>; onReviewResolved: () => void; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
   const [scope, setScope] = useState<"12" | "YEAR" | "ALL">("12");
+  const [activeSuggestionMonth, setActiveSuggestionMonth] = useState<string | null>(null);
   const workspaceData = monthlyStatus.envelope?.data;
   const currentMonth = workspaceData?.current_month ?? localISODate().slice(0, 7);
   const currentYear = Number(currentMonth.slice(0, 4));
@@ -653,6 +657,19 @@ function DashboardWorkspace({ monthlyStatus, inbox, accounts, onNavigate }: { mo
     else if (item.reviews[0]) onNavigate(item.reviews[0].action_target.page, item.reviews[0].action_target);
     else onNavigate("imports", { page: "imports", view: "month", entity_id: item.month });
   };
+  const openMonthReview = (item: WorkspaceMonth, type: ReviewType) => {
+    if (type === "CATEGORY") {
+      onNavigate("transactions", { page: "transactions", view: "uncategorized", entity_id: "", period: item.month });
+      return;
+    }
+    if (type === "AI_SUGGESTION") {
+      onNavigate("categories", { page: "categories", view: "suggestions", entity_id: "", period: item.month });
+      return;
+    }
+    const review = item.reviews.find((candidate) => candidate.review_type === type);
+    if (review) onNavigate(review.action_target.page, review.action_target);
+    else onNavigate("reviews", { page: "reviews", view: "month", entity_id: item.month, period: item.month });
+  };
   const firstAction = actionableMonths[0];
   return <>
     <section className="panel workspace-overview" aria-label="Arbeitsstand im Dashboard">
@@ -670,13 +687,60 @@ function DashboardWorkspace({ monthlyStatus, inbox, accounts, onNavigate }: { mo
     </section>
 
     <div className="workspace-section-heading"><div><span className="eyebrow">MONATLICH WEITERARBEITEN</span><h2>Monate mit offenen Punkten</h2></div></div>
-    <section className="workspace-month-grid">{actionableMonths.length === 0 ? <div className="panel page-state workspace-empty"><span className="empty-icon">✓</span><h3>Alle Monate vollständig</h3><p>Für den dargestellten Zeitraum sind keine offenen Monate vorhanden.</p></div> : actionableMonths.slice(0, 6).map((item) => <article className={`panel workspace-month-card ${item.status.toLowerCase()}`} key={item.month}><div><span className={`status-badge ${item.status === "MISSING" ? "missed" : "paused"}`}>{WORKSPACE_MONTH_STATUS[item.status].label}</span><h3>{item.label}</h3><p>{item.status === "MISSING" ? `${item.details?.completed_account_count ?? 0} von ${item.details?.expected_account_count ?? 0} erwarteten Konten vollständig.` : `${item.details?.open_review_count ?? item.reviews.length} ${(item.details?.open_review_count ?? item.reviews.length) === 1 ? "offene Aufgabe" : "offene Aufgaben"}`}</p></div>{item.details && item.details.open_review_count > 0 && <ul>{(Object.keys(REVIEW_LABELS) as ReviewType[]).map((type) => [type, item.details!.review_counts[type]] as const).filter(([, count]) => count > 0).map(([type, count]) => <li key={type}><span>{REVIEW_LABELS[type]}</span><strong>{count}</strong></li>)}</ul>}<button className={item.status === "MISSING" ? "primary small" : "secondary small"} onClick={() => openMonth(item)}>{item.status === "MISSING" ? "Import starten" : `${item.label.split(" ")[0]} bearbeiten`} →</button></article>)}</section>
+    <section className="workspace-month-grid">{actionableMonths.length === 0 ? <div className="panel page-state workspace-empty"><span className="empty-icon">✓</span><h3>Alle Monate vollständig</h3><p>Für den dargestellten Zeitraum sind keine offenen Monate vorhanden.</p></div> : actionableMonths.slice(0, 6).map((item) => {
+      const categoryCount = item.details?.review_counts.CATEGORY ?? 0;
+      const suggestionCount = item.details?.review_counts.AI_SUGGESTION ?? 0;
+      return <article className={`panel workspace-month-card ${item.status.toLowerCase()} ${activeSuggestionMonth === item.month ? "expanded" : ""}`} key={item.month}>
+        <div><span className={`status-badge ${item.status === "MISSING" ? "missed" : "paused"}`}>{WORKSPACE_MONTH_STATUS[item.status].label}</span><h3>{item.label}</h3><p>{item.status === "MISSING" ? `${item.details?.completed_account_count ?? 0} von ${item.details?.expected_account_count ?? 0} erwarteten Konten vollständig.` : `${item.details?.open_review_count ?? item.reviews.length} ${(item.details?.open_review_count ?? item.reviews.length) === 1 ? "offene Aufgabe" : "offene Aufgaben"}`}</p></div>
+        {item.details && item.details.open_review_count > 0 && <ul>{(Object.keys(REVIEW_LABELS) as ReviewType[]).map((type) => [type, item.details!.review_counts[type]] as const).filter(([, count]) => count > 0).map(([type, count]) => <li key={type}><span>{REVIEW_LABELS[type]}</span><strong>{count}</strong></li>)}</ul>}
+        <div className="workspace-month-actions">
+          {categoryCount > 0 && <button className="secondary small" onClick={() => openMonthReview(item, "CATEGORY")}>Kategorien prüfen · {categoryCount}</button>}
+          {suggestionCount > 0 && <button className="secondary small" aria-expanded={activeSuggestionMonth === item.month} onClick={() => setActiveSuggestionMonth((current) => current === item.month ? null : item.month)}>Vorschläge direkt prüfen · {suggestionCount}</button>}
+          <button className={item.status === "MISSING" ? "primary small" : "text-button"} onClick={() => openMonth(item)}>{item.status === "MISSING" ? "Import starten" : "Alle Aufgaben"} →</button>
+        </div>
+        {activeSuggestionMonth === item.month && <MonthlySuggestionActions month={item.month} onOpenAll={() => openMonthReview(item, "AI_SUGGESTION")} onResolved={onReviewResolved} />}
+      </article>;
+    })}</section>
 
     <div className="workspace-section-heading"><div><span className="eyebrow">AUFGABEN-INBOX</span><h2>Offene Aufgaben</h2></div><button className="secondary small" onClick={() => onNavigate("reviews")}>Alle in „Prüfen“ öffnen</button></div>
     <div className="workspace-filterbar" role="group" aria-label="Aufgaben filtern"><button className={filter === "ALL" ? "active" : ""} onClick={() => setFilter("ALL")}>Alle</button>{(Object.keys(REVIEW_LABELS) as ReviewType[]).map((type) => <button key={type} className={filter === type ? "active" : ""} onClick={() => setFilter(type)}>{REVIEW_LABELS[type]} <span>{inboxData?.items_by_type[type] ?? 0}</span></button>)}</div>
     <section className="workspace-task-grid dashboard-workspace-tasks">{filteredItems.length === 0 ? <div className="panel page-state workspace-empty"><span className="empty-icon">✓</span><h3>Alles erledigt</h3><p>In diesem Bereich sind keine offenen Aufgaben vorhanden.</p></div> : filteredItems.slice(0, 8).map((item) => <article className={`panel workspace-task severity-${item.severity.toLowerCase()}`} key={item.review_id}><div className="workspace-task-status"><span>{REVIEW_LABELS[item.review_type]}</span><span className={`status-badge ${item.severity === "ERROR" ? "missed" : item.severity === "WARNING" ? "paused" : "confirmed"}`}>{item.severity === "ERROR" ? "Dringend" : item.severity === "WARNING" ? "Prüfung offen" : "Hinweis"}</span></div><h3>{item.title}</h3><p>{item.description}</p><small>{monthLabel(reviewMonth(item))}</small><footer><button className={item.severity === "ERROR" ? "primary small" : "secondary small"} onClick={() => onNavigate(item.action_target.page, item.action_target)}>Aufgabe öffnen →</button></footer></article>)}</section>
     {completedMonths.length > 0 && <details className="panel completed-months"><summary>Vollständig abgeschlossene Monate <span>{completedMonths.length}</span></summary><p>{completedMonths.map((item) => item.label).join(" · ")}</p></details>}
   </>;
+}
+
+function MonthlySuggestionActions({ month, onResolved, onOpenAll }: { month: string; onResolved: () => void; onOpenAll: () => void }) {
+  const [refresh, setRefresh] = useState(0);
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const result = useFinanceQuery<{ suggestions: CategorySuggestionRow[] }>("ListPendingCategorySuggestions", { period: month, limit: 20, refresh });
+  const rows = (result.envelope?.data.suggestions ?? []).filter((item) => !removed.has(item.suggestion_id));
+  const decide = async (item: CategorySuggestionRow, action: "confirm" | "reject") => {
+    setBusy(item.suggestion_id);
+    setMessage("");
+    try {
+      await financeBridge.command(action === "confirm" ? "ConfirmCategorySuggestion" : "RejectCategorySuggestion", { suggestion_id: item.suggestion_id });
+      setRemoved((current) => new Set([...current, item.suggestion_id]));
+      setMessage(action === "confirm" ? `„${categoryLabel(item.category_code)}“ wurde für ${item.merchant || "die Transaktion"} bestätigt.` : `Der Vorschlag für ${item.merchant || "die Transaktion"} wurde abgelehnt.`);
+      setRefresh((value) => value + 1);
+      onResolved();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Der Vorschlag konnte nicht verarbeitet werden.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  return <section className="monthly-suggestion-actions" aria-label={`AI-Vorschläge ${monthLabel(month)}`}>
+    <header><div><strong>Kategorien direkt bestätigen</strong><small>Die Auswahl wird erst durch deinen Klick wirksam.</small></div><button className="text-button" onClick={onOpenAll}>Erweitert prüfen →</button></header>
+    {message && <div className="inline-feedback" role="status">{message}</div>}
+    {result.state === "LOADING" ? <div className="monthly-suggestion-loading"><span className="loader" /> Vorschläge werden geladen …</div> : result.state === "ERROR" ? <div className="inline-feedback error">Vorschläge konnten nicht geladen werden.</div> : rows.length === 0 ? <div className="monthly-suggestion-empty">Für {monthLabel(month)} sind keine offenen AI-Vorschläge mehr vorhanden.</div> : <div className="monthly-suggestion-list">{rows.slice(0, 4).map((item) => <article key={item.suggestion_id}>
+      <div><strong>{item.merchant || "Unbekannter Anbieter"}</strong><small>{item.description || "Keine Beschreibung"} · {money(item.amount, item.currency)}</small></div>
+      <div className="monthly-suggestion-category"><small>Vorschlag</small><strong>{categoryLabel(item.category_code)}</strong></div>
+      <div className="monthly-suggestion-buttons"><button className="primary small" disabled={busy === item.suggestion_id} onClick={() => decide(item, "confirm")}>{categoryLabel(item.category_code)} bestätigen</button><button className="secondary small" disabled={busy === item.suggestion_id} onClick={() => decide(item, "reject")}>Ablehnen</button></div>
+    </article>)}</div>}
+    {rows.length > 4 && <button className="text-button" onClick={onOpenAll}>{rows.length - 4} weitere Vorschläge öffnen →</button>}
+  </section>;
 }
 
 function DashboardFreshness({ result, period, monthly, onOpenMissing }: { result: QueryResult<AccountOverviewList>; period: PeriodSelection; monthly?: MonthlyWorkspaceStatus; onOpenMissing: () => void }) {
@@ -1184,7 +1248,27 @@ function PanelHeader({ title, subtitle, action, onAction }: { title: string; sub
   return <header className="panel-header"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div>{action && <button className="text-button" onClick={onAction}>{action} →</button>}</header>;
 }
 
-function Transactions({ month, periodPayload, focusId, onNavigate }: { month: string; periodPayload: Record<string, unknown>; focusId?: string; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
+function UnifiedFinanceWorkspace({ activeTab, onTabChange, inbox, month, periodPayload, navigationTarget, onNavigate }: { activeTab: WorkspaceTab; onTabChange: (tab: WorkspaceTab) => void; inbox: QueryResult<ReviewInbox>; month: string; periodPayload: Record<string, unknown>; navigationTarget: NavigationTarget; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
+  const openReviews = inbox.envelope?.data.total_open ?? 0;
+  return <section className="unified-finance-workspace">
+    <header className="unified-workspace-header">
+      <div><span className="eyebrow">GEMEINSAMER ARBEITSBEREICH</span><h2>{activeTab === "tasks" ? "Offene Aufgaben bearbeiten" : activeTab === "bookings" ? "Buchungen durchsuchen" : "Kategorien und Regeln verwalten"}</h2><p>{activeTab === "tasks" ? "Alle fachlichen Prüfungen aus den vorhandenen Projektionen an einem Ort." : activeTab === "bookings" ? "Filtern, prüfen und kategorisieren – ohne den Kontext zu verlieren." : "Struktur, eigene Kategorien und deterministische Regeln zentral pflegen."}</p></div>
+      <span className="workspace-privacy">◇ Lokal verarbeitet · keine automatische AI-Übernahme</span>
+    </header>
+    <nav className="unified-workspace-tabs" aria-label="Bereiche des Arbeitsbereichs">
+      <button className={activeTab === "tasks" ? "active" : ""} aria-current={activeTab === "tasks" ? "page" : undefined} onClick={() => onTabChange("tasks")}>Aufgaben{openReviews > 0 && <span>{openReviews}</span>}</button>
+      <button className={activeTab === "bookings" ? "active" : ""} aria-current={activeTab === "bookings" ? "page" : undefined} onClick={() => onTabChange("bookings")}>Buchungen</button>
+      <button className={activeTab === "categories" ? "active" : ""} aria-current={activeTab === "categories" ? "page" : undefined} onClick={() => onTabChange("categories")}>Kategorien &amp; Regeln</button>
+    </nav>
+    <div className={`unified-workspace-content mode-${activeTab}`}>
+      {activeTab === "tasks" && <Workspace inbox={inbox} focusAccountId={navigationTarget?.page === "reviews" && navigationTarget.view === "account" ? navigationTarget.entity_id : undefined} onOpen={(target) => onNavigate(target.page, target)} />}
+      {activeTab === "bookings" && <Transactions month={month} periodPayload={periodPayload} focusId={navigationTarget?.page === "transactions" ? navigationTarget.entity_id : undefined} initialView={navigationTarget?.page === "transactions" ? navigationTarget.view : undefined} onNavigate={onNavigate} />}
+      {activeTab === "categories" && <Categories month={month} initialTab={navigationTarget?.page === "categories" ? navigationTarget.view : undefined} focusId={navigationTarget?.page === "categories" && navigationTarget.entity_id ? navigationTarget.entity_id : undefined} initialPeriodScope={navigationTarget?.page === "categories" && Boolean(navigationTarget.period)} />}
+    </div>
+  </section>;
+}
+
+function Transactions({ month, periodPayload, focusId, initialView, onNavigate }: { month: string; periodPayload: Record<string, unknown>; focusId?: string; initialView?: string; onNavigate: (page: PageId, target?: NavigationTarget) => void }) {
   const [refresh, setRefresh] = useState(0);
   const [cursor, setCursor] = useState<string | undefined>();
   const [loadedTransactions, setLoadedTransactions] = useState<Transaction[]>([]);
@@ -1196,7 +1280,7 @@ function Transactions({ month, periodPayload, focusId, onNavigate }: { month: st
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState("");
   const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string>>({});
-  const [filters, setFilters] = useState({ account: "ALL", category: "ALL", direction: "ALL", minimum: "", maximum: "", classification: "ALL", ai: "ALL", importId: "ALL" });
+  const [filters, setFilters] = useState({ account: "ALL", category: "ALL", direction: "ALL", minimum: "", maximum: "", classification: initialView === "uncategorized" ? "UNCLASSIFIED" : "ALL", ai: initialView === "ai_suggestions" ? "PENDING" : "ALL", importId: "ALL" });
   const [bulkCategory, setBulkCategory] = useState("");
   const catalogue = (categories.envelope?.data.categories ?? []).map(normalizeCategory);
   const accountRows = accounts.envelope?.data.accounts ?? [];
@@ -1316,15 +1400,16 @@ const reasonLabels: Record<string, string> = {
   AMBIGUOUS_DESCRIPTION: "Mehrdeutiger Buchungstext", INSUFFICIENT_INFORMATION: "Wenige Informationen",
 };
 
-function Categories({ month, initialTab, focusId }: { month: string; initialTab?: string; focusId?: string }) {
+function Categories({ month, initialTab, focusId, initialPeriodScope = false }: { month: string; initialTab?: string; focusId?: string; initialPeriodScope?: boolean }) {
   const initialCategoryTab = (["overview", "manage", "suggestions", "rules"] as string[]).includes(initialTab ?? "") ? initialTab as "overview" | "manage" | "suggestions" | "rules" : "overview";
   const [tab, setTab] = useState<"overview" | "manage" | "suggestions" | "rules">(initialCategoryTab);
   const [confidence, setConfidence] = useState<"all" | "high" | "medium" | "low">("all");
-  const [suggestionScope, setSuggestionScope] = useState<"all" | "period">("all");
+  const [suggestionScope, setSuggestionScope] = useState<"all" | "period">(initialPeriodScope ? "period" : "all");
   const [refresh, setRefresh] = useState(0);
   const [message, setMessage] = useState("");
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [remember, setRemember] = useState<Record<string, boolean>>({});
+  const [resolvedSuggestionIds, setResolvedSuggestionIds] = useState<Set<string>>(new Set());
   const breakdown = useFinanceQuery<{ categories: Record<string, { category_code: string; effective_expense: string; transaction_count: number }> }>("GetCategoryBreakdown", { month, refresh }, tab === "overview");
   const summary = useFinanceQuery<{ unclassified_count: number; pending_count: number; confirmed_today_count: number; corrected_count: number; stale_count: number }>("GetCategorySuggestionReviewSummary", { refresh });
   const confidenceFilter = confidence === "high" ? { confidence_min: 0.95 } : confidence === "medium" ? { confidence_min: 0.9, confidence_max: 0.949999 } : confidence === "low" ? { confidence_max: 0.899999 } : {};
@@ -1333,14 +1418,31 @@ function Categories({ month, initialTab, focusId }: { month: string; initialTab?
   const catalogue = useFinanceQuery<CategoryList>("ListCategories", { refresh }, tab === "manage");
   const decide = async (item: CategorySuggestionRow, action: "confirm" | "correct" | "reject") => {
     setMessage("");
+    let decisionCommitted = false;
     try {
       const command = action === "confirm" ? "ConfirmCategorySuggestion" : action === "correct" ? "CorrectCategorySuggestion" : "RejectCategorySuggestion";
       const payload = action === "correct" ? { suggestion_id: item.suggestion_id, selected_category: selected[item.suggestion_id] ?? item.category_code } : { suggestion_id: item.suggestion_id };
       await financeBridge.command(command, payload);
-      if (action !== "reject" && remember[item.suggestion_id]) await financeBridge.command("CreateClassificationRuleFromSuggestion", { suggestion_id: item.suggestion_id, field: "counterparty" });
-      setMessage(action === "confirm" ? "Kategorie-Vorschlag bestätigt." : action === "correct" ? "Kategorie-Vorschlag korrigiert." : "Kategorie-Vorschlag abgelehnt. Die Transaktion bleibt unklassifiziert.");
-      setRefresh((value) => value + 1);
+      decisionCommitted = true;
+      setResolvedSuggestionIds((current) => new Set([...current, item.suggestion_id]));
+      const decisionMessage = action === "confirm" ? "Kategorie-Vorschlag bestätigt." : action === "correct" ? "Kategorie-Vorschlag korrigiert." : "Kategorie-Vorschlag abgelehnt. Die Transaktion bleibt unklassifiziert.";
+      if (action !== "reject" && remember[item.suggestion_id]) {
+        try {
+          await financeBridge.command("CreateClassificationRuleFromSuggestion", { suggestion_id: item.suggestion_id, field: "counterparty" });
+          setMessage(`${decisionMessage} Die Regel für ähnliche Transaktionen wurde angelegt.`);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "Unbekannter Fehler";
+          setMessage(`${decisionMessage} Die Regel konnte nicht angelegt werden: ${reason}`);
+        }
+      } else setMessage(decisionMessage);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Der Vorschlag konnte nicht verarbeitet werden."); }
+    finally {
+      if (decisionCommitted) {
+        setRefresh((value) => value + 1);
+        setSelected((current) => { const next = { ...current }; delete next[item.suggestion_id]; return next; });
+        setRemember((current) => { const next = { ...current }; delete next[item.suggestion_id]; return next; });
+      }
+    }
   };
   return <>
     <div className="tabs" role="tablist" aria-label="Kategorien"><button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Übersicht</button><button role="tab" aria-selected={tab === "manage"} onClick={() => setTab("manage")}>Verwalten</button><button role="tab" aria-selected={tab === "suggestions"} onClick={() => setTab("suggestions")}>Vorschläge <span className="tab-count">{summary.envelope?.data.pending_count ?? 0}</span></button><button role="tab" aria-selected={tab === "rules"} onClick={() => setTab("rules")}>Regeln</button></div>
@@ -1349,7 +1451,7 @@ function Categories({ month, initialTab, focusId }: { month: string; initialTab?
     {focusId && tab === "manage" && <div className="toast compact" role="status">Die Kategorie „{categoryLabel(focusId)}“ wurde aus der Kontotransaktion geöffnet.</div>}
     {tab === "overview" && <QueryBoundary result={breakdown}>{({ categories }) => { const rows = Object.values(categories).sort((a, b) => Number(b.effective_expense) - Number(a.effective_expense)); const total = rows.reduce((sum, item) => sum + Number(item.effective_expense), 0); return <><section className="suggestion-summary"><Metric label="Unklassifiziert" value={String(summary.envelope?.data.unclassified_count ?? 0)} tone="warn" note="manuell oder per Vorschlag prüfbar" /><Metric label="AI-Vorschläge offen" value={String(summary.envelope?.data.pending_count ?? 0)} tone="accent" note="keine automatische Wirkung" /><Metric label="Heute bestätigt" value={String(summary.envelope?.data.confirmed_today_count ?? 0)} tone="positive" note="durch Nutzerentscheidung" /><Metric label="Korrekturen" value={String(summary.envelope?.data.corrected_count ?? 0)} tone="ink" note="AI-Vorschlag geändert" /></section><section className="section-intro"><div><h2>Ausgaben nach Kategorien</h2><p>Nur bestätigte Klassifikationen; offene AI-Vorschläge verändern diese Auswertung nicht.</p></div><strong className="section-total">{money(String(total))}<small>effektive Ausgaben</small></strong></section><section className="panel category-list">{rows.map((item, index) => <div className="category-row" key={item.category_code}><span className={`category-symbol color-${index % 5}`}>{item.category_code.slice(0, 2)}</span><div><strong>{categoryLabel(item.category_code)}</strong><small>{item.transaction_count} Buchungen</small></div><div className="bar"><span style={{ width: `${Math.max(4, total ? Number(item.effective_expense) / total * 100 : 0)}%` }} /></div><strong>{money(item.effective_expense)}</strong></div>)}</section></>; }}</QueryBoundary>}
     {tab === "manage" && <QueryBoundary result={catalogue}>{({ categories }) => <CategoryManagement categories={categories.map(normalizeCategory)} onChanged={() => setRefresh((value) => value + 1)} onMessage={setMessage} />}</QueryBoundary>}
-    {tab === "suggestions" && <><section className="section-intro"><div><h2>AI-Kategorievorschläge prüfen</h2><p>Vorschläge des lokalen Modells werden erst durch deine Bestätigung oder Korrektur fachlich wirksam.</p></div><span className="privacy-badge">Lokal · kein Auto-Accept</span></section><div className="suggestion-toolbar"><div className="suggestion-filters" role="group" aria-label="Zeitraum der Vorschläge"><button className={suggestionScope === "all" ? "active" : ""} onClick={() => setSuggestionScope("all")}>Alle offenen ({summary.envelope?.data.pending_count ?? 0})</button><button className={suggestionScope === "period" ? "active" : ""} onClick={() => setSuggestionScope("period")}>Nur {monthLabel(month)}</button></div><div className="suggestion-filters" role="group" aria-label="Modell-Confidence filtern">{([['all','Alle Confidence-Werte'],['high','> 95 %'],['medium','90–95 %'],['low','< 90 %']] as const).map(([value, text]) => <button key={value} className={confidence === value ? "active" : ""} onClick={() => setConfidence(value)}>{text}</button>)}</div></div><QueryBoundary result={suggestions} renderEmpty>{({ suggestions: rows }) => { const orderedRows = focusId ? [...rows].sort((left, right) => Number(right.suggestion_id === focusId) - Number(left.suggestion_id === focusId)) : rows; return <section className="suggestion-review-list">{orderedRows.length === 0 ? <div className="panel empty-state"><strong>{suggestionScope === "period" ? `Keine offenen Vorschläge im ${monthLabel(month)}` : "Keine offenen Vorschläge"}</strong><p>{suggestionScope === "period" ? "Wechsle zu „Alle offenen“, um Vorschläge aus anderen Zeiträumen zu prüfen." : "Manuelle Kategorisierung und bestehende Regeln bleiben jederzeit verfügbar."}</p></div> : orderedRows.map((item) => <article className={`panel suggestion-review-card ${item.suggestion_id === focusId ? "focused" : ""}`} key={item.suggestion_id}><div className="suggestion-transaction"><div><span className="eyebrow">LOKALES MODELL</span><h3>{item.merchant || "Unbekannter Anbieter"}</h3><p>{item.description || "Keine Beschreibung"}</p></div><strong className="amount">{money(item.amount, item.currency)}</strong></div><div className="suggestion-proposal"><div><small>Vorgeschlagene Kategorie</small><strong>{categoryLabel(item.category_code)}</strong></div><div><small>Modell-Confidence</small><strong>{percent(item.raw_confidence)}</strong></div><div><small>Modell</small><strong>{item.model_id} {item.model_version}</strong></div></div><details><summary>Details zum Vorschlag</summary><div className="suggestion-details"><div><h4>Begründungsmerkmale</h4><ul>{item.reason_codes.map((reason) => <li key={reason}>{reasonLabels[reason] ?? label(reason)}</li>)}</ul></div><div><h4>Alternativen</h4>{item.alternatives.map((alternative) => <p key={alternative.category_code}><span>{categoryLabel(alternative.category_code)}</span><b>{percent(alternative.confidence)}</b></p>)}</div></div>{item.historical_accuracy ? <p className="calibration-note">Historische Genauigkeit dieses Modells ab {Number(item.historical_accuracy.threshold) * 100} %: <strong>{percent(item.historical_accuracy.accuracy)}</strong> bei {item.historical_accuracy.sample_count} Fällen</p> : <p className="calibration-note">Noch nicht genügend lokale Vergleichsdaten.</p>}</details><div className="suggestion-decision"><select aria-label={`Kategorie für ${item.merchant}`} value={selected[item.suggestion_id] ?? item.category_code} onChange={(event) => setSelected((current) => ({ ...current, [item.suggestion_id]: event.target.value }))}>{Array.from(new Set([item.category_code, ...item.alternatives.map((alternative) => alternative.category_code)])).map((code) => <option key={code} value={code}>{categoryLabel(code)}</option>)}</select><label><input type="checkbox" checked={remember[item.suggestion_id] ?? false} onChange={(event) => setRemember((current) => ({ ...current, [item.suggestion_id]: event.target.checked }))} /> Für ähnliche Transaktionen merken</label><div><button className="primary small" onClick={() => decide(item, (selected[item.suggestion_id] ?? item.category_code) === item.category_code ? "confirm" : "correct")}>{(selected[item.suggestion_id] ?? item.category_code) === item.category_code ? "Bestätigen" : "Geänderte Kategorie übernehmen"}</button><button className="secondary small" onClick={() => decide(item, "reject")}>Ablehnen</button></div></div></article>)}</section>; }}</QueryBoundary></>}
+    {tab === "suggestions" && <><section className="section-intro"><div><h2>AI-Kategorievorschläge prüfen</h2><p>Vorschläge des lokalen Modells werden erst durch deine Bestätigung oder Korrektur fachlich wirksam.</p></div><span className="privacy-badge">Lokal · kein Auto-Accept</span></section><div className="suggestion-toolbar"><div className="suggestion-filters" role="group" aria-label="Zeitraum der Vorschläge"><button className={suggestionScope === "all" ? "active" : ""} onClick={() => setSuggestionScope("all")}>Alle offenen ({summary.envelope?.data.pending_count ?? 0})</button><button className={suggestionScope === "period" ? "active" : ""} onClick={() => setSuggestionScope("period")}>Nur {monthLabel(month)}</button></div><div className="suggestion-filters" role="group" aria-label="Modell-Confidence filtern">{([['all','Alle Confidence-Werte'],['high','> 95 %'],['medium','90–95 %'],['low','< 90 %']] as const).map(([value, text]) => <button key={value} className={confidence === value ? "active" : ""} onClick={() => setConfidence(value)}>{text}</button>)}</div></div><QueryBoundary result={suggestions} renderEmpty>{({ suggestions: rows }) => { const visibleRows = rows.filter((item) => !resolvedSuggestionIds.has(item.suggestion_id)); const orderedRows = focusId ? [...visibleRows].sort((left, right) => Number(right.suggestion_id === focusId) - Number(left.suggestion_id === focusId)) : visibleRows; return <section className="suggestion-review-list">{orderedRows.length === 0 ? <div className="panel empty-state"><strong>{suggestionScope === "period" ? `Keine offenen Vorschläge im ${monthLabel(month)}` : "Keine offenen Vorschläge"}</strong><p>{suggestionScope === "period" ? "Wechsle zu „Alle offenen“, um Vorschläge aus anderen Zeiträumen zu prüfen." : "Manuelle Kategorisierung und bestehende Regeln bleiben jederzeit verfügbar."}</p></div> : orderedRows.map((item) => <article className={`panel suggestion-review-card ${item.suggestion_id === focusId ? "focused" : ""}`} key={item.suggestion_id}><div className="suggestion-transaction"><div><span className="eyebrow">LOKALES MODELL</span><h3>{item.merchant || "Unbekannter Anbieter"}</h3><p>{item.description || "Keine Beschreibung"}</p></div><strong className="amount">{money(item.amount, item.currency)}</strong></div><div className="suggestion-proposal"><div><small>Vorgeschlagene Kategorie</small><strong>{categoryLabel(item.category_code)}</strong></div><div><small>Modell-Confidence</small><strong>{percent(item.raw_confidence)}</strong></div><div><small>Modell</small><strong>{item.model_id} {item.model_version}</strong></div></div><details><summary>Details zum Vorschlag</summary><div className="suggestion-details"><div><h4>Begründungsmerkmale</h4><ul>{item.reason_codes.map((reason) => <li key={reason}>{reasonLabels[reason] ?? label(reason)}</li>)}</ul></div><div><h4>Alternativen</h4>{item.alternatives.map((alternative) => <p key={alternative.category_code}><span>{categoryLabel(alternative.category_code)}</span><b>{percent(alternative.confidence)}</b></p>)}</div></div>{item.historical_accuracy ? <p className="calibration-note">Historische Genauigkeit dieses Modells ab {Number(item.historical_accuracy.threshold) * 100} %: <strong>{percent(item.historical_accuracy.accuracy)}</strong> bei {item.historical_accuracy.sample_count} Fällen</p> : <p className="calibration-note">Noch nicht genügend lokale Vergleichsdaten.</p>}</details><div className="suggestion-decision"><select aria-label={`Kategorie für ${item.merchant}`} value={selected[item.suggestion_id] ?? item.category_code} onChange={(event) => setSelected((current) => ({ ...current, [item.suggestion_id]: event.target.value }))}>{Array.from(new Set([item.category_code, ...item.alternatives.map((alternative) => alternative.category_code)])).map((code) => <option key={code} value={code}>{categoryLabel(code)}</option>)}</select><label><input type="checkbox" checked={remember[item.suggestion_id] ?? false} onChange={(event) => setRemember((current) => ({ ...current, [item.suggestion_id]: event.target.checked }))} /> Für ähnliche Transaktionen merken</label><div><button className="primary small" onClick={() => decide(item, (selected[item.suggestion_id] ?? item.category_code) === item.category_code ? "confirm" : "correct")}>{(selected[item.suggestion_id] ?? item.category_code) === item.category_code ? "Bestätigen" : "Geänderte Kategorie übernehmen"}</button><button className="secondary small" onClick={() => decide(item, "reject")}>Ablehnen</button></div></div></article>)}</section>; }}</QueryBoundary></>}
     {tab === "rules" && <><section className="section-intro"><div><h2>Deterministische Regeln</h2><p>Nutzerregeln haben Vorrang vor dem lokalen Modell und vermeiden wiederholte AI-Aufrufe.</p></div></section><QueryBoundary result={rules}>{({ rules: rows }) => <section className="panel table-panel"><table><thead><tr><th>Merkmal</th><th>Wert</th><th>Kategorie</th><th>Quelle</th></tr></thead><tbody>{rows.map((rule) => <tr key={rule.rule_id}><td>{label(rule.field)}</td><td>{rule.value}</td><td>{categoryLabel(rule.category_code)}</td><td>{rule.source === "USER_FROM_AI_SUGGESTION" ? "Nutzer · aus AI-Vorschlag" : "Nutzer"}</td></tr>)}</tbody></table></section>}</QueryBoundary></>}
   </>;
 }
@@ -1448,6 +1550,7 @@ const REVIEW_LABELS: Record<ReviewType, string> = {
 
 function Workspace({ inbox, focusAccountId, onOpen }: { inbox: QueryResult<ReviewInbox>; focusAccountId?: string; onOpen: (target: ReviewItem["action_target"]) => void }) {
   const [filter, setFilter] = useState<ReviewType | "ALL">("ALL");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const data = inbox.envelope?.data;
   const accountItems = data?.items.filter((item) => !focusAccountId || item.account_ids.includes(focusAccountId)) ?? [];
   const items = accountItems.filter((item) => filter === "ALL" || item.review_type === filter);
@@ -1456,14 +1559,17 @@ function Workspace({ inbox, focusAccountId, onOpen }: { inbox: QueryResult<Revie
   const affectedAccounts = new Set(accountItems.flatMap((item) => item.account_ids)).size;
   const urgent = accountItems.filter((item) => item.severity === "ERROR").length;
   const boundary = { ...inbox, state: inbox.state === "EMPTY" ? "READY" as const : inbox.state };
+  const selected = items.find((item) => item.review_id === selectedId) ?? items[0] ?? null;
   return <QueryBoundary result={boundary}>{() => <>
-    <section className="section-intro workspace-heading"><div><span className="eyebrow">PRIVATER ARBEITSBEREICH</span><h2>Offene Aufgaben bearbeiten</h2><p>{focusAccountId ? "Offene Aufgaben dieses Kontos. Der Zähler stammt aus derselben zentralen Inbox." : "Vervollständige fehlende Finanzdaten und bearbeite fachliche Prüfungen an einem Ort."}</p></div>{items.length > 0 && <button className="primary" onClick={() => onOpen(items[0].action_target)}>Weiterarbeiten →</button>}</section>
     <section className={`panel workspace-status ${totalOpen > 0 ? "attention" : "complete"}`} aria-label="Arbeitsstand"><span className="workspace-status-icon" aria-hidden="true">{totalOpen > 0 ? "!" : "✓"}</span><div><span className="eyebrow">ARBEITSSTAND</span><h3>{totalOpen > 0 ? `${totalOpen} Aufgaben benötigen Aufmerksamkeit` : "Alles ist geprüft"}</h3><p>{focusAccountId ? "Gefiltert auf das ausgewählte Konto." : "Die Aufgaben werden direkt aus den vorhandenen Finance-Projektionen aufgebaut."}</p></div><dl className="workspace-status-metrics"><div><dt>Offene Aufgaben</dt><dd>{totalOpen}</dd></div><div><dt>Betroffene Konten</dt><dd>{affectedAccounts}</dd></div><div><dt>Dringend</dt><dd>{urgent}</dd></div></dl></section>
-    <div className="workspace-section-heading"><div><span className="eyebrow">AUFGABEN-INBOX</span><h2>Nach Bereich filtern</h2></div><button className={filter === "ALL" ? "workspace-all-filter active" : "workspace-all-filter"} onClick={() => setFilter("ALL")}>Alle Aufgaben · {totalOpen}</button></div>
-    <section className="workspace-summary-grid" aria-label="Offene Aufgaben nach Typ">
-      {(Object.keys(REVIEW_LABELS) as ReviewType[]).map((type) => <button key={type} className={filter === type ? "panel active" : "panel"} onClick={() => setFilter(filter === type ? "ALL" : type)}><span>{REVIEW_LABELS[type]}</span><strong>{visibleCounts[type]}</strong></button>)}
-    </section>
-    <section className="workspace-task-grid">{items.length === 0 ? <div className="panel page-state workspace-empty"><span className="empty-icon">✓</span><h3>Alles erledigt</h3><p>In diesem Bereich sind keine offenen Aufgaben vorhanden.</p></div> : items.map((item) => <article className={`panel workspace-task severity-${item.severity.toLowerCase()}`} key={item.review_id}><div className="workspace-task-status"><span>{REVIEW_LABELS[item.review_type]}</span><span className={`status-badge ${item.severity === "ERROR" ? "missed" : item.severity === "WARNING" ? "paused" : "confirmed"}`}>{item.severity === "ERROR" ? "Dringend" : item.severity === "WARNING" ? "Prüfung offen" : "Hinweis"}</span></div><h3>{item.title}</h3><p>{item.description}</p><small>Erstellt am {date(item.created_at)}</small><footer><button className={item.severity === "ERROR" ? "primary small" : "secondary small"} onClick={() => onOpen(item.action_target)}>Aufgabe öffnen →</button><details><summary>Technische Details</summary><code>{item.entity_type} · {item.entity_id}</code></details></footer></article>)}</section>
+    <div className="workspace-inbox-filters" role="group" aria-label="Aufgaben filtern"><button className={filter === "ALL" ? "active" : ""} onClick={() => setFilter("ALL")}>Alle · {totalOpen}</button>{(Object.keys(REVIEW_LABELS) as ReviewType[]).map((type) => <button key={type} className={filter === type ? "active" : ""} onClick={() => setFilter(filter === type ? "ALL" : type)}>{REVIEW_LABELS[type]} <span>{visibleCounts[type]}</span></button>)}</div>
+    <div className={`workspace-inbox-split ${selected ? "detail-open" : ""}`}>
+      <section className="panel workspace-inbox-list" aria-label="Offene Aufgaben">
+        <header><strong>{items.length} {items.length === 1 ? "offene Aufgabe" : "offene Aufgaben"}</strong><span>{focusAccountId ? "Ausgewähltes Konto" : "Alle Konten"}</span></header>
+        {items.length === 0 ? <div className="page-state workspace-empty"><span className="empty-icon">✓</span><h3>Alles erledigt</h3><p>In diesem Bereich sind keine offenen Aufgaben vorhanden.</p></div> : <><div className="workspace-inbox-columns"><span>Typ</span><span>Aufgabe</span><span>Status</span><span>Aktion</span></div>{items.map((item) => <button className={`workspace-inbox-row ${selected?.review_id === item.review_id ? "selected" : ""}`} key={item.review_id} onClick={() => setSelectedId(item.review_id)}><span className={`task-kind ${item.severity.toLowerCase()}`}>{REVIEW_LABELS[item.review_type]}</span><span><strong>{item.title}</strong><small>{item.description}</small></span><span className={`status-badge ${item.severity === "ERROR" ? "missed" : item.severity === "WARNING" ? "paused" : "confirmed"}`}>{item.severity === "ERROR" ? "Dringend" : item.severity === "WARNING" ? "Prüfung offen" : "Hinweis"}</span><b>Öffnen →</b></button>)}</>}
+      </section>
+      {selected && <aside className="workspace-review-detail" aria-label="Aufgabendetail"><header><div><span className="eyebrow">AUFGABENDETAIL</span><h2>{REVIEW_LABELS[selected.review_type]}</h2></div><button className="dialog-close" onClick={() => setSelectedId(null)} aria-label="Detail schließen">×</button></header><div className="workspace-review-detail-body"><span className={`status-badge ${selected.severity === "ERROR" ? "missed" : selected.severity === "WARNING" ? "paused" : "confirmed"}`}>{selected.severity === "ERROR" ? "Dringend" : selected.severity === "WARNING" ? "Prüfung offen" : "Hinweis"}</span><h3>{selected.title}</h3><p>{selected.description}</p><dl><div><dt>Zeitraum</dt><dd>{monthLabel(reviewMonth(selected))}</dd></div><div><dt>Betroffene Konten</dt><dd>{selected.account_ids.length || "–"}</dd></div><div><dt>Erstellt</dt><dd>{date(selected.created_at)}</dd></div></dl><details><summary>Technische Details</summary><code>{selected.entity_type} · {selected.entity_id}</code></details></div><footer><button className="primary" onClick={() => onOpen(selected.action_target)}>Aufgabe bearbeiten →</button></footer></aside>}
+    </div>
   </>}</QueryBoundary>;
 }
 

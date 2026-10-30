@@ -6,6 +6,13 @@ import { statusLabel } from "./statusLabels";
 
 afterEach(cleanup);
 
+async function openWorkspaceTab(name: "Aufgaben" | "Buchungen" | "Kategorien & Regeln") {
+  const primaryNavigation = await screen.findByRole("navigation", { name: "Hauptnavigation" });
+  fireEvent.click(within(primaryNavigation).getByRole("button", { name: /Arbeitsbereich/ }));
+  const workspaceNavigation = await screen.findByRole("navigation", { name: "Bereiche des Arbeitsbereichs" });
+  fireEvent.click(within(workspaceNavigation).getByRole("button", { name: new RegExp(name) }));
+}
+
 describe("Finance UI contract", () => {
   it("uses one consistent user-facing status vocabulary", () => {
     expect(["MATCHED", "DIFFERENCE", "REVIEW_REQUIRED", "PARTIALLY_COMPLETED", "EMPTY_COMPLETED", "STALE", "LOCKED"].map(statusLabel)).toEqual([
@@ -45,10 +52,7 @@ describe("Finance UI contract", () => {
       within(screen.getByRole("navigation", { name: "Hauptnavigation" }))
         .getAllByRole("button")
         .map((button) => button.textContent?.replace(/\d+/g, "")),
-    ).toEqual([
-      "⌂Übersicht", "↕Transaktionen", "▤Konten", "◫Kategorien", "⇩Importe",
-      "✓Prüfen", "◈Vermögen", "⌁Prognose", "⚙Einstellungen",
-    ]);
+    ).toEqual(["⌂Übersicht", "✓Arbeitsbereich", "▤Konten", "⇩Importe", "◈Vermögen", "⌁Prognose", "⚙Einstellungen"]);
   });
 
   it("renders the real dashboard workspace and opens a recent transaction without mock-only cards", async () => {
@@ -74,7 +78,7 @@ describe("Finance UI contract", () => {
 
   it("uses the unified inbox count and opens the affected record", async () => {
     render(<App />);
-    const reviewNavigation = await screen.findByRole("button", { name: /Prüfen.*6 offene Aufgaben/ });
+    const reviewNavigation = within(await screen.findByRole("navigation", { name: "Hauptnavigation" })).getByRole("button", { name: /Arbeitsbereich.*6 offene Aufgaben/ });
     fireEvent.click(reviewNavigation);
 
     expect(await screen.findByRole("region", { name: "Arbeitsstand" })).toHaveTextContent("6 Aufgaben benötigen Aufmerksamkeit");
@@ -85,9 +89,9 @@ describe("Finance UI contract", () => {
     expect(screen.getByRole("button", { name: /Relationen.*1/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Formatänderungen.*1/ })).toBeInTheDocument();
 
-    const categoryReview = screen.getByText("Kategorie für Markthalle Süd festlegen").closest("article");
-    expect(categoryReview).not.toBeNull();
-    fireEvent.click(within(categoryReview as HTMLElement).getByRole("button", { name: /Aufgabe öffnen/ }));
+    const detail = screen.getByRole("complementary", { name: "Aufgabendetail" });
+    expect(detail).toHaveTextContent("Kategorie für Markthalle Süd festlegen");
+    fireEvent.click(within(detail).getByRole("button", { name: /Aufgabe bearbeiten/ }));
     expect(await screen.findByRole("dialog", { name: "Markthalle Süd" })).toBeInTheDocument();
   });
 
@@ -112,13 +116,38 @@ describe("Finance UI contract", () => {
     expect(screen.getByTitle(/November 2024/)).toBeInTheDocument();
   });
 
+  it("reviews a month's AI category suggestions directly in the workspace", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Arbeitsbereich/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Vorschläge direkt prüfen · 1" }));
+
+    const suggestions = await screen.findByRole("region", { name: "AI-Vorschläge Juli 2026" });
+    expect(within(suggestions).getByText("Café Morgen")).toBeInTheDocument();
+    fireEvent.click(within(suggestions).getByRole("button", { name: "Restaurant bestätigen" }));
+    expect(await within(suggestions).findByRole("status")).toHaveTextContent("wurde für Café Morgen bestätigt");
+    expect(within(suggestions).getByText(/keine offenen AI-Vorschläge mehr/)).toBeInTheDocument();
+  });
+
+  it("opens uncategorized transactions with the affected month selected", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Arbeitsbereich/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Kategorien prüfen · 1" }));
+
+    expect(await screen.findByRole("heading", { name: "Buchungen durchsuchen" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Kategorisierung")).toHaveValue("UNCLASSIFIED");
+    expect(screen.getByLabelText("Monat auswählen")).toHaveValue("7");
+    expect(screen.getByLabelText("Jahr auswählen")).toHaveValue(2026);
+  });
+
   it("loads category tab data only when the tab becomes visible", async () => {
     const original = window.__FINANCE_IPC__!;
     const invoke = vi.fn(original.invoke.bind(original));
     window.__FINANCE_IPC__ = { ...original, invoke };
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Kategorien/ }));
+    await openWorkspaceTab("Kategorien & Regeln");
     await screen.findByRole("heading", { name: "Ausgaben nach Kategorien" });
     const initialQueries = invoke.mock.calls.map((call) => String(call[2].name));
     expect(initialQueries).toContain("GetCategoryBreakdown");
@@ -143,7 +172,7 @@ describe("Finance UI contract", () => {
 
   it("shows transaction context and persists a newly created category", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /Transaktionen/ }));
+    await openWorkspaceTab("Buchungen");
     fireEvent.click(await screen.findByRole("button", { name: "Markthalle Süd" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Markthalle Süd" });
@@ -162,7 +191,7 @@ describe("Finance UI contract", () => {
 
   it("keeps transaction filters while the sidepanel opens and closes", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /Transaktionen/ }));
+    await openWorkspaceTab("Buchungen");
 
     fireEvent.change(await screen.findByRole("combobox", { name: "Richtung" }), { target: { value: "EXPENSE" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Kategorie" }), { target: { value: "FOOD_GROCERIES" } });
@@ -178,7 +207,7 @@ describe("Finance UI contract", () => {
 
   it("offers safe bulk categorization without relation or balance actions", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /Transaktionen/ }));
+    await openWorkspaceTab("Buchungen");
     fireEvent.click(await screen.findByRole("checkbox", { name: "Markthalle Süd markieren" }));
 
     const bulk = await screen.findByRole("region", { name: "Mehrfachauswahl" });
@@ -219,7 +248,7 @@ describe("Finance UI contract", () => {
 
   it("shows category shadow evaluation only in settings", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /Transaktionen/ }));
+    await openWorkspaceTab("Buchungen");
     expect(screen.queryByText("Shadow-Vorhersage")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Einstellungen/ }));
@@ -231,7 +260,7 @@ describe("Finance UI contract", () => {
 
   it("shows local category suggestions as an explicit review queue without auto-accept", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /Kategorien/ }));
+    await openWorkspaceTab("Kategorien & Regeln");
     expect(await screen.findByText("AI-Vorschläge offen")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /Vorschläge/ }));
     expect(await screen.findByRole("heading", { name: "AI-Kategorievorschläge prüfen" })).toBeInTheDocument();
@@ -244,7 +273,7 @@ describe("Finance UI contract", () => {
 
   it("shows all open AI suggestions by default and makes the selected month an explicit filter", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /Kategorien/ }));
+    await openWorkspaceTab("Kategorien & Regeln");
     fireEvent.click(await screen.findByRole("tab", { name: /Vorschläge/ }));
 
     expect(await screen.findByRole("button", { name: "Alle offenen (2)" })).toHaveClass("active");
@@ -256,9 +285,36 @@ describe("Finance UI contract", () => {
     expect(screen.queryByText("Für diesen Zeitraum liegen keine Daten vor.")).not.toBeInTheDocument();
   });
 
+  it("removes a confirmed suggestion even when creating the optional follow-up rule fails", async () => {
+    const original = window.__FINANCE_IPC__!;
+    const invoke = vi.fn(async (requestId: string, operation: "query" | "command", request: Record<string, unknown>) => {
+      if (operation === "command" && request.name === "CreateClassificationRuleFromSuggestion") return {
+        request_id: requestId,
+        operation,
+        contract_version: "1.3.0",
+        status: "ERROR" as const,
+        error: { code: "DESKTOP_OPERATION_FAILED", message: "Regel konnte nicht angelegt werden." },
+      };
+      return original.invoke(requestId, operation, request);
+    });
+    window.__FINANCE_IPC__ = { ...original, invoke };
+    render(<App />);
+
+    await openWorkspaceTab("Kategorien & Regeln");
+    fireEvent.click(await screen.findByRole("tab", { name: /Vorschläge/ }));
+    const suggestion = (await screen.findByText("Café Morgen")).closest("article") as HTMLElement;
+    fireEvent.click(within(suggestion).getByRole("checkbox", { name: "Für ähnliche Transaktionen merken" }));
+    fireEvent.click(within(suggestion).getByRole("button", { name: "Bestätigen" }));
+
+    await waitFor(() => expect(screen.queryByText("Café Morgen")).not.toBeInTheDocument());
+    expect(screen.getByText(/Kategorie-Vorschlag bestätigt\. Die Regel konnte nicht angelegt werden/)).toBeInTheDocument();
+    expect(invoke.mock.calls.some((call) => call[1] === "command" && call[2].name === "CreateClassificationRuleFromSuggestion")).toBe(true);
+    window.__FINANCE_IPC__ = original;
+  });
+
   it("offers understandable category management", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /Kategorien/ }));
+    await openWorkspaceTab("Kategorien & Regeln");
     fireEvent.click(await screen.findByRole("tab", { name: "Verwalten" }));
     expect(await screen.findByRole("heading", { name: "Kategorien verwalten" })).toBeInTheDocument();
     expect(screen.getByText(/Umbenennen verändert bestehende Zuordnungen nicht/)).toBeInTheDocument();
@@ -431,7 +487,7 @@ describe("Finance UI contract", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Konten/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Offene Prüfungen: 4" }));
-    expect(await screen.findByText("Offene Aufgaben dieses Kontos. Der Zähler stammt aus derselben zentralen Inbox.")).toBeInTheDocument();
+    expect(await screen.findByText("Ausgewähltes Konto")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Arbeitsstand" })).getByText("4", { selector: "dd" })).toBeInTheDocument();
   });
 

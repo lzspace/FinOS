@@ -121,10 +121,10 @@
   },
   "ui_bundle": {
     "files": {
-      "assets/index-CKnps2IK.js": "582c5add10980f33d8d6c92d223b7d6a479af6761321c8d8caa86c9de47a6dd9",
-      "assets/index-HtVt3Gw9.css": "2afab5521ac94e8570d8c2b722f1ef151df1e6f355477c5170ae905e570e67b1",
-      "index.html": "ca64680e25e15bc6b98076221c587f409f574a37db818522d855590572ec5618"
+      "assets/index-B0eFeQ4y.css": "74a01b5762bf4ef6f862a996822d003940392be21ceae21f06e34d58432f1b08",
+      "assets/index-DhM6-h-D.js": "e67cb3edc15ad54f08ef449cd5f60f7ba0382e6376b86011edeea4e8e8feddee",
+      "index.html": "f83b2e586afad1769a83064bb64fa498b943f43b3e997833259d7b209f2ea7ed"
     },
-    "sha256": "0413dce411d0e0eb1237ac4d3a9fa8d06b519d0abb5d759688db8f439d196ce3"
+    "sha256": "7fabd8752a26edef71c900ec35163260b1f66947ecf1be5f2bb1756147dca7ee"
   }
 }

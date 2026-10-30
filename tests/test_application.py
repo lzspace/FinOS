@@ -113,6 +113,15 @@ class ApplicationServiceTests(unittest.TestCase):
         self._validate(details, "transaction_detail.response.schema.json")
 
     def test_monthly_workspace_is_derived_and_marks_following_months_missing(self) -> None:
+        create_account(
+            self.store,
+            account_id="acc_01",
+            display_name="Historisches Girokonto",
+            account_type="CHECKING",
+            institution="Testbank",
+            currency="EUR",
+            opened_at="2026-08-01",
+        )
         before = len(self.store.events())
         response = self.application.query(
             "GetMonthlyWorkspaceStatus", {"as_of": "2026-09-30"}
@@ -125,6 +134,7 @@ class ApplicationServiceTests(unittest.TestCase):
         self.assertEqual(data["earliest_month"], "2026-07")
         self.assertEqual(rows["2026-07"]["import_status"], "LEGACY_DATA")
         self.assertEqual(rows["2026-07"]["status"], "REVIEW")
+        self.assertEqual(rows["2026-07"]["expected_account_count"], 1)
         self.assertGreater(rows["2026-07"]["review_counts"]["CATEGORY"], 0)
         self.assertEqual(rows["2026-08"]["status"], "MISSING")
         self.assertEqual(

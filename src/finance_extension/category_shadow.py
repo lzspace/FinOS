@@ -242,9 +242,17 @@ def transaction_eligibility(
     transaction = _transactions(store).get(transaction_id)
     if transaction is None:
         raise StoreInvariantError("FINANCE_TRANSACTION_NOT_FOUND")
+    relation = reconciled_transactions(store, {transaction_id: transaction}).get(
+        transaction_id, {}
+    )
+    return _transaction_eligibility(transaction, relation)
+
+
+def _transaction_eligibility(
+    transaction: dict[str, Any], relation: dict[str, Any]
+) -> dict[str, Any]:
     direction = transaction.get("direction")
     transaction_type = str(transaction.get("transaction_type", ""))
-    relation = reconciled_transactions(store).get(transaction_id, {})
     reason: str | None = None
     if direction not in {"DEBIT", "CREDIT"}:
         reason = "DIRECTION_UNSUPPORTED"
@@ -391,38 +399,52 @@ def category_suggestion_states(
             if suggestion_id in states:
                 states[suggestion_id].update(payload)
                 states[suggestion_id]["status"] = lifecycle_status[event_type]
-    if derive_stale:
+    if derive_stale and any(state["status"] == "PENDING" for state in states.values()):
+        normalized_events = {
+            str(event["payload"]["transaction_id"]): event
+            for event in store.events("TransactionNormalized")
+        }
+        transactions = {
+            transaction_id: event["payload"]
+            for transaction_id, event in normalized_events.items()
+        }
+        relations = reconciled_transactions(store, transactions)
+        classifications = active_classifications(store)
         for state in states.values():
-            if state["status"] == "PENDING" and _suggestion_stale_reason(store, state):
+            if state["status"] != "PENDING":
+                continue
+            reason = _suggestion_stale_reason_from_context(
+                state,
+                normalized_events=normalized_events,
+                relations=relations,
+                classifications=classifications,
+            )
+            if reason:
                 state["status"] = "STALE"
-                state["stale_reason"] = _suggestion_stale_reason(store, state)
+                state["stale_reason"] = reason
     return states
 
 
-def _suggestion_stale_reason(
-    store: LocalFinanceStore, suggestion: dict[str, Any]
+def _suggestion_stale_reason_from_context(
+    suggestion: dict[str, Any],
+    *,
+    normalized_events: dict[str, dict[str, Any]],
+    relations: dict[str, dict[str, Any]],
+    classifications: dict[str, dict[str, Any]],
 ) -> str | None:
     transaction_id = suggestion["transaction_id"]
-    normalized = next(
-        (
-            event
-            for event in reversed(store.events("TransactionNormalized"))
-            if event["payload"]["transaction_id"] == transaction_id
-        ),
-        None,
-    )
+    normalized = normalized_events.get(transaction_id)
     if normalized is None or normalized["event_id"] != suggestion.get("normalized_event_id"):
         return "TRANSACTION_CHANGED"
     if suggestion.get("taxonomy_version") != TAXONOMY_VERSION:
         return "TAXONOMY_CHANGED"
     if suggestion.get("inference_policy_version") != INFERENCE_POLICY_VERSION:
         return "INFERENCE_POLICY_CHANGED"
-    try:
-        if not transaction_eligibility(store, transaction_id)["eligible"]:
-            return "TRANSACTION_NOT_ELIGIBLE"
-    except StoreInvariantError:
-        return "TRANSACTION_CHANGED"
-    current = active_classifications(store).get(transaction_id)
+    if not _transaction_eligibility(
+        normalized["payload"], relations.get(transaction_id, {})
+    )["eligible"]:
+        return "TRANSACTION_NOT_ELIGIBLE"
+    current = classifications.get(transaction_id)
     if current and current["event_type"] == "TransactionClassificationConfirmed":
         if current["payload"].get("suggestion_id") == suggestion["suggestion_id"]:
             return None
@@ -950,7 +972,7 @@ def get_transaction_category_suggestion(
 
 
 def category_suggestion_review_summary(store: LocalFinanceStore) -> dict[str, Any]:
-    rows = list_category_suggestions(store)
+    rows = list(category_suggestion_states(store).values())
     today = datetime.now(UTC).date().isoformat()
     classifications = active_classifications(store)
     unclassified = sum(

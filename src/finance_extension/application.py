@@ -218,6 +218,7 @@ PROJECTION_VERSIONS: dict[str, str] = {
     "import_profiles": "1.0.0",
     "category_model_evaluation": "1.0.0",
     "category_suggestion_review": "1.0.0",
+    "category_catalogue": "1.0.0",
     "review_inbox": "1.0.0",
     "monthly_workspace_status": "1.0.0",
 }
@@ -1524,7 +1525,15 @@ class FinanceApplicationService:
         return self._envelope(result, status="EMPTY" if not result["categories"] else "READY")
 
     def _categories(self, _: dict[str, Any]) -> dict[str, Any]:
-        return self._envelope({"categories": categories(self._store)})
+        return self._persisted_response(
+            "category_catalogue",
+            PROJECTION_VERSIONS["category_catalogue"],
+            {},
+            lambda: self._envelope(
+                {"categories": categories(self._store)},
+                projection_version=PROJECTION_VERSIONS["category_catalogue"],
+            ),
+        )
 
     def _classification_reviews(self, _: dict[str, Any]) -> dict[str, Any]:
         rows = classification_review(self._store)
