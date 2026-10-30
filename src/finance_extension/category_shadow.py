@@ -17,6 +17,11 @@ from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 
 from .categories import CATEGORY_CODES, CUSTOM_CATEGORY_PATTERN, require_category
 from .classification import active_classifications, confirm_classification, create_rule
+from .classification_memory import (
+    RETRIEVAL_POLICY_VERSION,
+    memory_fingerprint,
+    retrieve_classification_context,
+)
 from .local_model import (
     INFERENCE_POLICY_VERSION,
     LocalModelError,
@@ -294,7 +299,9 @@ def _redact_text(value: Any) -> str:
 
 
 def _suggestion_request(
-    store: LocalFinanceStore, transaction: dict[str, Any]
+    store: LocalFinanceStore,
+    transaction: dict[str, Any],
+    memory_context: dict[str, Any],
 ) -> dict[str, Any]:
     categories = _direction_categories(store, transaction["direction"])
     return {
@@ -307,6 +314,7 @@ def _suggestion_request(
             "currency": transaction["currency"],
             "recurring": False,
         },
+        "classification_memory_context": memory_context,
         "allowed_categories": [
             {"code": code, "label": CATEGORY_LABELS.get(code, code.replace("_", " ").title())}
             for code in categories
@@ -356,6 +364,7 @@ def _existing_suggestion(
     transaction_id: str,
     mode: str,
     model: dict[str, Any],
+    memory_context: dict[str, Any],
 ) -> dict[str, Any] | None:
     states = category_suggestion_states(store)
     return next(
@@ -369,6 +378,10 @@ def _existing_suggestion(
             and event["payload"]["inference_policy_version"]
             == str(model.get("inference_policy_version", INFERENCE_POLICY_VERSION))
             and event["payload"]["taxonomy_version"] == TAXONOMY_VERSION
+            and event["payload"].get("retrieval_policy_version")
+            == memory_context["retrieval_policy_version"]
+            and event["payload"].get("memory_snapshot_version")
+            == memory_context["memory_snapshot_version"]
             and (
                 mode != "SUGGESTION"
                 or states.get(event["payload"]["suggestion_id"], {}).get("status")
@@ -410,6 +423,7 @@ def category_suggestion_states(
         }
         relations = reconciled_transactions(store, transactions)
         classifications = active_classifications(store)
+        memory_snapshot = memory_fingerprint(store)
         for state in states.values():
             if state["status"] != "PENDING":
                 continue
@@ -418,6 +432,7 @@ def category_suggestion_states(
                 normalized_events=normalized_events,
                 relations=relations,
                 classifications=classifications,
+                memory_snapshot=memory_snapshot,
             )
             if reason:
                 state["status"] = "STALE"
@@ -431,6 +446,7 @@ def _suggestion_stale_reason_from_context(
     normalized_events: dict[str, dict[str, Any]],
     relations: dict[str, dict[str, Any]],
     classifications: dict[str, dict[str, Any]],
+    memory_snapshot: str,
 ) -> str | None:
     transaction_id = suggestion["transaction_id"]
     normalized = normalized_events.get(transaction_id)
@@ -440,6 +456,10 @@ def _suggestion_stale_reason_from_context(
         return "TAXONOMY_CHANGED"
     if suggestion.get("inference_policy_version") != INFERENCE_POLICY_VERSION:
         return "INFERENCE_POLICY_CHANGED"
+    if suggestion.get("retrieval_policy_version") != RETRIEVAL_POLICY_VERSION:
+        return "RETRIEVAL_POLICY_CHANGED"
+    if suggestion.get("memory_snapshot_version") != memory_snapshot:
+        return "CLASSIFICATION_MEMORY_CHANGED"
     if not _transaction_eligibility(
         normalized["payload"], relations.get(transaction_id, {})
     )["eligible"]:
@@ -519,19 +539,24 @@ def generate_category_shadow_suggestion(
     model = status.get("model")
     if not isinstance(model, dict):
         raise LocalModelError("LOCAL_AI_UNAVAILABLE")
+    transaction = _transactions(store)[transaction_id]
+    memory_context = retrieve_classification_context(store, transaction_id)
     if existing := _existing_suggestion(
-        store, transaction_id=transaction_id, mode=mode, model=model
+        store,
+        transaction_id=transaction_id,
+        mode=mode,
+        model=model,
+        memory_context=memory_context,
     ):
         return {"status": "EXISTING", "suggestion": existing}
     if mode == "SUGGESTION":
         _supersede_pending_suggestions(store, transaction_id, reason="NEW_INFERENCE")
-    transaction = _transactions(store)[transaction_id]
     normalized = next(
         event
         for event in reversed(store.events("TransactionNormalized"))
         if event["payload"]["transaction_id"] == transaction_id
     )
-    body = _suggestion_request(store, transaction)
+    body = _suggestion_request(store, transaction, memory_context)
     allowed = [item["code"] for item in body["allowed_categories"]]
 
     def semantic_validator(candidate: dict[str, Any]) -> bool:
@@ -596,6 +621,9 @@ def generate_category_shadow_suggestion(
         "inference_policy_version": str(
             model.get("inference_policy_version", INFERENCE_POLICY_VERSION)
         ),
+        "retrieval_policy_version": memory_context["retrieval_policy_version"],
+        "memory_snapshot_version": memory_context["memory_snapshot_version"],
+        "retrieved_example_count": memory_context["retrieved_count"],
         "taxonomy_version": TAXONOMY_VERSION,
         "suggestion_schema_version": CATEGORY_SUGGESTION_VERSION,
         "mode": mode,

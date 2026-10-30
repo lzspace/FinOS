@@ -65,7 +65,7 @@ class MockLocalModelProvider:
                 "model_version": "1.0.0",
                 "runtime_version": "llama.cpp b11794-f84909536",
                 "structured_output_backend": "GBNF",
-                "inference_policy_version": "1.1.0",
+                "inference_policy_version": "2.0.0",
             },
         }
 
@@ -150,7 +150,7 @@ class AiImportMappingTests(unittest.TestCase):
                 payload["runtime_version"], "llama.cpp b11794-f84909536"
             )
             self.assertEqual(payload["structured_output_backend"], "GBNF")
-            self.assertEqual(payload["inference_policy_version"], "1.1.0")
+            self.assertEqual(payload["inference_policy_version"], "2.0.0")
 
     def test_retry_reuses_pending_proposal_without_second_inference(self) -> None:
         model = FakeLocalModel()
@@ -238,7 +238,7 @@ class AiImportMappingTests(unittest.TestCase):
 
         self.assertEqual(proposal["runtime_version"], "llama.cpp b11794-f84909536")
         self.assertEqual(proposal["structured_output_backend"], "GBNF")
-        self.assertEqual(proposal["inference_policy_version"], "1.1.0")
+        self.assertEqual(proposal["inference_policy_version"], "2.0.0")
 
     def test_validator_rejects_unknown_columns_and_duplicate_targets(self) -> None:
         invalid = mapping()

@@ -16,6 +16,7 @@ from finance_extension.classification_memory import (
     active_memory_entries,
     classification_memory_summary,
     normalize_merchant,
+    retrieve_classification_context,
 )
 from finance_extension.category_shadow import generate_visible_category_suggestions
 from finance_extension.crypto import StaticKeyProvider
@@ -27,7 +28,7 @@ CSV = """booking_date,value_date,amount,currency,counterparty,description
 2026-07-01,2026-07-01,-42.80,EUR,REWE MARKT 1234,Kartenzahlung Einkauf
 2026-07-02,2026-07-02,-18.20,EUR,REWE CITY,Einkauf
 2026-07-03,2026-07-03,-12.10,EUR,REWE SAGT DANKE,Einkauf
-2026-07-04,2026-07-04,-9.50,EUR,REWE FILIALE 88,Einkauf
+2026-07-04,2026-07-04,-42.80,EUR,REWE FILIALE 88,Einkauf
 """
 
 
@@ -139,6 +140,44 @@ class ClassificationMemoryTests(unittest.TestCase):
         )
 
         self.assertEqual(result, {"generated": 0, "failed": 0, "skipped": 4})
+
+    def test_retrieval_contains_only_minimized_confirmed_examples(self) -> None:
+        first, _, third, _ = self._transactions()
+        confirm_classification(self.store, first, "FOOD_GROCERIES")
+
+        context = retrieve_classification_context(self.store, third)
+
+        self.assertEqual(context["retrieved_count"], 1)
+        self.assertEqual(
+            context["examples"],
+            [
+                {
+                    "merchant": "REWE",
+                    "description_pattern": "EINKAUF",
+                    "category_code": "FOOD_GROCERIES",
+                }
+            ],
+        )
+        self.assertEqual(
+            set(context),
+            {
+                "examples",
+                "retrieval_policy_version",
+                "memory_snapshot_version",
+                "retrieved_count",
+            },
+        )
+
+    def test_retrieval_excludes_self_and_identical_duplicates(self) -> None:
+        first, _, _, duplicate = self._transactions()
+        confirm_classification(self.store, first, "FOOD_GROCERIES")
+
+        self.assertEqual(
+            retrieve_classification_context(self.store, first)["examples"], []
+        )
+        self.assertEqual(
+            retrieve_classification_context(self.store, duplicate)["examples"], []
+        )
 
 
 if __name__ == "__main__":

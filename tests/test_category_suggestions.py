@@ -55,7 +55,7 @@ class MockSuggestionProvider:
                 "model_version": self.model_version,
                 "runtime_version": "llama.cpp test",
                 "structured_output_backend": "GBNF",
-                "inference_policy_version": "1.1.0",
+                "inference_policy_version": "2.0.0",
             }
             if self.available
             else None,

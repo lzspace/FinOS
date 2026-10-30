@@ -32,7 +32,7 @@
       "category_list.response.schema.json": "88341af569d9ff603a0ed921c20fc13549a6ae37822d183459a32c5531223ab3",
       "category_shadow.response.schema.json": "023b85f9bb41c778d8e7fc81cec40d006b5d18462a5a29240da567294b0e8644",
       "category_shadow_commands.schema.json": "7f938817328b50b02563595c9b8686c737c75d90f75f10436bdc03eb8f7d97bf",
-      "category_shadow_events.schema.json": "676c3e11498fbc6e8a616efa7578a2fa5358d64df83d458287c6ea4682d2dd3e",
+      "category_shadow_events.schema.json": "dce0a7efe2bf759c3c28214801197e5c1fa2ede46dcde9e861cc85d86793da64",
       "classification_events.schema.json": "a0b4430e24826adbfa25027c8d88e6896f057627f72a3d1b33e9178b4403f9bf",
       "classification_memory_events.schema.json": "4e056255643a4fb7ef44100989994181a2661867e2cbf0531eb949d49f1bbb31",
       "closing_balance_recorded.event.schema.json": "02daf60bda738a980a8064ebf01167a4f0ab32698629252b1598c1528bcfc1a2",
@@ -118,7 +118,7 @@
       "transaction_list.response.schema.json": "8890f1ca321797367197faa00a19cc3a7ae4c8f8b98ce358fbda7855284d9532",
       "vertical_slice_events.schema.json": "091ea19d244cd66f3702303465a59d8a64b9f2a9732fe78390273e0c0fc79227"
     },
-    "sha256": "23ff98bc5779d987708faef52905528c52250aaf9de26e4b665f3c637482758a"
+    "sha256": "6fde4f19bde0f2c6ff4b22f6d3d29df642bb986bd023c627fedc22dbae842f21"
   },
   "ui_bundle": {
     "files": {

@@ -85,7 +85,7 @@ class PilotCategoryModel:
                 "model_version": "1.0.0",
                 "runtime_version": "llama.cpp pilot",
                 "structured_output_backend": "GBNF",
-                "inference_policy_version": "1.1.0",
+                "inference_policy_version": "2.0.0",
             },
         }
 

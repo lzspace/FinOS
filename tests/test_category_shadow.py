@@ -59,7 +59,7 @@ class MockLocalModelProvider:
         response: dict[str, Any] | None = None,
         *,
         model_version: str = "1.0.0",
-        policy_version: str = "1.1.0",
+        policy_version: str = "2.0.0",
         error_code: str | None = None,
     ) -> None:
         self.response = response or valid_suggestion()
@@ -124,12 +124,63 @@ class CategoryShadowTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "GENERATED")
         prompt = json.loads(model.requests[0].prompt)
-        self.assertEqual(set(prompt), {"purpose", "transaction", "allowed_categories"})
+        self.assertEqual(
+            set(prompt),
+            {
+                "purpose",
+                "transaction",
+                "allowed_categories",
+                "classification_memory_context",
+            },
+        )
+        self.assertEqual(
+            set(prompt["classification_memory_context"]),
+            {
+                "examples",
+                "retrieval_policy_version",
+                "memory_snapshot_version",
+                "retrieved_count",
+            },
+        )
         self.assertNotIn("account_id", model.requests[0].prompt)
         self.assertNotIn(self.debit, model.requests[0].prompt)
         self.assertNotIn("123456789", model.requests[0].prompt)
         self.assertEqual(prompt["transaction"]["amount_bucket"], "50_100")
         self.assertNotIn("final_category", model.requests[0].prompt)
+
+    def test_prompt_contains_only_minimized_confirmed_memory_examples(self) -> None:
+        confirm_classification(self.store, self.debit, "FOOD_GROCERIES")
+        source = self.root / "similar.csv"
+        source.write_text(
+            "booking_date,value_date,amount,currency,counterparty,description\n"
+            "2026-08-01,2026-08-01,-43.92,EUR,REWE CITY,Kartenzahlung Filiale\n",
+            encoding="utf-8",
+        )
+        normalize_batch(self.store, import_csv(self.store, source, "acc_giro"))
+        target = self.store.events("TransactionNormalized")[-1]["payload"]["transaction_id"]
+        enable_category_shadow_mode(self.store)
+        model = MockLocalModelProvider()
+
+        result = generate_category_shadow_suggestion(
+            self.store, model, target, mode="EVALUATION_REPLAY"
+        )
+
+        self.assertEqual(result["status"], "GENERATED")
+        context = json.loads(model.requests[0].prompt)["classification_memory_context"]
+        self.assertEqual(
+            context["examples"],
+            [
+                {
+                    "merchant": "REWE",
+                    "description_pattern": "REWE",
+                    "category_code": "FOOD_GROCERIES",
+                }
+            ],
+        )
+        payload = self.store.events("CategorySuggestionGenerated")[-1]["payload"]
+        self.assertEqual(payload["retrieved_example_count"], 1)
+        self.assertEqual(payload["retrieval_policy_version"], context["retrieval_policy_version"])
+        self.assertEqual(payload["memory_snapshot_version"], context["memory_snapshot_version"])
 
     def test_validator_rejects_unknown_main_duplicate_alternative_and_confidence(self) -> None:
         allowed = ["FOOD_GROCERIES", "HOUSING_UTILITIES", "OTHER_EXPENSE"]
@@ -268,11 +319,16 @@ class CategoryShadowTests(unittest.TestCase):
     def test_model_policy_and_taxonomy_versions_are_separate_groups(self) -> None:
         confirm_classification(self.store, self.debit, "FOOD_GROCERIES")
         enable_category_shadow_mode(self.store)
+        first_model = MockLocalModelProvider(model_version="1.0.0")
         generate_category_shadow_suggestion(
             self.store,
-            MockLocalModelProvider(model_version="1.0.0"),
+            first_model,
             self.debit,
             mode="EVALUATION_REPLAY",
+        )
+        self.assertEqual(
+            json.loads(first_model.requests[0].prompt)["classification_memory_context"]["examples"],
+            [],
         )
         with (
             patch("finance_extension.category_shadow.INFERENCE_POLICY_VERSION", "1.2.0"),
@@ -291,7 +347,7 @@ class CategoryShadowTests(unittest.TestCase):
             self.store,
             {
                 "model_version": "1.0.0",
-                "policy_version": "1.1.0",
+                "policy_version": "2.0.0",
                 "taxonomy_version": "1.0.0",
             },
         )
@@ -353,7 +409,7 @@ class CategoryShadowTests(unittest.TestCase):
         self.assertEqual(restored_run["status"], "COMPLETED")
         generated = self.store.events("CategorySuggestionGenerated")[0]["payload"]
         self.assertEqual(generated["model_version"], "1.0.0")
-        self.assertEqual(generated["inference_policy_version"], "1.1.0")
+        self.assertEqual(generated["inference_policy_version"], "2.0.0")
         self.assertEqual(generated["taxonomy_version"], "1.0.0")
 
     def test_public_application_commands_and_queries_expose_shadow_evaluation(self) -> None:

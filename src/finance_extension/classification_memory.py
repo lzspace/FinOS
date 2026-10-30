@@ -19,6 +19,7 @@ from typing import Any
 from .store import LocalFinanceStore
 
 MEMORY_POLICY_VERSION = "classification-memory@1.0.0"
+RETRIEVAL_POLICY_VERSION = "classification-memory-retrieval@1.0.0"
 MAX_CONFLICT_RATE = 0.20
 
 _MERCHANT_NOISE = frozenset(
@@ -352,8 +353,100 @@ def classification_memory_summary(store: LocalFinanceStore) -> dict[str, Any]:
     }
 
 
+def retrieve_classification_context(
+    store: LocalFinanceStore,
+    transaction_id: str,
+    *,
+    max_examples: int = 5,
+) -> dict[str, Any]:
+    """Return a privacy-minimized, leakage-safe few-shot context."""
+
+    max_examples = max(2, min(max_examples, 5))
+    transactions = {
+        event["payload"]["transaction_id"]: event["payload"]
+        for event in store.events("TransactionNormalized")
+    }
+    target = transactions.get(transaction_id)
+    entries = active_memory_entries(store)
+    snapshot = memory_fingerprint(store, entries)
+    if target is None:
+        return {
+            "examples": [],
+            "retrieval_policy_version": RETRIEVAL_POLICY_VERSION,
+            "memory_snapshot_version": snapshot,
+            "retrieved_count": 0,
+        }
+
+    target_identity = (
+        normalize_merchant(str(target.get("counterparty", ""))),
+        description_signature(str(target.get("normalized_description", ""))),
+        target.get("direction"),
+        _amount_signature(target.get("amount")),
+    )
+    ranked: list[tuple[int, str, dict[str, Any]]] = []
+    for entry in entries.values():
+        if entry.get("confirmation_type") not in {"USER_CONFIRMED", "USER_CORRECTED"}:
+            continue
+        source_id = entry["source_transaction_id"]
+        source = transactions.get(source_id)
+        if source_id == transaction_id or source is None:
+            continue
+        source_identity = (
+            entry["normalized_merchant"],
+            entry["description_signature"],
+            entry["direction"],
+            entry.get("amount_signature", _amount_signature(source.get("amount"))),
+        )
+        # Exact duplicates are not legitimate historical evidence for evaluation.
+        if source_identity == target_identity:
+            continue
+        if entry["direction"] != target.get("direction"):
+            continue
+        score = 0
+        if entry["normalized_merchant"] == target_identity[0]:
+            score += 100
+        if entry["description_signature"] and entry["description_signature"] == target_identity[1]:
+            score += 60
+        if entry.get("amount_signature") == target_identity[3]:
+            score += 15
+        if not score:
+            continue
+        ranked.append((score, entry["created_at"], entry))
+
+    ranked.sort(
+        key=lambda item: (item[0], item[1], item[2]["memory_id"]), reverse=True
+    )
+    examples: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for _, _, entry in ranked:
+        identity = (
+            entry["normalized_merchant"],
+            entry["description_signature"],
+            entry["category_code"],
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        examples.append(
+            {
+                "merchant": entry["normalized_merchant"],
+                "description_pattern": entry["description_signature"],
+                "category_code": entry["category_code"],
+            }
+        )
+        if len(examples) >= max_examples:
+            break
+    return {
+        "examples": examples,
+        "retrieval_policy_version": RETRIEVAL_POLICY_VERSION,
+        "memory_snapshot_version": snapshot,
+        "retrieved_count": len(examples),
+    }
+
+
 __all__ = [
     "MEMORY_POLICY_VERSION",
+    "RETRIEVAL_POLICY_VERSION",
     "active_memory_entries",
     "build_memory_events",
     "classification_memory_summary",
@@ -361,4 +454,5 @@ __all__ = [
     "match_classification_memory",
     "memory_fingerprint",
     "normalize_merchant",
+    "retrieve_classification_context",
 ]

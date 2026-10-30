@@ -292,7 +292,7 @@ fi"""
         self.assertNotEqual(registration["model_sha256"], "0" * 64)
         self.assertEqual(registration["runtime_version"], "llama.cpp b11794-f84909536")
         self.assertEqual(registration["structured_output_backend"], "GBNF")
-        self.assertEqual(registration["inference_policy_version"], "1.1.0")
+        self.assertEqual(registration["inference_policy_version"], "2.0.0")
         self.assertEqual(restarted.status()["model"]["structured_output_backend"], "GBNF")
 
     def provider_with_response(self, response: str) -> LlamaCppProvider:
