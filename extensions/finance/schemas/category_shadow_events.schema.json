@@ -69,6 +69,8 @@
         "model_id": { "type": "string" },
         "model_version": { "type": "string" },
         "policy_version": { "type": "string" },
+        "retrieval_policy_version": { "type": "string" },
+        "memory_snapshot_version": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "taxonomy_version": { "type": "string" }
       }
     },
@@ -194,6 +196,9 @@
         "model_id": { "type": "string" },
         "model_version": { "type": "string" },
         "inference_policy_version": { "type": "string" },
+        "retrieval_policy_version": { "type": "string" },
+        "memory_snapshot_version": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "retrieved_example_count": { "type": "integer", "minimum": 0, "maximum": 5 },
         "taxonomy_version": { "type": "string" },
         "mode": { "enum": ["LIVE_SHADOW", "EVALUATION_REPLAY", "SUGGESTION"] },
         "created_at": { "type": "string", "format": "date-time" }
@@ -222,6 +227,9 @@
         "model_id": { "type": "string" },
         "model_version": { "type": "string" },
         "policy_version": { "type": "string" },
+        "retrieval_policy_version": { "type": "string" },
+        "memory_snapshot_version": { "anyOf": [{ "type": "string", "pattern": "^[a-f0-9]{64}$" }, { "type": "null" }] },
+        "retrieved_example_count": { "type": "integer", "minimum": 0, "maximum": 5 },
         "taxonomy_version": { "type": "string" },
         "evaluation_schema_version": { "const": "1.0.0" },
         "status": { "const": "ACTIVE" }

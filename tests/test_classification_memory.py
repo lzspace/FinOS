@@ -18,7 +18,10 @@ from finance_extension.classification_memory import (
     normalize_merchant,
     retrieve_classification_context,
 )
-from finance_extension.category_shadow import generate_visible_category_suggestions
+from finance_extension.category_shadow import (
+    category_evaluation_summary,
+    generate_visible_category_suggestions,
+)
 from finance_extension.crypto import StaticKeyProvider
 from finance_extension.importer import import_csv, normalize_batch
 from finance_extension.store import LocalFinanceStore
@@ -72,6 +75,9 @@ class ClassificationMemoryTests(unittest.TestCase):
         )
         self.assertEqual(proposal["payload"]["memory_match"]["support_count"], 1)
         self.assertEqual(len(self.store.events("ClassificationMemoryMatched")), 3)
+        comparison = category_evaluation_summary(self.store)["comparison"]
+        self.assertEqual(comparison["memory_hit_rate"], 1.0)
+        self.assertEqual(comparison["memory_conflict_rate"], 0.0)
 
     def test_explicit_user_rule_always_wins_over_memory(self) -> None:
         first, second, *_ = self._transactions()
@@ -108,6 +114,12 @@ class ClassificationMemoryTests(unittest.TestCase):
                 event["payload"]["transaction_id"] == third
                 for event in self.store.events("ClassificationMemoryMatched")
             )
+        )
+        self.assertEqual(
+            category_evaluation_summary(self.store)["comparison"][
+                "memory_conflict_rate"
+            ],
+            1.0,
         )
 
     def test_user_correction_supersedes_old_source_memory_and_survives_restart(self) -> None:

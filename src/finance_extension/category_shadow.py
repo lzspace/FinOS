@@ -18,6 +18,7 @@ from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 from .categories import CATEGORY_CODES, CUSTOM_CATEGORY_PATTERN, require_category
 from .classification import active_classifications, confirm_classification, create_rule
 from .classification_memory import (
+    MEMORY_POLICY_VERSION,
     RETRIEVAL_POLICY_VERSION,
     memory_fingerprint,
     retrieve_classification_context,
@@ -596,6 +597,9 @@ def generate_category_shadow_suggestion(
                 "model_id": str(model.get("model_id", "unknown")),
                 "model_version": str(model.get("model_version", "unknown")),
                 "inference_policy_version": INFERENCE_POLICY_VERSION,
+                "retrieval_policy_version": memory_context["retrieval_policy_version"],
+                "memory_snapshot_version": memory_context["memory_snapshot_version"],
+                "retrieved_example_count": memory_context["retrieved_count"],
                 "taxonomy_version": TAXONOMY_VERSION,
                 "mode": mode,
                 "created_at": _now(),
@@ -1144,6 +1148,13 @@ def evaluate_category_suggestions(
             "model_id": suggestion["model_id"],
             "model_version": suggestion["model_version"],
             "policy_version": suggestion["inference_policy_version"],
+            "retrieval_policy_version": suggestion.get(
+                "retrieval_policy_version", "NONE"
+            ),
+            "memory_snapshot_version": suggestion.get("memory_snapshot_version"),
+            "retrieved_example_count": int(
+                suggestion.get("retrieved_example_count", 0)
+            ),
             "taxonomy_version": suggestion["taxonomy_version"],
             "evaluation_schema_version": CATEGORY_EVALUATION_VERSION,
             "status": "ACTIVE",
@@ -1277,6 +1288,8 @@ def start_category_evaluation_run(
             "model_id": model["model_id"],
             "model_version": model["model_version"],
             "policy_version": str(model.get("inference_policy_version", INFERENCE_POLICY_VERSION)),
+            "retrieval_policy_version": RETRIEVAL_POLICY_VERSION,
+            "memory_snapshot_version": memory_fingerprint(store),
             "taxonomy_version": TAXONOMY_VERSION,
         },
         key=f"category-run:start:{run_id}",
@@ -1300,6 +1313,7 @@ def process_category_evaluation_run(
         or model.get("model_id") != run["model_id"]
         or model.get("model_version") != run["model_version"]
         or str(model.get("inference_policy_version", INFERENCE_POLICY_VERSION)) != run["policy_version"]
+        or run.get("retrieval_policy_version", "NONE") != RETRIEVAL_POLICY_VERSION
     ):
         raise StoreInvariantError("CATEGORY_EVALUATION_INCOMPATIBLE_MODEL")
     transaction_ids = run.get("transaction_ids", [])
@@ -1427,26 +1441,224 @@ def _metric(value: int, correct: int) -> dict[str, Any]:
     }
 
 
+def _calibration_group(item: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    return (
+        str(item.get("model_id", "unknown")),
+        str(item.get("model_version", "unknown")),
+        str(item.get("policy_version", item.get("inference_policy_version", "unknown"))),
+        str(item.get("retrieval_policy_version", "NONE")),
+        str(item.get("taxonomy_version", "unknown")),
+    )
+
+
+def _macro_precision(evaluations: list[dict[str, Any]]) -> float | None:
+    if len(evaluations) < MINIMUM_METRIC_SAMPLE:
+        return None
+    predicted_categories = sorted({item["predicted_category"] for item in evaluations})
+    values = []
+    for category in predicted_categories:
+        predicted = [item for item in evaluations if item["predicted_category"] == category]
+        true_positive = sum(1 for item in predicted if item["final_category"] == category)
+        values.append(true_positive / len(predicted))
+    return round(sum(values) / len(values), 4) if values else None
+
+
+def _cohort_metrics(
+    suggestions: list[dict[str, Any]],
+    evaluations: list[dict[str, Any]],
+    failures: list[dict[str, Any]],
+    corrected_suggestion_ids: set[str],
+    decided_suggestion_ids: set[str],
+) -> dict[str, Any]:
+    evaluated_count = len(evaluations)
+    correct = sum(1 for item in evaluations if item["correct"])
+    suggestion_ids = {item["suggestion_id"] for item in suggestions}
+    decisions = suggestion_ids & decided_suggestion_ids
+    return {
+        "sample_count": evaluated_count,
+        "accuracy": (
+            round(correct / evaluated_count, 4)
+            if evaluated_count >= MINIMUM_METRIC_SAMPLE
+            else None
+        ),
+        "precision": _macro_precision(evaluations),
+        "llm_calls": len(suggestions) + len(failures),
+        "user_correction_rate": (
+            round(len(suggestion_ids & corrected_suggestion_ids) / len(decisions), 4)
+            if decisions
+            else None
+        ),
+        "status": "READY" if evaluated_count >= MINIMUM_METRIC_SAMPLE else "INSUFFICIENT_DATA",
+    }
+
+
 def category_evaluation_summary(
     store: LocalFinanceStore, filters: dict[str, str] | None = None
 ) -> dict[str, Any]:
     filters = filters or {}
-    suggestions = [event["payload"] for event in store.events("CategorySuggestionGenerated")]
-    evaluations = list(_active_evaluations(store).values())
-    failures = [event["payload"] for event in store.events("CategorySuggestionValidationFailed")]
+    all_suggestions = [
+        event["payload"] for event in store.events("CategorySuggestionGenerated")
+    ]
+    all_evaluations = list(_active_evaluations(store).values())
+    all_failures = [
+        event["payload"] for event in store.events("CategorySuggestionValidationFailed")
+    ]
 
     def matches(item: dict[str, Any]) -> bool:
         mapping = {
             "model_id": item.get("model_id"),
             "model_version": item.get("model_version"),
             "policy_version": item.get("policy_version", item.get("inference_policy_version")),
+            "inference_policy_version": item.get(
+                "policy_version", item.get("inference_policy_version")
+            ),
+            "retrieval_policy_version": item.get("retrieval_policy_version", "NONE"),
             "taxonomy_version": item.get("taxonomy_version"),
         }
         return all(not value or mapping[key] == value for key, value in filters.items() if key in mapping)
 
-    suggestions = [item for item in suggestions if matches(item)]
-    evaluations = [item for item in evaluations if matches(item)]
-    failures = [item for item in failures if matches(item)]
+    filtered_suggestions = [item for item in all_suggestions if matches(item)]
+    filtered_evaluations = [item for item in all_evaluations if matches(item)]
+    filtered_failures = [item for item in all_failures if matches(item)]
+
+    group_keys = sorted(
+        {
+            _calibration_group(item)
+            for item in [
+                *filtered_suggestions,
+                *filtered_evaluations,
+                *filtered_failures,
+            ]
+        }
+    )
+    current_suggestions = [
+        item
+        for item in filtered_suggestions
+        if _calibration_group(item)[2] == INFERENCE_POLICY_VERSION
+        and _calibration_group(item)[3] == RETRIEVAL_POLICY_VERSION
+        and _calibration_group(item)[4] == TAXONOMY_VERSION
+    ]
+    active_group = (
+        _calibration_group(current_suggestions[-1])
+        if current_suggestions
+        else _calibration_group(filtered_suggestions[-1])
+        if filtered_suggestions
+        else group_keys[-1]
+        if group_keys
+        else None
+    )
+    suggestions = [
+        item for item in filtered_suggestions if _calibration_group(item) == active_group
+    ]
+    evaluations = [
+        item for item in filtered_evaluations if _calibration_group(item) == active_group
+    ]
+    failures = [
+        item for item in filtered_failures if _calibration_group(item) == active_group
+    ]
+
+    decision_events = [
+        event
+        for event in store.events()
+        if event["event_type"]
+        in {"CategorySuggestionConfirmed", "CategorySuggestionCorrected"}
+    ]
+    decided_suggestion_ids = {
+        event["payload"]["suggestion_id"] for event in decision_events
+    }
+    corrected_suggestion_ids = {
+        event["payload"]["suggestion_id"]
+        for event in decision_events
+        if event["event_type"] == "CategorySuggestionCorrected"
+    }
+
+    calibration_groups = []
+    for key in group_keys:
+        group_suggestions = [
+            item for item in filtered_suggestions if _calibration_group(item) == key
+        ]
+        group_evaluations = [
+            item for item in filtered_evaluations if _calibration_group(item) == key
+        ]
+        group_failures = [
+            item for item in filtered_failures if _calibration_group(item) == key
+        ]
+        metrics = _cohort_metrics(
+            group_suggestions,
+            group_evaluations,
+            group_failures,
+            corrected_suggestion_ids,
+            decided_suggestion_ids,
+        )
+        calibration_groups.append(
+            {
+                "model_id": key[0],
+                "model_version": key[1],
+                "inference_policy_version": key[2],
+                "retrieval_policy_version": key[3],
+                "taxonomy_version": key[4],
+                "memory_mode": (
+                    "WITH_CLASSIFICATION_MEMORY"
+                    if key[3] != "NONE"
+                    else "WITHOUT_CLASSIFICATION_MEMORY"
+                ),
+                "historical": (
+                    key[2] != INFERENCE_POLICY_VERSION
+                    or key[3] != RETRIEVAL_POLICY_VERSION
+                ),
+                **metrics,
+            }
+        )
+
+    # Compare actual context use only inside the active exact calibration group.
+    # Historical policies remain visible below, but never get blended into the
+    # current confidence measurements.
+    with_memory_ids = {
+        item["suggestion_id"]
+        for item in suggestions
+        if int(item.get("retrieved_example_count", 0)) > 0
+    }
+    without_memory_ids = {
+        item["suggestion_id"]
+        for item in suggestions
+        if int(item.get("retrieved_example_count", 0)) == 0
+    }
+    with_memory = _cohort_metrics(
+        [item for item in suggestions if item["suggestion_id"] in with_memory_ids],
+        [item for item in evaluations if item["suggestion_id"] in with_memory_ids],
+        [item for item in failures if int(item.get("retrieved_example_count", 0)) > 0],
+        corrected_suggestion_ids,
+        decided_suggestion_ids,
+    )
+    without_memory = _cohort_metrics(
+        [item for item in suggestions if item["suggestion_id"] in without_memory_ids],
+        [item for item in evaluations if item["suggestion_id"] in without_memory_ids],
+        [item for item in failures if int(item.get("retrieved_example_count", 0)) == 0],
+        corrected_suggestion_ids,
+        decided_suggestion_ids,
+    )
+
+    active_classification_rows = list(active_classifications(store).values())
+    memory_matches = sum(
+        1
+        for item in active_classification_rows
+        if item["event_type"] == "TransactionClassificationProposed"
+        and item["payload"].get("classification_source")
+        == "LOCAL_CLASSIFICATION_MEMORY"
+        and item["payload"].get("memory_match", {}).get("status") == "MATCHED"
+        and item["payload"].get("memory_match", {}).get("policy_version")
+        == MEMORY_POLICY_VERSION
+    )
+    memory_conflicts = sum(
+        1
+        for item in active_classification_rows
+        if item["event_type"] == "TransactionClassificationProposed"
+        and item["payload"].get("classification_source")
+        == "LOCAL_CLASSIFICATION_MEMORY"
+        and item["payload"].get("memory_match", {}).get("status") == "AMBIGUOUS"
+        and item["payload"].get("memory_match", {}).get("policy_version")
+        == MEMORY_POLICY_VERSION
+    )
     correct = sum(1 for item in evaluations if item["correct"])
     thresholds = {}
     for threshold in (0.90, 0.95, 0.97, 0.99):
@@ -1510,6 +1722,66 @@ def category_evaluation_summary(
         "confidence_kind": "MODEL_SELF_REPORTED_CONFIDENCE",
         "minimum_sample": MINIMUM_METRIC_SAMPLE,
         "filters": filters,
+        "active_calibration_group": (
+            {
+                "model_id": active_group[0],
+                "model_version": active_group[1],
+                "inference_policy_version": active_group[2],
+                "retrieval_policy_version": active_group[3],
+                "taxonomy_version": active_group[4],
+            }
+            if active_group
+            else None
+        ),
+        "calibration_groups": calibration_groups,
+        "comparison": {
+            "accuracy_without_memory": without_memory["accuracy"],
+            "accuracy_with_memory": with_memory["accuracy"],
+            "precision_without_memory": without_memory["precision"],
+            "precision_with_memory": with_memory["precision"],
+            "llm_calls_without_memory": without_memory["llm_calls"],
+            "llm_calls_with_memory": with_memory["llm_calls"],
+            "user_correction_rate_without_memory": without_memory[
+                "user_correction_rate"
+            ],
+            "user_correction_rate_with_memory": with_memory[
+                "user_correction_rate"
+            ],
+            "user_correction_rate": (
+                round(
+                    len(corrected_suggestion_ids & decided_suggestion_ids & {
+                        item["suggestion_id"] for item in suggestions
+                    })
+                    / len(decided_suggestion_ids & {
+                        item["suggestion_id"] for item in suggestions
+                    }),
+                    4,
+                )
+                if decided_suggestion_ids
+                & {item["suggestion_id"] for item in suggestions}
+                else None
+            ),
+            "memory_hit_rate": (
+                round(
+                    memory_matches
+                    / (
+                        memory_matches
+                        + len(suggestions)
+                        + len(failures)
+                    ),
+                    4,
+                )
+                if memory_matches + len(suggestions) + len(failures)
+                else 0
+            ),
+            "memory_conflict_rate": (
+                round(memory_conflicts / (memory_matches + memory_conflicts), 4)
+                if memory_matches + memory_conflicts
+                else 0
+            ),
+            "without_memory_sample_count": without_memory["sample_count"],
+            "with_memory_sample_count": with_memory["sample_count"],
+        },
     }
 
 

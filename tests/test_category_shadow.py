@@ -12,6 +12,7 @@ from cryptography.fernet import Fernet
 from finance_extension.category_shadow import (
     category_evaluation_summary,
     category_shadow_status,
+    correct_category_suggestion,
     enable_category_shadow_mode,
     evaluate_category_suggestions,
     generate_category_shadow_suggestion,
@@ -181,6 +182,49 @@ class CategoryShadowTests(unittest.TestCase):
         self.assertEqual(payload["retrieved_example_count"], 1)
         self.assertEqual(payload["retrieval_policy_version"], context["retrieval_policy_version"])
         self.assertEqual(payload["memory_snapshot_version"], context["memory_snapshot_version"])
+
+    def test_calibration_separates_memory_cohorts_within_exact_policy_group(self) -> None:
+        confirm_classification(self.store, self.debit, "FOOD_GROCERIES")
+        enable_category_shadow_mode(self.store)
+        model = MockLocalModelProvider()
+        generate_category_shadow_suggestion(
+            self.store, model, self.debit, mode="EVALUATION_REPLAY"
+        )
+
+        source = self.root / "calibration-memory.csv"
+        source.write_text(
+            "booking_date,value_date,amount,currency,counterparty,description\n"
+            "2026-08-01,2026-08-01,-43.92,EUR,REWE CITY,Kartenzahlung Filiale\n",
+            encoding="utf-8",
+        )
+        normalize_batch(self.store, import_csv(self.store, source, "acc_giro"))
+        target = self.store.events("TransactionNormalized")[-1]["payload"]["transaction_id"]
+        generated = generate_category_shadow_suggestion(
+            self.store, model, target, mode="SUGGESTION"
+        )
+        correct_category_suggestion(
+            self.store, generated["suggestion"]["suggestion_id"], "OTHER_EXPENSE"
+        )
+
+        with patch("finance_extension.category_shadow.MINIMUM_METRIC_SAMPLE", 1):
+            summary = category_evaluation_summary(self.store)
+
+        self.assertEqual(len(summary["calibration_groups"]), 1)
+        group = summary["calibration_groups"][0]
+        self.assertEqual(group["inference_policy_version"], "2.0.0")
+        self.assertEqual(
+            group["retrieval_policy_version"],
+            "classification-memory-retrieval@1.0.0",
+        )
+        self.assertFalse(group["historical"])
+        comparison = summary["comparison"]
+        self.assertEqual(comparison["accuracy_without_memory"], 1.0)
+        self.assertEqual(comparison["accuracy_with_memory"], 0.0)
+        self.assertEqual(comparison["precision_without_memory"], 1.0)
+        self.assertEqual(comparison["precision_with_memory"], 0.0)
+        self.assertEqual(comparison["llm_calls_without_memory"], 1)
+        self.assertEqual(comparison["llm_calls_with_memory"], 1)
+        self.assertEqual(comparison["user_correction_rate_with_memory"], 1.0)
 
     def test_validator_rejects_unknown_main_duplicate_alternative_and_confidence(self) -> None:
         allowed = ["FOOD_GROCERIES", "HOUSING_UTILITIES", "OTHER_EXPENSE"]
@@ -363,6 +407,20 @@ class CategoryShadowTests(unittest.TestCase):
         self.assertEqual(first["evaluated_count"], 1)
         self.assertEqual(second["prediction_count"], 1)
         self.assertEqual(second["evaluated_count"], 1)
+        with patch("finance_extension.category_shadow.MINIMUM_METRIC_SAMPLE", 1):
+            unfiltered = category_evaluation_summary(self.store)
+        self.assertEqual(len(unfiltered["calibration_groups"]), 2)
+        by_policy = {
+            item["inference_policy_version"]: item
+            for item in unfiltered["calibration_groups"]
+        }
+        self.assertFalse(by_policy["2.0.0"]["historical"])
+        self.assertTrue(by_policy["1.2.0"]["historical"])
+        self.assertEqual(
+            unfiltered["active_calibration_group"]["inference_policy_version"],
+            "2.0.0",
+        )
+        self.assertEqual(unfiltered["comparison"]["without_memory_sample_count"], 1)
 
     def test_replay_is_restart_safe_and_does_not_auto_resume(self) -> None:
         confirm_classification(self.store, self.debit, "FOOD_GROCERIES")

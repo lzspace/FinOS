@@ -254,6 +254,9 @@ describe("Finance UI contract", () => {
     fireEvent.click(screen.getByRole("button", { name: /Einstellungen/ }));
     expect(await screen.findByRole("heading", { name: "Kategorie-Evaluation" })).toBeInTheDocument();
     expect(screen.getByText(/Vorhersagen ändern keine Kategorien/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Classification Memory vergleichen" })).toBeInTheDocument();
+    expect(screen.getByText("Ohne Classification Memory")).toBeInTheDocument();
+    expect(screen.getByText("Mit Classification Memory")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Aktivieren" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Historische Kategorien auswerten" })).toBeDisabled();
   });
