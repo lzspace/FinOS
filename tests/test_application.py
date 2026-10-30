@@ -319,6 +319,20 @@ class ApplicationServiceTests(unittest.TestCase):
         self.assertEqual(response["status"], "COMPLETED")
         self.assertGreater(response["event_store_sequence"], 0)
 
+    def test_classification_memory_is_available_as_a_projection(self) -> None:
+        transactions = self.application.query("ListTransactions", {"month": "2026-07"})
+        transaction_id = transactions["data"]["transactions"][0]["transaction_id"]
+        self.application.command(
+            "ConfirmClassification",
+            {"transaction_id": transaction_id, "category_code": "FOOD_GROCERIES"},
+        )
+
+        response = self.application.query("GetClassificationMemory")
+
+        self.assertEqual(response["state"], "READY")
+        self.assertEqual(response["data"]["active_entry_count"], 1)
+        self.assertEqual(response["data"]["policy_version"], "classification-memory@1.0.0")
+
     def test_custom_categories_are_persisted_and_listed(self) -> None:
         transactions = self.application.query("ListTransactions", {"month": "2026-07"})
         transaction_id = transactions["data"]["transactions"][0]["transaction_id"]

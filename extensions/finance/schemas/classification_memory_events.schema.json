@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-os.local/finance/schemas/classification_memory_events.schema.json",
+  "title": "Local classification memory events",
+  "oneOf": [
+    { "$ref": "#/$defs/ClassificationMemoryRecorded" },
+    { "$ref": "#/$defs/ClassificationMemorySuperseded" },
+    { "$ref": "#/$defs/ClassificationMemoryMatched" }
+  ],
+  "$defs": {
+    "CategoryCode": {
+      "anyOf": [
+        { "enum": ["INCOME_SALARY", "INCOME_OTHER", "HOUSING_RENT", "HOUSING_UTILITIES", "FOOD_GROCERIES", "FOOD_RESTAURANTS", "MOBILITY_PUBLIC_TRANSPORT", "MOBILITY_FUEL", "HEALTH", "INSURANCE", "LEISURE", "SUBSCRIPTIONS", "EDUCATION", "FEES", "TAXES", "OTHER_EXPENSE", "UNCLASSIFIED"] },
+        { "type": "string", "pattern": "^CUSTOM_[A-Z0-9_]{1,48}$" }
+      ]
+    },
+    "Base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "event_id", "event_type", "aggregate_type", "aggregate_id", "aggregate_version", "occurred_at", "correlation_id", "causation_id", "payload"],
+      "properties": {
+        "schema_version": { "const": "1.0.0" },
+        "event_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "event_type": { "type": "string" },
+        "aggregate_type": { "enum": ["ClassificationMemory", "Transaction"] },
+        "aggregate_id": { "type": "string", "minLength": 6 },
+        "aggregate_version": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "correlation_id": { "type": "string" },
+        "causation_id": { "type": "string" },
+        "payload": { "type": "object" }
+      }
+    },
+    "RecordedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_id", "normalized_merchant", "description_signature", "direction", "category_code", "amount_signature", "booking_day", "source_transaction_id", "source_classification_id", "confirmation_type", "policy_version", "created_at"],
+      "properties": {
+        "memory_id": { "type": "string", "pattern": "^mem_[a-f0-9]{32}$" },
+        "normalized_merchant": { "type": "string", "maxLength": 240 },
+        "description_signature": { "type": "string", "maxLength": 500 },
+        "direction": { "enum": ["DEBIT", "CREDIT"] },
+        "category_code": { "$ref": "#/$defs/CategoryCode" },
+        "amount_signature": { "type": "string", "pattern": "^(?:[0-9]+\\.[0-9]{2})?$" },
+        "booking_day": { "anyOf": [{ "type": "integer", "minimum": 1, "maximum": 31 }, { "type": "null" }] },
+        "source_transaction_id": { "type": "string", "minLength": 6 },
+        "source_classification_id": { "type": "string", "pattern": "^evt_[a-f0-9]{32}$" },
+        "confirmation_type": { "enum": ["USER_CONFIRMED", "USER_CORRECTED"] },
+        "policy_version": { "const": "classification-memory@1.0.0" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "SupersededPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_id", "source_transaction_id", "superseded_by_memory_id", "reason", "superseded_at"],
+      "properties": {
+        "memory_id": { "type": "string", "pattern": "^mem_[a-f0-9]{32}$" },
+        "source_transaction_id": { "type": "string", "minLength": 6 },
+        "superseded_by_memory_id": { "type": "string", "pattern": "^mem_[a-f0-9]{32}$" },
+        "reason": { "const": "USER_CORRECTION" },
+        "superseded_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "MatchPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction_id", "category_code", "status", "support_count", "conflict_count", "conflict_rate", "match_type", "memory_ids", "policy_version"],
+      "properties": {
+        "transaction_id": { "type": "string", "minLength": 6 },
+        "category_code": { "$ref": "#/$defs/CategoryCode" },
+        "status": { "const": "MATCHED" },
+        "support_count": { "type": "integer", "minimum": 1 },
+        "conflict_count": { "type": "integer", "minimum": 0 },
+        "conflict_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "match_type": { "enum": ["NORMALIZED_MERCHANT", "MERCHANT_DESCRIPTION", "MERCHANT_ALIAS", "RECURRING_PATTERN", "NORMALIZED_DESCRIPTION"] },
+        "memory_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^mem_[a-f0-9]{32}$" } },
+        "policy_version": { "const": "classification-memory@1.0.0" }
+      }
+    },
+    "ClassificationMemoryRecorded": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ClassificationMemoryRecorded" }, "aggregate_type": { "const": "ClassificationMemory" }, "payload": { "$ref": "#/$defs/RecordedPayload" } } }] },
+    "ClassificationMemorySuperseded": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ClassificationMemorySuperseded" }, "aggregate_type": { "const": "ClassificationMemory" }, "payload": { "$ref": "#/$defs/SupersededPayload" } } }] },
+    "ClassificationMemoryMatched": { "allOf": [{ "$ref": "#/$defs/Base" }, { "properties": { "event_type": { "const": "ClassificationMemoryMatched" }, "aggregate_type": { "const": "Transaction" }, "payload": { "$ref": "#/$defs/MatchPayload" } } }] }
+  }
+}

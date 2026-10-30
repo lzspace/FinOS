@@ -338,6 +338,21 @@ const EVENT_LABELS: Record<string, EventLabel> = {
     description: "Eine bestehende Regel wurde automatisch auf eine neue Buchung angewendet.",
     category: "OTHER",
   },
+  ClassificationMemoryRecorded: {
+    title: "Klassifikation gemerkt",
+    description: "Eine bestätigte Nutzerentscheidung wurde als lokales Erfahrungswissen gespeichert.",
+    category: "OTHER",
+  },
+  ClassificationMemorySuperseded: {
+    title: "Klassifikationserfahrung ersetzt",
+    description: "Eine frühere Nutzerentscheidung wurde durch eine spätere Korrektur ersetzt.",
+    category: "OTHER",
+  },
+  ClassificationMemoryMatched: {
+    title: "Klassifikationserfahrung angewendet",
+    description: "Für eine ähnliche Buchung wurde lokales Erfahrungswissen als Vorschlag verwendet.",
+    category: "OTHER",
+  },
 
   // Dubletten, Überträge, Erstattungen
   DuplicateTransactionDetected: {

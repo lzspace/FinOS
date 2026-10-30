@@ -10,10 +10,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .categories import CATEGORY_CODES, require_category
+from .classification_memory import (
+    active_memory_entries,
+    build_memory_events,
+    match_classification_memory,
+    memory_fingerprint,
+)
 from .store import LocalFinanceStore, StoreInvariantError
 
 RULE_VERSION = "1.0.0"
-CLASSIFICATION_POLICY_VERSION = "rules@1.0.0"
+CLASSIFICATION_POLICY_VERSION = "classification-memory@1.0.0"
 
 
 @dataclass(frozen=True)
@@ -25,6 +31,7 @@ class Rule:
     category_code: str
     priority: int
     version: int = 1
+    source: str = "SYSTEM_RULE"
 
 
 BUILTIN_RULES = (
@@ -93,6 +100,7 @@ def _user_rules(store: LocalFinanceStore) -> list[Rule]:
             category_code=event["payload"]["category_code"],
             priority=event["payload"]["priority"],
             version=event["payload"]["rule_version"],
+            source="USER_RULE",
         )
         for event in latest.values()
     ]
@@ -126,9 +134,16 @@ def _matches(rule: Rule, transaction: dict[str, Any]) -> bool:
 def classify_transactions(store: LocalFinanceStore, month: str | None = None) -> int:
     state = active_classifications(store)
     rules = [*BUILTIN_RULES, *_user_rules(store)]
+    memory_entries = active_memory_entries(store)
     ruleset_hash = hashlib.sha256(
         json.dumps(
-            [rule.__dict__ for rule in sorted(rules, key=lambda item: item.rule_id)],
+            {
+                "rules": [
+                    rule.__dict__ for rule in sorted(rules, key=lambda item: item.rule_id)
+                ],
+                "memory_fingerprint": memory_fingerprint(store, memory_entries),
+                "policy_version": CLASSIFICATION_POLICY_VERSION,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -148,10 +163,17 @@ def classify_transactions(store: LocalFinanceStore, month: str | None = None) ->
         ):
             continue
         matches = [rule for rule in rules if _matches(rule, transaction)]
-        best_priority = max((rule.priority for rule in matches), default=None)
-        winners = [rule for rule in matches if rule.priority == best_priority]
+        source_rank = {"USER_RULE": 2, "SYSTEM_RULE": 1}
+        best_rank = max((source_rank[rule.source] for rule in matches), default=None)
+        source_winners = [
+            rule for rule in matches if source_rank[rule.source] == best_rank
+        ]
+        best_priority = max((rule.priority for rule in source_winners), default=None)
+        winners = [rule for rule in source_winners if rule.priority == best_priority]
         categories = {rule.category_code for rule in winners}
         version = store.next_aggregate_version("Transaction", transaction_id)
+        memory_match: dict[str, Any] | None = None
+        classification_source = "NONE"
         if len(categories) == 1:
             winner = sorted(winners, key=lambda rule: rule.rule_id)[0]
             events.append(
@@ -171,10 +193,54 @@ def classify_transactions(store: LocalFinanceStore, month: str | None = None) ->
             )
             version += 1
             category, confidence, status = winner.category_code, "1.0", "PROPOSED"
+            classification_source = winner.source
         elif len(categories) > 1:
             category, confidence, status = "UNCLASSIFIED", "0.0", "CONFLICT"
+            classification_source = winners[0].source
         else:
-            category, confidence, status = "UNCLASSIFIED", "0.0", "UNCLASSIFIED"
+            memory_match = match_classification_memory(
+                store, transaction, entries=memory_entries
+            )
+            if memory_match["status"] == "MATCHED":
+                category = memory_match["category_code"]
+                total = memory_match["support_count"] + memory_match["conflict_count"]
+                confidence = str(round(memory_match["support_count"] / total, 4))
+                status = "PROPOSED"
+                classification_source = "LOCAL_CLASSIFICATION_MEMORY"
+                events.append(
+                    _event(
+                        "ClassificationMemoryMatched",
+                        "Transaction",
+                        transaction_id,
+                        version,
+                        command_id,
+                        {
+                            "transaction_id": transaction_id,
+                            "category_code": category,
+                            **memory_match,
+                        },
+                    )
+                )
+                version += 1
+            elif memory_match["status"] == "AMBIGUOUS":
+                category, confidence, status = "UNCLASSIFIED", "0.0", "CONFLICT"
+                classification_source = "LOCAL_CLASSIFICATION_MEMORY"
+            else:
+                category, confidence, status = "UNCLASSIFIED", "0.0", "UNCLASSIFIED"
+                memory_match = None
+        proposal_payload: dict[str, Any] = {
+            "transaction_id": transaction_id,
+            "normalized_event_id": normalized["event_id"],
+            "category_code": category,
+            "confidence": confidence,
+            "status": status,
+            "policy_version": CLASSIFICATION_POLICY_VERSION,
+            "ruleset_hash": ruleset_hash,
+            "matching_rule_ids": sorted(rule.rule_id for rule in winners),
+            "classification_source": classification_source,
+        }
+        if memory_match is not None:
+            proposal_payload["memory_match"] = memory_match
         events.append(
             _event(
                 "TransactionClassificationProposed",
@@ -182,16 +248,7 @@ def classify_transactions(store: LocalFinanceStore, month: str | None = None) ->
                 transaction_id,
                 version,
                 command_id,
-                {
-                    "transaction_id": transaction_id,
-                    "normalized_event_id": normalized["event_id"],
-                    "category_code": category,
-                    "confidence": confidence,
-                    "status": status,
-                    "policy_version": CLASSIFICATION_POLICY_VERSION,
-                    "ruleset_hash": ruleset_hash,
-                    "matching_rule_ids": sorted(rule.rule_id for rule in winners),
-                },
+                proposal_payload,
             )
         )
     if not events:
@@ -250,16 +307,35 @@ def confirm_classification(
     }
     if suggestion_id is not None:
         decision_payload["suggestion_id"] = suggestion_id
-    events = [
-        _event(
-            "TransactionClassificationConfirmed",
-            "Transaction",
-            transaction_id,
-            version,
-            command_id,
-            decision_payload,
+    current = active_classifications(store).get(transaction_id)
+    confirmation_type = (
+        "USER_CORRECTED"
+        if confirmed_by == "LOCAL_LLM_CORRECTED_BY_USER"
+        or (
+            current is not None
+            and current["event_type"] == "TransactionClassificationConfirmed"
+            and current["payload"].get("category_code") != category_code
         )
-    ]
+        else "USER_CONFIRMED"
+    )
+    classification_event = _event(
+        "TransactionClassificationConfirmed",
+        "Transaction",
+        transaction_id,
+        version,
+        command_id,
+        decision_payload,
+    )
+    events = [classification_event]
+    events.extend(
+        build_memory_events(
+            store,
+            normalized_event=normalized,
+            classification_event=classification_event,
+            command_id=command_id,
+            confirmation_type=confirmation_type,
+        )
+    )
     if create_rule_from:
         rule_id = _id("rule")
         events.append(

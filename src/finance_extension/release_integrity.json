@@ -33,7 +33,8 @@
       "category_shadow.response.schema.json": "023b85f9bb41c778d8e7fc81cec40d006b5d18462a5a29240da567294b0e8644",
       "category_shadow_commands.schema.json": "7f938817328b50b02563595c9b8686c737c75d90f75f10436bdc03eb8f7d97bf",
       "category_shadow_events.schema.json": "676c3e11498fbc6e8a616efa7578a2fa5358d64df83d458287c6ea4682d2dd3e",
-      "classification_events.schema.json": "94093b23e00113ebbfd05b4048be26e2e27fce3b1e00080b476c10137650f61a",
+      "classification_events.schema.json": "a0b4430e24826adbfa25027c8d88e6896f057627f72a3d1b33e9178b4403f9bf",
+      "classification_memory_events.schema.json": "4e056255643a4fb7ef44100989994181a2661867e2cbf0531eb949d49f1bbb31",
       "closing_balance_recorded.event.schema.json": "02daf60bda738a980a8064ebf01167a4f0ab32698629252b1598c1528bcfc1a2",
       "closing_security_position_recorded.event.schema.json": "3187d003898a8f7977229acc7e93713b85e00bc0a42bd1cc98df5cef54fa90fb",
       "commands.schema.json": "d8caa23f2e76b0dc738288759016f746017d9ce36c6d04afaedd0f34decd756c",
@@ -117,14 +118,14 @@
       "transaction_list.response.schema.json": "8890f1ca321797367197faa00a19cc3a7ae4c8f8b98ce358fbda7855284d9532",
       "vertical_slice_events.schema.json": "091ea19d244cd66f3702303465a59d8a64b9f2a9732fe78390273e0c0fc79227"
     },
-    "sha256": "0b551175f01ba6961436ed4a3a3f54e2d3edd99457be8056444a4d04a9f9a7b7"
+    "sha256": "23ff98bc5779d987708faef52905528c52250aaf9de26e4b665f3c637482758a"
   },
   "ui_bundle": {
     "files": {
       "assets/index-B0eFeQ4y.css": "74a01b5762bf4ef6f862a996822d003940392be21ceae21f06e34d58432f1b08",
-      "assets/index-DhM6-h-D.js": "e67cb3edc15ad54f08ef449cd5f60f7ba0382e6376b86011edeea4e8e8feddee",
-      "index.html": "f83b2e586afad1769a83064bb64fa498b943f43b3e997833259d7b209f2ea7ed"
+      "assets/index-CI7ksxRT.js": "b9dfb231dc3e84393e61715faf4aaf9f6d4be6e2cf167a342c03d699dca756da",
+      "index.html": "b18b898d991c9682c1c2cb19ecbe47a5a5331ccc89c3a7ed851c5b6b892a8606"
     },
-    "sha256": "7fabd8752a26edef71c900ec35163260b1f66947ecf1be5f2bb1756147dca7ee"
+    "sha256": "b6c150c5eaa4701db1ca95b87a3eacd9b90f518d96a3fbbbf4a03e818f111f32"
   }
 }

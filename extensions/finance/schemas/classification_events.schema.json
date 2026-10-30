@@ -41,11 +41,27 @@
         "transaction_id": { "type": "string" },
         "normalized_event_id": { "type": "string" },
         "category_code": { "$ref": "#/$defs/CategoryCode" },
-        "confidence": { "type": "string", "pattern": "^(?:0(?:\\.0)?|1(?:\\.0)?)$" },
+        "confidence": { "type": "string", "pattern": "^(?:0(?:\\.[0-9]{1,4})?|1(?:\\.0{1,4})?)$" },
         "status": { "enum": ["PROPOSED", "CONFLICT", "UNCLASSIFIED"] },
-        "policy_version": { "const": "rules@1.0.0" },
+        "policy_version": { "enum": ["rules@1.0.0", "classification-memory@1.0.0"] },
         "ruleset_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "matching_rule_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+        "matching_rule_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "classification_source": { "enum": ["NONE", "USER_RULE", "SYSTEM_RULE", "LOCAL_CLASSIFICATION_MEMORY"] },
+        "memory_match": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "category_code", "support_count", "conflict_count", "conflict_rate", "match_type", "memory_ids", "policy_version"],
+          "properties": {
+            "status": { "enum": ["MATCHED", "AMBIGUOUS"] },
+            "category_code": { "anyOf": [{ "$ref": "#/$defs/CategoryCode" }, { "type": "null" }] },
+            "support_count": { "type": "integer", "minimum": 1 },
+            "conflict_count": { "type": "integer", "minimum": 0 },
+            "conflict_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+            "match_type": { "enum": ["NORMALIZED_MERCHANT", "MERCHANT_DESCRIPTION", "MERCHANT_ALIAS", "RECURRING_PATTERN", "NORMALIZED_DESCRIPTION"] },
+            "memory_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^mem_[a-f0-9]{32}$" } },
+            "policy_version": { "const": "classification-memory@1.0.0" }
+          }
+        }
       }
     },
     "DecisionPayload": {
@@ -59,7 +75,7 @@
         "status": { "const": "CONFIRMED" },
         "confirmed_by": { "enum": ["USER", "LOCAL_LLM_CONFIRMED_BY_USER", "LOCAL_LLM_CORRECTED_BY_USER"] },
         "suggestion_id": { "type": "string", "pattern": "^csg_[a-f0-9]{32}$" },
-        "policy_version": { "const": "rules@1.0.0" }
+        "policy_version": { "enum": ["rules@1.0.0", "classification-memory@1.0.0"] }
       }
     },
     "RejectionPayload": {

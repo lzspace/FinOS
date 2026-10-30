@@ -58,6 +58,7 @@ from .classification import (
     create_rule,
     reject_classification,
 )
+from .classification_memory import classification_memory_summary
 from .category_shadow import (
     cancel_category_evaluation_run,
     category_evaluation_summary,
@@ -671,6 +672,7 @@ class FinanceApplicationService:
             "ListPendingCategorySuggestions": self._pending_category_suggestions,
             "GetCategorySuggestionReviewSummary": self._category_suggestion_review_summary,
             "ListClassificationRules": self._classification_rules,
+            "GetClassificationMemory": self._classification_memory,
             "GetQueryPerformanceSummary": self._query_performance_summary,
         }
         if query_name not in queries:
@@ -2009,6 +2011,13 @@ class FinanceApplicationService:
         rows = list_classification_rules_with_origin(self._store)
         return self._envelope(
             {"rules": rows}, status="READY" if rows else "EMPTY"
+        )
+
+    def _classification_memory(self, _: dict[str, Any]) -> dict[str, Any]:
+        summary = classification_memory_summary(self._store)
+        return self._envelope(
+            summary,
+            status="READY" if summary["active_entry_count"] else "EMPTY",
         )
 
     def _execute_command(self, command_name: str, payload: dict[str, Any]) -> dict[str, Any]:
